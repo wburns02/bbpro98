@@ -29,3 +29,13 @@ bblaunch.exe starts Baseball.exe suspended and injects bbfix.dll. Official v1.1 
 - Mods (user's folder): 2001/2002 season ARCs restore via BBArch.exe (work). BBEdit98 not installed (needs Wine + VB6/Jet). bbnames/bbdraft are 16-bit DOS (need DOSBox).
 - Ideas the user wants: player creator (via free-agent pool), contract/salary system (game has none), rating model from Lahman stats (Lahman files were downloaded on the Mac; correlation results: contact~AVG, power~HR, speed~SB, endurance~GS).
 - Not yet tested on real Windows.
+
+## Update 2026-10-06 (Ubuntu/Fedora Optiplex session): wide Statistics screen SHIPPED to live
+- Result: League Statistics shows 12 columns (batting adds OBP, SLG, Pro, Iso; pitching adds ER, HR, K/9, BB/9) in Career/Season/Players/Teams views. Verified by screenshot on the live install and a sim day (work copy).
+- Mechanism: SHELL.VOL wide5 (extra gadgets in DIAL.REQ block 13, large block moved to end because block starts above ~0xfe9x fail to load) + in-memory hooks in bbfix.dll (src-latest/bbfix.c, 7 sites in BBShell.dll, all-or-nothing, on-disk BBShell.dll stays pristine). Config: <install>/bbfix.ini ([widen] bat/pit ids; stat id = SPRPLYR third-table index + 13).
+- Install/revert: work/patches/install_live.sh, revert_live.sh (restores bbfix.dll, SHELL.VOL, BBShell.dll from /mnt/nvme/bbpro98_backups/BBPRO_98_2006-end_2026-10-06). Never edit live directly; work copy = /mnt/nvme/bbpro98/work_install (launch with ~/bb_launch_work.sh; relaunch.sh installs build there).
+- Build: zig cc (pip ziglang in /mnt/nvme/bbpro98/zigenv): python -m ziglang cc -target x86-windows-gnu -O2 -shared -o bbfix.dll bbfix.c -Wno-incompatible-pointer-types -lpsapi
+- Trace: bbfix.ini [trace] draw=1 match=TEXT logs grid text + caller chain (DrawText_Shell 68065650); cell=1; text=1 (GDI, unused by grid).
+- Ghidra is the source of truth: project /mnt/nvme/bbpro98/ghidra_proj (14 binaries), query with ~/../mnt/nvme/bbpro98/ghidra_scripts/gh.sh (decomp/xrefs/rename/batch/regen). Rename or type everything in Ghidra the same step you learn it.
+- Not verified: Lineup (in-game play) screen, Hall of Fame screen, Team Statistics (not widened, 8 cols), Change Columns dialog still edits 8 slots (ext columns fixed by ini, not user-editable), full season run with hooks.
+- Landmine: thiscall helpers 680436c0/68043400 take 2 stack args and `ret 8`.

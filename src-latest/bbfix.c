@@ -196,7 +196,7 @@ static int __cdecl H_fclose(void*f){ untrack(f,1); return R_fclose(f); }
    When a drawn string contains match (empty = every string), logs the API, string, caller and a raw stack walk of return
    addresses (values inside game modules preceded by a call opcode) to bbtrace.log. Finds the drawing function in one run. */
 static int tx_on,tx_cell,tx_draw; static char tx_match[64]; static unsigned tx_cnt;
-static int looks_like_ret(uint32_t v){ if(IsBadReadPtr((void*)(uintptr_t)(v-6),6)) return 0; uint8_t *p=(uint8_t*)(uintptr_t)v;
+static int looks_like_ret(uint32_t v){ if((v&0xfff)<6) return 0; if(IsBadReadPtr((void*)(uintptr_t)(v-6),6)) return 0; uint8_t *p=(uint8_t*)(uintptr_t)v;
     return p[-5]==0xe8 || (p[-6]==0xff&&p[-5]==0x15) || (p[-2]==0xff&&(p[-1]&0xf8)==0xd0); }
 static void stack_walk(const uint32_t *sp,char *w,int k,int cap){ char c[96]; int found=0;
     for(int i=0;i<256&&found<12&&k<cap-100;i++){ if(IsBadReadPtr(sp+i,4)) break; uint32_t v=sp[i]; HMODULE m=0;

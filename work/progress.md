@@ -9,3 +9,4 @@
 - NEXT: code hook so cells 10..14 are filled (FUN_6805c930) + header text for ids 0x28.. (after FUN_6805cb20 in FUN_6800d300).
 
 - 2026-10-06 step 3 done: grid text routine DrawText_Shell 68065650 found and trace-hooked (draw=1). Ghidra names backfilled (backfill_2.py). Wide view screenshot t2b verified 12 cols. Next: regen _all.c, regression screens (pitching, Lineup, Draft, HoF, Career, Players, Accumulated, Change Columns, sim day), revert script, M6.
+- 2026-10-06 M5/M6 done: regression screens read (pitching, Players, Teams, Change Columns, News, Data, History, Team Stats/Roster, Draft, sim day) all OK, no faults from widen hooks. install_live.sh run, live screenshot L2 shows 12 cols. revert_live.sh written. Untested: Lineup, Hall of Fame, full season.
