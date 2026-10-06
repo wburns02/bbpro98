@@ -15,3 +15,7 @@
 - Plan: work/RE_PLAN_tiers1-3.md (Opus planner, verified exists). Findings: work/RE_FINDINGS.md.
 - [x] M0 decompile all 14 binaries (index/*/_all.c, _functions.tsv; metrics in work/M0_metrics.txt)
 - [ ] M1 labeling: source-file anchors first (re/srcmap.py), then call-graph propagation, then GLM for residue
+
+## 2026-10-06 evening
+- Renames applied + readback-verified + regen: Baseball, FastSim, BBSIM, BBCfg, FPS_Pal, FPS_DCL, FPS_Ctrl, ODASL.
+- Pending: FPS_CT, LineUp, Upstats, EZShell, BBShell labeling (drive_rest.sh), then rename spec + regen, ASN decode, final Artifact report.
