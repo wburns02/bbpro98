@@ -7,3 +7,5 @@
 - Crash cause: VOLM dir has a final u32 at 0x234 (end-of-data sentinel) that must also shift by the growth. build_wide_vol.py now does it. No per-file 9-byte header fix needed.
 - r6.png: 4 extra gadget columns EX1..EX4 render, name/stat columns narrowed. Good build saved: /mnt/nvme/bbpro98/vol/SHELL_wide_ok_EXhdrs.VOL
 - NEXT: code hook so cells 10..14 are filled (FUN_6805c930) + header text for ids 0x28.. (after FUN_6805cb20 in FUN_6800d300).
+
+- 2026-10-06 step 3 done: grid text routine DrawText_Shell 68065650 found and trace-hooked (draw=1). Ghidra names backfilled (backfill_2.py). Wide view screenshot t2b verified 12 cols. Next: regen _all.c, regression screens (pitching, Lineup, Draft, HoF, Career, Players, Accumulated, Change Columns, sim day), revert script, M6.

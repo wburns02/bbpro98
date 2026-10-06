@@ -143,3 +143,8 @@ Verified: screenshots h2b (default ids) and h3b (reversed ids positive control) 
 
 ### Text trace hook (step 3)
 bbfix.ini [trace] text=1 match=STR (or env BBFIX_TRACE_TEXT/BBFIX_TRACE_MATCH). Hooks DrawTextA/TextOutA/ExtTextOutA (IAT, incl. GDI32), logs TEXT lines with caller + stack walk. Result 2026-10-06: the League Statistics grid does NOT use any GDI text call (only the splash 'FPS: Baseball Pro' via ExtTextOutA from ODASL.dll). BBShell imports TextOutA but it never fired for "Avg". The grid is drawn by a bitmap-font blitter inside the game. Next: find that function in Ghidra (string-pointer arg + glyph blit) and hook it with the same in-memory mechanism.
+
+## Grid text renderer found (2026-10-06, via bbfix [trace] draw=1)
+Not GDI. Chain: StatsGrid_CellCallback (6800ec00) <- thunk 6800ea40 <- ListGrid_DrawRows (680758f0, per-row loop calling [this+0x1c] callback) -> DrawText_Shell (68065650, cdecl: x,y,w,font,color,flags,char*text; entry bytes 83 ec 04 53 56) -> TextWidth_Shell (68065a50). Renamed in Ghidra (batch backfill_2.py).
+Trace: bbfix.ini [trace] draw=1 match=Avg logs 'Avg' x=152 y=99 with BBShell caller chain (positive control passed). cell=1 logs callback callers.
+Career-data click-through: hook ListGrid_DrawRows callers (68077d5b grid gadget handler) for row hit-test next.

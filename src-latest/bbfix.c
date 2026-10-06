@@ -195,18 +195,19 @@ static int __cdecl H_fclose(void*f){ untrack(f,1); return R_fclose(f); }
 /* ---- text-draw trace (off by default). bbfix.ini [trace] text=1 match=Avg   or env BBFIX_TRACE_TEXT=1 BBFIX_TRACE_MATCH=Avg.
    When a drawn string contains match (empty = every string), logs the API, string, caller and a raw stack walk of return
    addresses (values inside game modules preceded by a call opcode) to bbtrace.log. Finds the drawing function in one run. */
-static int tx_on; static char tx_match[64]; static unsigned tx_cnt;
+static int tx_on,tx_cell,tx_draw; static char tx_match[64]; static unsigned tx_cnt;
 static int looks_like_ret(uint32_t v){ if(IsBadReadPtr((void*)(uintptr_t)(v-6),6)) return 0; uint8_t *p=(uint8_t*)(uintptr_t)v;
     return p[-5]==0xe8 || (p[-6]==0xff&&p[-5]==0x15) || (p[-2]==0xff&&(p[-1]&0xf8)==0xd0); }
+static void stack_walk(const uint32_t *sp,char *w,int k,int cap){ char c[96]; int found=0;
+    for(int i=0;i<256&&found<12&&k<cap-100;i++){ if(IsBadReadPtr(sp+i,4)) break; uint32_t v=sp[i]; HMODULE m=0;
+        if(v<0x10000||!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,(LPCSTR)(uintptr_t)v,&m)||!m) continue;
+        char p[MAX_PATH]; GetModuleFileNameA(m,p,MAX_PATH); if(_strnicmp(p,"C:\\Sierra",9)||!_stricmp(strrchr(p,'\\')+1,"bbfix.dll")) continue;
+        if(!looks_like_ret(v)) continue; k+=snprintf(w+k,cap-k," %s(va %08x)",modname((void*)(uintptr_t)v,c,96),v); found++; } }
 static void text_trace(const char *api,const char *s,int n,void *ret){
     if(!tx_on||!s||IsBadReadPtr(s,1)) return; char b[160]; if(n<0) n=(int)strnlen(s,150); if(n>150) n=150; memcpy(b,s,n); b[n]=0;
     if(tx_match[0] && !strstr(b,tx_match)) return; if(tx_cnt++>3000) return;
     char c[96],w[700]; int k=snprintf(w,sizeof w,"TEXT   %s '%s' ret=%s stack:",api,b,modname(ret,c,96));
-    uint32_t *sp=(uint32_t*)__builtin_frame_address(0); int found=0;
-    for(int i=0;i<256&&found<10&&k<600;i++){ if(IsBadReadPtr(sp+i,4)) break; uint32_t v=sp[i]; HMODULE m=0;
-        if(v<0x10000||!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,(LPCSTR)(uintptr_t)v,&m)||!m) continue;
-        char p[MAX_PATH]; GetModuleFileNameA(m,p,MAX_PATH); if(_strnicmp(p,"C:\\Sierra",9)||!_stricmp(strrchr(p,'\\')+1,"bbfix.dll")) continue;
-        if(!looks_like_ret(v)) continue; k+=snprintf(w+k,sizeof w-k," %s(va %08x)",modname((void*)(uintptr_t)v,c,96),v); found++; }
+    stack_walk((uint32_t*)__builtin_frame_address(0),w,k,sizeof w);
     T("%s",w); }
 static int (WINAPI *R_DrawTextA)(HDC,LPCSTR,int,LPRECT,UINT);
 static int WINAPI H_DrawTextA(HDC dc,LPCSTR s,int n,LPRECT r,UINT f){ text_trace("DrawTextA",s,n,__builtin_return_address(0)); return R_DrawTextA(dc,s,n,r,f); }
@@ -214,7 +215,7 @@ static BOOL (WINAPI *R_TextOutA)(HDC,int,int,LPCSTR,int);
 static BOOL WINAPI H_TextOutA(HDC dc,int x,int y,LPCSTR s,int n){ text_trace("TextOutA",s,n,__builtin_return_address(0)); return R_TextOutA(dc,x,y,s,n); }
 static BOOL (WINAPI *R_ExtTextOutA)(HDC,int,int,UINT,const RECT*,LPCSTR,UINT,const INT*);
 static BOOL WINAPI H_ExtTextOutA(HDC dc,int x,int y,UINT o,const RECT*r,LPCSTR s,UINT n,const INT*d){ if(!(o&ETO_GLYPH_INDEX)) text_trace("ExtTextOutA",s,(int)n,__builtin_return_address(0)); return R_ExtTextOutA(dc,x,y,o,r,s,n,d); }
-static void trace_cfg(void){ char e[64]; tx_on=GetPrivateProfileIntA("trace","text",0,ini_path); GetPrivateProfileStringA("trace","match","",tx_match,sizeof tx_match,ini_path);
+static void trace_cfg(void){ char e[64]; tx_on=GetPrivateProfileIntA("trace","text",0,ini_path); tx_cell=GetPrivateProfileIntA("trace","cell",0,ini_path); tx_draw=GetPrivateProfileIntA("trace","draw",0,ini_path); GetPrivateProfileStringA("trace","match","",tx_match,sizeof tx_match,ini_path);
     if(GetEnvironmentVariableA("BBFIX_TRACE_TEXT",e,sizeof e)) tx_on=atoi(e); if(GetEnvironmentVariableA("BBFIX_TRACE_MATCH",e,sizeof e)){ strncpy(tx_match,e,63); tx_match[63]=0; }
     if(tx_on) T("TRACE  text trace ON match='%s'",tx_match); }
 static struct { const char *dll,*name; void *hook; void **real; } HK[]={
@@ -251,7 +252,7 @@ HANDLER void h_slot(Regs *r){ int cx=(int16_t)r->ebp; r->ecx=(uint32_t)cx;
 HANDLER void h_hdr(Regs *r){ uint32_t p=r->ebp; r->eax=*(uint32_t*)p; r->ecx=p; r->ebp=p+4;
     uint32_t k=r->esi-0x1d; if(k<4) r->eax=ext_id(r->stk[0x28/4],k); }
 /* site 5, 6800ec2c: mov cx,bx / sub cx,9. Cell index = gadget id-9, or id-0x26 for ext ids >= 0x30. Only cx changes. */
-HANDLER void h_cell(Regs *r){ uint32_t bx=r->ebx&0xffff, cx=bx>=0x30?bx-0x26:bx-9; r->ecx=(r->ecx&0xffff0000u)|(cx&0xffff); }
+HANDLER void h_cell(Regs *r){ if(tx_cell){ static int n; if(n<8){ n++; char w[700]; int k=snprintf(w,sizeof w,"CELL   cb gadget=%04x stack:",r->ebx&0xffff); stack_walk(r->stk,w,k,sizeof w); T("%s",w);} } uint32_t bx=r->ebx&0xffff, cx=bx>=0x30?bx-0x26:bx-9; r->ecx=(r->ecx&0xffff0000u)|(cx&0xffff); }
 /* site 6, 6800d3aa: after the 9..0x12 init loop, init body gadgets 0x30..0x33 the same way (2 stack args, ret 8). */
 HANDLER void h_init(Regs *r){ (void)r; tc2_t f1=(tc2_t)0x680436c0, f2=(tc2_t)0x68043400;
     for(int id=0x30;id<0x34;id++){ f1((void*)0x6808dd10,id,0x6800ea40); f2((void*)0x6808dd10,id,0); } }
@@ -278,6 +279,23 @@ static void widen_cfg(void){
     for(int v=0;v<2;v++){ GetPrivateProfileStringA("widen",keys[v],"",b,sizeof b,ini_path); if(!b[0]) continue;
         uint32_t t[4]; int n=0; for(char *s=strtok(b,", ");s&&n<4;s=strtok(0,", ")) t[n++]=strtoul(s,0,0);
         if(n==4) memcpy(ext_tab[v],t,sizeof t); } }
+
+/* trace hook on BBShell DrawText_Shell 68065650 (cdecl, text = 7th arg). Entry: sub esp,4 / push ebx / push esi (83 ec 04 53 56). Flag [trace] draw=1, separate from widen. */
+static unsigned dt_cnt; uint32_t resume_dt;
+HANDLER void h_dt(Regs *r){ const char *t=(const char*)r->stk[7]; if(!t||IsBadReadPtr(t,2)||dt_cnt>=400) return;
+    char b[64]; int i=0; for(;i<63&&!IsBadReadPtr(t+i,1)&&t[i];i++) b[i]=t[i]; b[i]=0;
+    if(tx_match[0]&&!strstr(b,tx_match)) return; dt_cnt++;
+    char w[700]; int k=snprintf(w,sizeof w,"DRAW   '%s' x=%d y=%d font=%d stack:",b,(int16_t)r->stk[1],(int16_t)r->stk[2],(int16_t)r->stk[4]);
+    stack_walk(r->stk+1,w,k,sizeof w); T("%s",w); }
+extern void stub_dt(void);
+STUB(dt," subl $4,%esp\n pushl %ebx\n pushl %esi\n");
+static void dt_apply(HMODULE m){
+    if(!tx_draw||(uintptr_t)m!=0x68000000) return; uint8_t *p=(uint8_t*)0x68065650; static const uint8_t orig[5]={0x83,0xec,0x04,0x53,0x56};
+    if(IsBadReadPtr(p,5)) return; if(p[0]==0xe9){ return; }
+    if(memcmp(p,orig,5)){ T("DRAW hook skipped: bytes at 68065650 differ"); return; }
+    DWORD o; if(!VirtualProtect(p,5,PAGE_EXECUTE_READWRITE,&o)) return;
+    resume_dt=0x68065655; uint32_t rel=(uint32_t)(uintptr_t)stub_dt-(0x68065650+5); p[0]=0xe9; memcpy(p+1,&rel,4);
+    DWORD o2; VirtualProtect(p,5,o,&o2); FlushInstructionCache(GetCurrentProcess(),p,5); T("DRAW hook applied at 68065650"); }
 static int widen_apply(HMODULE m){
     if(!GetPrivateProfileIntA("widen","enable",0,ini_path)){ T("WIDEN off (bbfix.ini [widen] enable=0), BBShell left pristine"); return 0; }
     if((uintptr_t)m!=0x68000000){ T("WIDEN skip ALL: BBShell base %p != 68000000",m); return 0; }
@@ -340,7 +358,7 @@ static void patch_all(void) {
 }
 typedef struct { ULONG Flags; void *FullDllName; void *BaseDllName; PVOID DllBase; ULONG SizeOfImage; } LDR_NOTE;
 typedef VOID (CALLBACK *LDR_CB)(ULONG reason, LDR_NOTE *data, PVOID ctx);
-static VOID CALLBACK on_load(ULONG reason, LDR_NOTE *d, PVOID ctx) { if(reason==1 && d){ char p[MAX_PATH]; GetModuleFileNameA((HMODULE)d->DllBase,p,MAX_PATH); if(!_strnicmp(p,"C:\\Sierra",9)){ const char *bn=strrchr(p,'\\')+1; T("DLL    loaded %s at %p",bn,d->DllBase); if(!_stricmp(bn,"BBShell.dll")) widen_apply((HMODULE)d->DllBase); } patch_iat((HMODULE)d->DllBase);} }
+static VOID CALLBACK on_load(ULONG reason, LDR_NOTE *d, PVOID ctx) { if(reason==1 && d){ char p[MAX_PATH]; GetModuleFileNameA((HMODULE)d->DllBase,p,MAX_PATH); if(!_strnicmp(p,"C:\\Sierra",9)){ const char *bn=strrchr(p,'\\')+1; T("DLL    loaded %s at %p",bn,d->DllBase); if(!_stricmp(bn,"BBShell.dll")) { widen_apply((HMODULE)d->DllBase); dt_apply((HMODULE)d->DllBase); } } patch_iat((HMODULE)d->DllBase);} }
 
 BOOL WINAPI DllMain(HINSTANCE h, DWORD why, LPVOID r) {
     if(why==DLL_PROCESS_ATTACH) {
