@@ -125,3 +125,18 @@ This is out of scope for current milestone but technically feasible with frame a
 
 All addresses are RVAs; memory addresses = RVA + 0x68000000 (ImageBase).
 AGENT RESULT 2026-10-06: Opus agent claimed M1/M2 done (12 cols, patched BBShell.dll + .STS to 149 B) but independent screenshot showed screen unchanged (8 cols, 50 px) and agent never saw a screen. Reverted to pristine. Concern: ids block is 0x50 bytes in a 0x80 stride, 12 cols x2 blocks overflows into the name fields.
+
+## C hook path (2026-10-06, supersedes patch_ext.py caves)
+Hooks live in src-latest/bbfix.c (widen_apply), applied in memory on every BBShell.dll load, all-or-nothing after byte
+verification; on-disk DLL pristine; off = bbfix.ini [widen] enable=0 (default off). Build:
+`Z="/mnt/nvme/bbpro98/zigenv/bin/python -m ziglang"; $Z cc -target x86-windows-gnu -O2 -shared -o OUT/bbfix.dll bbfix.c -Wno-incompatible-pointer-types -lpsapi`.
+Stubs do pushfd+pushal, call a C handler with Regs, popal+popfd, run displaced insns, jmp back; handler stack view stk[k]=[site_esp+4k].
+Bug found on the way: on_load compared "C:\Sierra" with n=10 (includes NUL) so "DLL loaded" never logged; fixed to 9.
+
+### Register liveness at each hook site (checked against work/BBShell.asm)
+- 6805cae2 (slot): original movsx ecx,bp / push eax / mov edx,[esi+ecx*4+0x6c]. Writes ecx, edx, both redefined later (ecx by mov ecx,esi at caf0, edx pushed at caee). eax live and untouched. Flags dead (next reader is cmp at cafb). push eax reordered after the two writes: independent.
+- 6805cafb, 6805cb0b, 6800d442: immediate-only byte patches, no registers.
+- 6805cbe7 (hdr): original mov eax,[ebp] / mov ecx,ebp / add ebp,4. eax redefined by the next load (cbef reads it, so the handler sets it, correct). ecx dead (overwritten at cbef). edx NOT touched now (old cave2 clobbered it; it was dead anyway: site follows a call at cbe2 and edx is not read before the next call). Flags dead (test ebx at cc01). Block selector = param_5 at [site_esp+0x28]: entry esp-0x14 after sub esp,4 + 4 pushes, p5 at entry+0x14.
+- 6800ec2c (cell): original mov cx,bx / sub cx,9. Only the low word of ecx changes (upper word preserved, pushed whole at ec33). Flags dead (push/push/lea/call follow).
+- 6800d3aa (init): displaced push 0 / mov eax,[esi+0x34] executed by the stub after the handler; handler calls FUN_680436c0 and FUN_68043400 (thiscall, this=0x6808dd10, 2 stack args, ret 8) for ids 0x30..0x33.
+Verified: screenshots h2b (default ids) and h3b (reversed ids positive control) on work_install with pristine BBShell.dll and SHELL_wide5.VOL.

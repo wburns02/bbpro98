@@ -4,7 +4,9 @@ L=/mnt/nvme/bbpro98/work_install
 LIVE=/home/will/.bbpro98_prefix/drive_c/Sierra/BBPRO_98
 [ "$(realpath $L)" = "$(realpath $LIVE)" ] && { echo REFUSED: target is live install; exit 9; }
 for p in $(pgrep -f 'C:.Sierra.BBPRO_98_work.(bblaunch|Baseball).exe|winedb[g]\.exe'); do kill $p; done; sleep 3
-cp "$1" $L/BBShell.dll
+B=/mnt/nvme/bbpro98_backups/BBPRO_98_2006-end_2026-10-06
+cmp -s $L/BBShell.dll $B/BBShell.dll || { echo "REFUSED: work BBShell.dll is not pristine"; exit 8; }
+cp "$1" $L/bbfix.dll
 (setsid bash /home/will/bb_launch_work.sh >/dev/null 2>&1 &); sleep 20
 bash /home/will/bbpro98/work/patches/nav_stats.sh "$2a"
 export DISPLAY=:99

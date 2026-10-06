@@ -4,6 +4,8 @@
 #include <windows.h>
 #include <tlhelp32.h>
 #include <stdio.h>
+#include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 static FILE *lg;
@@ -200,6 +202,79 @@ static struct { const char *dll,*name; void *hook; void **real; } HK[]={
  {"USER32.dll","CreateWindowExA",H_CreateWindowExA,(void**)&R_CreateWindowExA},{"USER32.dll","DestroyWindow",H_DestroyWindow,(void**)&R_DestroyWindow},
  {"USER32.dll","SetTimer",H_SetTimer,(void**)&R_SetTimer},{"USER32.dll","KillTimer",H_KillTimer,(void**)&R_KillTimer},
  {"USER32.dll","MessageBoxA",H_MessageBoxA,(void**)&R_MessageBoxA},{"USER32.dll","PostQuitMessage",H_PostQuitMessage,(void**)&R_PostQuitMessage}};
+
+/* ---- BBShell.dll widening hooks (League Statistics screen: 4 extra stat columns) ----
+   BBShell.dll is mapped and freed per screen, so the hooks are applied in-memory on every load (on_load) and the
+   on-disk DLL stays pristine. All-or-nothing: every site is verified against its expected original bytes first; if any
+   byte differs nothing is written. Hooks are jmp detours into naked stubs that save flags + all registers (pushfd,
+   pushad), call a C handler with a Regs frame, restore, run the displaced instructions the handler did not emulate,
+   and jmp back. Handlers see the site's own stack frame at stk[k] == [site_esp + 4*k] (no "+4 for our call"), and
+   only the registers a handler writes into Regs change, so a stray clobber (edx etc.) cannot happen.
+   Liveness of every site is recorded in work/NOTES_widen.md. Config: bbfix.ini [widen] enable=1 bat=a,b,c,d pit=a,b,c,d */
+typedef struct { uint32_t edi,esi,ebp,esp_,ebx,edx,ecx,eax,efl; uint32_t stk[16]; } Regs;
+static char ini_path[MAX_PATH];
+static uint32_t ext_tab[2][4]={{49,50,57,52},{262,251,276,277}};   /* stat ids for ext columns: [view][col] */
+static uint32_t ext_id(uint32_t view,uint32_t k){ return (view<2&&k<4)?ext_tab[view][k]:0; }
+#define TC __attribute__((thiscall))
+typedef void (TC *tc2_t)(void *self,int a,int b);
+#define HANDLER __attribute__((used,force_align_arg_pointer))
+/* site 1, 6805cae2: movsx ecx,bp / push eax / mov edx,[esi+ecx*4+0x6c]. Slots 0..9 as before, 10..13 -> ext id. */
+HANDLER void h_slot(Regs *r){ int cx=(int16_t)r->ebp; r->ecx=(uint32_t)cx;
+    r->edx = cx<10 ? *(uint32_t*)(r->esi+cx*4+0x6c) : ext_id(*(uint32_t*)(r->esi+0xe8),(uint32_t)(cx-10)); }
+/* site 4, 6805cbe7: mov eax,[ebp] / mov ecx,ebp / add ebp,4. Header ids 0x1d..0x20 -> ext id; block = param_5 = [esp+0x28] */
+HANDLER void h_hdr(Regs *r){ uint32_t p=r->ebp; r->eax=*(uint32_t*)p; r->ecx=p; r->ebp=p+4;
+    uint32_t k=r->esi-0x1d; if(k<4) r->eax=ext_id(r->stk[0x28/4],k); }
+/* site 5, 6800ec2c: mov cx,bx / sub cx,9. Cell index = gadget id-9, or id-0x26 for ext ids >= 0x30. Only cx changes. */
+HANDLER void h_cell(Regs *r){ uint32_t bx=r->ebx&0xffff, cx=bx>=0x30?bx-0x26:bx-9; r->ecx=(r->ecx&0xffff0000u)|(cx&0xffff); }
+/* site 6, 6800d3aa: after the 9..0x12 init loop, init body gadgets 0x30..0x33 the same way (2 stack args, ret 8). */
+HANDLER void h_init(Regs *r){ (void)r; tc2_t f1=(tc2_t)0x680436c0, f2=(tc2_t)0x68043400;
+    for(int id=0x30;id<0x34;id++){ f1((void*)0x6808dd10,id,0x6800ea40); f2((void*)0x6808dd10,id,0); } }
+uint32_t resume_slot,resume_hdr,resume_cell,resume_init;
+extern void stub_slot(void),stub_hdr(void),stub_cell(void),stub_init(void);
+#define STUB(n,tail) __asm__(".text\n.globl _stub_" #n "\n_stub_" #n ":\n pushfl\n pushal\n pushl %esp\n call _h_" #n "\n addl $4,%esp\n popal\n popfl\n" tail " jmp *_resume_" #n "\n")
+STUB(slot," pushl %eax\n");            /* displaced: push eax (reordered after movsx/mov, independent of them) */
+STUB(hdr,"");
+STUB(cell,"");
+STUB(init," pushl $0\n movl 0x34(%esi),%eax\n");   /* displaced: push 0 / mov eax,[esi+0x34] */
+typedef struct { const char *name; uint32_t va; int n; uint8_t orig[8]; int immoff; uint8_t immnew; void (*stub)(void); uint32_t *resume; } Site;
+static Site sites[]={
+ {"slot",   0x6805cae2,8,{0x0f,0xbf,0xcd,0x50,0x8b,0x54,0x8e,0x6c},0,0,stub_slot,&resume_slot},
+ {"bound",  0x6805cafb,4,{0x66,0x83,0xfd,0x0a},3,0x0e,0,0},       /* cmp bp,10 -> 14 */
+ {"term",   0x6805cb0b,2,{0x6a,0x0a},1,0x0e,0,0},                 /* push 10 -> 14 */
+ {"hdr",    0x6805cbe7,8,{0x8b,0x45,0x00,0x8b,0xcd,0x83,0xc5,0x04},0,0,stub_hdr,&resume_hdr},
+ {"cell",   0x6800ec2c,7,{0x66,0x8b,0xcb,0x66,0x83,0xe9,0x09},0,0,stub_cell,&resume_cell},
+ {"init",   0x6800d3aa,5,{0x6a,0x00,0x8b,0x46,0x34},0,0,stub_init,&resume_init},
+ {"hdrrng", 0x6800d442,2,{0x6a,0x1c},1,0x20,0,0}};                /* header range 0x13..0x1c -> 0x20 */
+#define NSITE ((int)(sizeof sites/sizeof*sites))
+static void widen_cfg(void){
+    char b[128]; int en=GetPrivateProfileIntA("widen","enable",0,ini_path); (void)en;
+    const char *keys[2]={"bat","pit"};
+    for(int v=0;v<2;v++){ GetPrivateProfileStringA("widen",keys[v],"",b,sizeof b,ini_path); if(!b[0]) continue;
+        uint32_t t[4]; int n=0; for(char *s=strtok(b,", ");s&&n<4;s=strtok(0,", ")) t[n++]=strtoul(s,0,0);
+        if(n==4) memcpy(ext_tab[v],t,sizeof t); } }
+static int widen_apply(HMODULE m){
+    if(!GetPrivateProfileIntA("widen","enable",0,ini_path)){ T("WIDEN off (bbfix.ini [widen] enable=0), BBShell left pristine"); return 0; }
+    if((uintptr_t)m!=0x68000000){ T("WIDEN skip ALL: BBShell base %p != 68000000",m); return 0; }
+    widen_cfg();
+    uint8_t want[NSITE][8]; int nap=0;
+    for(int i=0;i<NSITE;i++){ Site *s=&sites[i]; uint8_t *p=(uint8_t*)(uintptr_t)s->va;
+        if(IsBadReadPtr(p,s->n)){ T("WIDEN skip ALL: site %s %08x unreadable",s->name,s->va); return 0; }
+        memcpy(want[i],s->orig,s->n);
+        if(s->stub){ uint32_t rel=(uint32_t)(uintptr_t)s->stub-(s->va+5); want[i][0]=0xe9; memcpy(want[i]+1,&rel,4); for(int k=5;k<s->n;k++) want[i][k]=0x90; *s->resume=s->va+s->n; }
+        else want[i][s->immoff]=s->immnew;
+        if(!memcmp(p,s->orig,s->n)) continue;
+        if(!memcmp(p,want[i],s->n)){ nap++; continue; }
+        char h[40]="",w[40]=""; for(int k=0;k<s->n;k++){ sprintf(h+2*k,"%02x",p[k]); sprintf(w+2*k,"%02x",s->orig[k]); }
+        T("WIDEN skip ALL: site %s %08x has %s expected %s (no hooks applied)",s->name,s->va,h,w); return 0; }
+    if(nap==NSITE) return 1;                                         /* already hooked this mapping */
+    if(nap){ T("WIDEN skip ALL: %d of %d sites already hooked (inconsistent)",nap,NSITE); return 0; }
+    DWORD old[NSITE]; int i;
+    for(i=0;i<NSITE;i++) if(!VirtualProtect((void*)(uintptr_t)sites[i].va,sites[i].n,PAGE_EXECUTE_READWRITE,&old[i])) break;
+    if(i<NSITE){ T("WIDEN skip ALL: VirtualProtect failed at %s err=%lu",sites[i].name,GetLastError()); for(int k=0;k<i;k++){ DWORD o; VirtualProtect((void*)(uintptr_t)sites[k].va,sites[k].n,old[k],&o);} return 0; }
+    for(i=0;i<NSITE;i++) memcpy((void*)(uintptr_t)sites[i].va,want[i],sites[i].n);
+    for(i=0;i<NSITE;i++){ DWORD o; VirtualProtect((void*)(uintptr_t)sites[i].va,sites[i].n,old[i],&o); FlushInstructionCache(GetCurrentProcess(),(void*)(uintptr_t)sites[i].va,sites[i].n); }
+    T("WIDEN applied %d hooks to BBShell.dll; bat=%u,%u,%u,%u pit=%u,%u,%u,%u",NSITE,ext_tab[0][0],ext_tab[0][1],ext_tab[0][2],ext_tab[0][3],ext_tab[1][0],ext_tab[1][1],ext_tab[1][2],ext_tab[1][3]);
+    return 1; }
 static LONG CALLBACK VEH(EXCEPTION_POINTERS *ep){ static int n; static void *last; DWORD c=ep->ExceptionRecord->ExceptionCode;
     if(c==0xC0000005 || c==0xC000001D || c==0xC0000094 || c==0xC00000FD){ void*a=ep->ExceptionRecord->ExceptionAddress; if(a!=last && n<400){ char b[96]; last=a; n++; T("CRASH  exception %08lx at %s  (fault addr %p)",c,modname(a,b,96),c==0xC0000005&&ep->ExceptionRecord->NumberParameters>1?(void*)ep->ExceptionRecord->ExceptionInformation[1]:0);} }
     return EXCEPTION_CONTINUE_SEARCH; }
@@ -238,13 +313,13 @@ static void patch_all(void) {
 }
 typedef struct { ULONG Flags; void *FullDllName; void *BaseDllName; PVOID DllBase; ULONG SizeOfImage; } LDR_NOTE;
 typedef VOID (CALLBACK *LDR_CB)(ULONG reason, LDR_NOTE *data, PVOID ctx);
-static VOID CALLBACK on_load(ULONG reason, LDR_NOTE *d, PVOID ctx) { if(reason==1 && d){ char p[MAX_PATH]; GetModuleFileNameA((HMODULE)d->DllBase,p,MAX_PATH); if(!_strnicmp(p,"C:\\Sierra",10)) T("DLL    loaded %s at %p",strrchr(p,'\\')+1,d->DllBase); patch_iat((HMODULE)d->DllBase);} }
+static VOID CALLBACK on_load(ULONG reason, LDR_NOTE *d, PVOID ctx) { if(reason==1 && d){ char p[MAX_PATH]; GetModuleFileNameA((HMODULE)d->DllBase,p,MAX_PATH); if(!_strnicmp(p,"C:\\Sierra",9)){ const char *bn=strrchr(p,'\\')+1; T("DLL    loaded %s at %p",bn,d->DllBase); if(!_stricmp(bn,"BBShell.dll")) widen_apply((HMODULE)d->DllBase); } patch_iat((HMODULE)d->DllBase);} }
 
 BOOL WINAPI DllMain(HINSTANCE h, DWORD why, LPVOID r) {
     if(why==DLL_PROCESS_ATTACH) {
         char p[MAX_PATH]; GetModuleFileNameA(h,p,MAX_PATH); char *s=strrchr(p,'\\'); if(s) strcpy(s+1,"bbfix.log");
         lg=fopen(p,"w"); L("bbfix loaded");
-        InitializeCriticalSection(&trcs); strcpy(s+1,"bbtrace.log"); tr=CreateFileA(p,GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,0,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,0);
+        strcpy(s+1,"bbfix.ini"); strcpy(ini_path,p); InitializeCriticalSection(&trcs); strcpy(s+1,"bbtrace.log"); tr=CreateFileA(p,GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,0,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,0);
         T("=== BBPRO98 action trace started (pid %lu) ===",GetCurrentProcessId()); AddVectoredExceptionHandler(1,VEH); CreateThread(0,0,HandleWatch,0,0,0);
         patch_all();
         typedef LONG (NTAPI *Reg_t)(ULONG,LDR_CB,PVOID,PVOID*);
