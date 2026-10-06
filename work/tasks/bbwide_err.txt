@@ -1,0 +1,1 @@
+cloud-code: model=z-ai/glm-5.3-flash llm_service=hive mode=full wall=178.7s prompt_tokens=2268 completion_tokens=25025 cached_tokens=1920

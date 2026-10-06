@@ -1,0 +1,70 @@
+TASK: write ONE Python 3 file, /home/will/bbpro98/work/bbwide.py (stdlib only, no third party packages, no tkinter). Output ONLY the complete file contents in a single code block. Be terse, no commentary.
+
+PURPOSE: a local web page that shows a WIDE sortable stats table for FPS Baseball Pro '98 players, with many columns at once and advanced metrics.
+
+EXISTING MODULE you must import (do not rewrite it). Full source of /home/will/bbpro98/work/bbstats.py:
+```python
+"""Reader for FPS Baseball Pro '98 season snapshots. usage: bbstats.py <snapdir> bat|pit [N]"""
+import sys, struct, os
+sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, '/home/will/bbpro98/BBPRO98_package/research')
+sys.path.insert(0, '/home/will/bbpro98/BBPRO98_package/mods')
+from lib import load
+import dump_pyr as D
+
+def names(pyr):
+    d, recs, inv = D.load(pyr); out = {}
+    for r in recs:
+        p = D.decode(r, inv); pid = p[0] | p[1] << 8
+        out[pid] = (D.cstr(p[30:47]) + ' ' + D.cstr(p[47:64])).strip()
+    return out
+
+def lines(snap, scope=1):
+    """returns {'bat':{id:cols}, 'pit':{id:cols}} for given scope (1=last season, 2=career)"""
+    bat, pit = {}, {}
+    for pos, rn, off, u in load(os.path.join(snap, 'Stats/mlbpa97.DAT')):
+        if u[0] != scope: continue
+        if len(u) == 40 // 2 * 2 and False: pass
+        n = len(u) * 2
+        if n == 40: bat[u[2]] = u[3:]
+        elif n == 70: pit[u[2]] = u[3:]
+    return bat, pit
+
+if __name__ == '__main__':
+    snap, kind = sys.argv[1], sys.argv[2]; top = int(sys.argv[3]) if len(sys.argv) > 3 else 15
+    nm = names(os.path.join(snap, 'Assn/MLBPA97.PYR'))
+    bat, pit = lines(snap)
+    if kind == 'bat':
+        rows = []
+        for i, c in bat.items():
+            ab, s, d, t, hr, rbi, bb, so = c[:8]; h = s + d + t + hr
+            if ab >= 300: rows.append((h / ab, i, ab, h, hr, rbi))
+        for a, i, ab, h, hr, rbi in sorted(rows, reverse=True)[:top]:
+            print('%-24s AB %4d H %3d HR %2d RBI %3d AVG %.3f' % (nm.get(i, i), ab, h, hr, rbi, a))
+    else:
+        rows = []
+        for i, c in pit.items():
+            outs, er = c[18], c[26]
+            if outs >= 450: rows.append((27 * er / outs, i, outs, c[20], c[21]))
+        for e, i, outs, w, l in sorted(rows)[:top]:
+            print('%-24s %d-%d IP %d.%d ERA %.2f' % (nm.get(i, i), w, l, outs // 3, outs % 3, e))
+```
+
+Use it like this: `sys.path.insert(0,'/home/will/bbpro98/work'); import bbstats`. `bbstats.names(pyr_path)` returns {player_id: "First Last"}. `bbstats.lines(snapdir, scope)` returns (bat, pit): dicts player_id -> list of ints `c` (columns AFTER the id), for the stats file at <snapdir>/Stats/mlbpa97.DAT. snapdir is a directory containing Stats/ and Assn/. Names come from <snapdir>/Assn/MLBPA97.PYR. Scope 0 = current season in progress, 1 = last completed season, 2 = career.
+
+DEFAULT snapdir: /home/will/.bbpro98_prefix/drive_c/Sierra/BBPRO_98 . CLI: `python3 bbwide.py [--snap DIR] [--port 8099]`. Serves on 127.0.0.1 only (never 0.0.0.0) using http.server. Re-read the stat files on every /api request (no caching), so the page reflects the latest game state.
+
+BATTING columns (c = list after id): AB=c[0], S=c[1] (singles), D=c[2], T=c[3], HR=c[4], RBI=c[5], BB=c[6], SO=c[7], G=c[12], R=c[13], SB=c[14], CS=c[15]. Guard: if len(c) < 16 skip the player. Derived:
+H=S+D+T+HR; TB=S+2*D+3*T+4*HR; PA=AB+BB; AVG=H/AB; OBP=(H+BB)/PA; SLG=TB/AB; OPS=OBP+SLG; ISO=SLG-AVG; BBpct=BB/PA; Kpct=SO/PA; BBK=BB/SO (None if SO==0);
+wOBA=(0.69*BB+0.88*S+1.24*D+1.56*T+2.0*HR)/PA.
+League values: sums over ALL batters in the same scope (before the min filter): lgOBP, lgSLG, lgwOBA computed from league totals the same way. OPS_plus=round(100*(OBP/lgOBP+SLG/lgSLG-1)). BatRuns=(wOBA-lgwOBA)/1.2*PA. oWAR=(BatRuns+20*PA/600+0.2*SB-0.4*CS)/10 (label the column "oWAR~", approximate, offense only, no defense or position).
+Return None for any ratio with a zero denominator. Round displayed rates to 3 decimals (rates) or 1 decimal (WAR, runs).
+
+PITCHING columns (c = list after id; this is the opponent batting line vs the pitcher plus pitcher fields): oAB=c[0], oS=c[1], oD=c[2], oT=c[3], HRa=c[4], BBa=c[6], SO=c[7], R=c[13], OUTS=c[18], BF=c[19], W=c[20], L=c[21], SV=c[22], ER=c[26]. Guard: if len(c) < 27 skip. Derived: IP=OUTS/3 (display as e.g. 123.1 meaning 123 and 1/3); Ha=oS+oD+oT+HRa; ERA=27*ER/OUTS; WHIP=3*(Ha+BBa)/OUTS; K9=27*SO/OUTS; BB9=27*BBa/OUTS; HR9=27*HRa/OUTS; KBB=SO/BBa (None if 0); H9=27*Ha/OUTS.
+FIP=(13*HRa+3*BBa-2*SO)/IP + FIPconst where FIPconst=lgERA-(13*lgHR+3*lgBB-2*lgSO)/lgIP from league totals over ALL pitchers in scope. pWAR~=((lgERA-FIP)*IP/9+20*IP/200)/10, label "pWAR~" (approximate).
+ERA_plus=round(100*lgERA/ERA) (None if ERA==0).
+
+HTTP API: GET /api?kind=bat|pit&scope=0|1|2&min=N -> JSON {"columns":[names...],"rows":[[...]],"scopes_available":[...],"snap":"..."}. min filters players with AB>=N (bat) or OUTS>=N (pit); default min 0. Row's first columns: Name, then the stats. Batting columns in order: Name,G,AB,R,H,2B,3B,HR,RBI,BB,SO,SB,CS,AVG,OBP,SLG,OPS,ISO,BB%,K%,BB/K,wOBA,OPS+,oWAR~. Pitching order: Name,W,L,SV,IP,H,R,ER,HR,BB,SO,ERA,WHIP,K/9,BB/9,HR/9,H/9,K/BB,FIP,ERA+,pWAR~. Invalid input (bad kind/scope/min) -> HTTP 400 JSON error. Missing stats file -> 500 JSON {"error": msg}, never crash the server.
+GET / returns one self-contained HTML page (inline CSS and JS, no external resources, dark theme, monospace-friendly, fills the full browser width): buttons Batting/Pitching, scope select (Current/Last season/Career), min AB/OUTS number input, text filter box on name, click-a-header to sort (toggle asc/desc, numbers numeric, null last), shows row count, sticky header, a footer line explaining the "~" columns are approximations and OBP excludes HBP and SF. The page fetches /api with fetch() and renders with textContent (never innerHTML with data).
+Also support `python3 bbwide.py --dump bat|pit SCOPE [MIN]` printing the API JSON rows as TSV to stdout (for testing without a server), and exit.
+Security: bind 127.0.0.1, only GET, no file serving beyond the two endpoints, no eval/exec/subprocess.

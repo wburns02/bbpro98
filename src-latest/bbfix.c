@@ -263,7 +263,7 @@ STUB(slot," pushl %eax\n");            /* displaced: push eax (reordered after m
 STUB(hdr,"");
 STUB(cell,"");
 STUB(init," pushl $0\n movl 0x34(%esi),%eax\n");   /* displaced: push 0 / mov eax,[esi+0x34] */
-typedef struct { const char *name; uint32_t va; int n; uint8_t orig[8]; int immoff; uint8_t immnew; void (*stub)(void); uint32_t *resume; } Site;
+typedef struct { const char *name; uint32_t va; int n; uint8_t orig[8]; int immoff; uint8_t immnew; void (*stub)(void); uint32_t *resume; int call; } Site;
 static Site sites[]={
  {"slot",   0x6805cae2,8,{0x0f,0xbf,0xcd,0x50,0x8b,0x54,0x8e,0x6c},0,0,stub_slot,&resume_slot},
  {"bound",  0x6805cafb,4,{0x66,0x83,0xfd,0x0a},3,0x0e,0,0},       /* cmp bp,10 -> 14 */
@@ -271,9 +271,29 @@ static Site sites[]={
  {"hdr",    0x6805cbe7,8,{0x8b,0x45,0x00,0x8b,0xcd,0x83,0xc5,0x04},0,0,stub_hdr,&resume_hdr},
  {"cell",   0x6800ec2c,7,{0x66,0x8b,0xcb,0x66,0x83,0xe9,0x09},0,0,stub_cell,&resume_cell},
  {"init",   0x6800d3aa,5,{0x6a,0x00,0x8b,0x46,0x34},0,0,stub_init,&resume_init},
- {"hdrrng", 0x6800d442,2,{0x6a,0x1c},1,0x20,0,0}};                /* header range 0x13..0x1c -> 0x20 */
+ {"hdrrng", 0x6800d442,2,{0x6a,0x1c},1,0x20,0,0},                /* header range 0x13..0x1c -> 0x20 */
+ {"click",  0x6800d74f,4,{0x66,0x83,0xfe,0x1c},3,0x20,0,0},
+ {"vt8",    0x68081f7c,4,{0xf0,0x5c,0x07,0x68},0,0,0,0,2},          /* vtable slot +4 (redraw) of the stats list frame, gadget id 8: 68075cf0 -> w_vt8 */
+ {"rd1",    0x680721d7,5,{0xe8},0,0,0,0,1},                      /* the 3 calls to GadgetMgr_RedrawList 68043cb0 go through w_redraw so ext gadgets redraw/scroll/sort too */
+ {"rd2",    0x68072227,5,{0xe8},0,0,0,0,1},
+ {"rd3",    0x68072255,5,{0xe8},0,0,0,0,1}};      /* header click handler FUN_6800d740: cmp si,0x1c -> 0x20, so ext headers sort */
 #define NSITE ((int)(sizeof sites/sizeof*sites))
-static void widen_cfg(void){
+/* wrapper for 68043cb0 (thiscall, 4 stack args id,a,flag,b, ret 0x10; verified from the disassembly, Ghidra had 3): original ring walk, then the same for ext body gadgets 0x30..0x33 when the list is the stats grid (group id 9) */
+static int rd_ext=1;
+/* ext body gadgets are not in the list's gadget ring, so sort/scroll redraws (which redraw gadget 8 and its ring) miss them: redraw them after gadget 8 */
+static void TC w_vt8(void *self){
+    ((void (TC*)(void*))0x68075cf0)(self);
+    if(!rd_ext||*(uint16_t*)((uint8_t*)self+0xc)!=8) return;
+    void *mgr=(void*)0x6808dd10; uint32_t *vt=*(uint32_t**)mgr;
+    for(int id=0x30;id<0x34;id++){ void **g=((void**(TC*)(void*,int))vt[0x48/4])(mgr,id); if(!g||IsBadReadPtr(g,4)) continue;
+        uint32_t *gv=(uint32_t*)*g; if(((short(TC*)(void*))gv[0x14/4])(g)!=8) continue; ((void(TC*)(void*))gv[4/4])(g); } }
+static void TC w_redraw(void *self,uint32_t id,int a,int flag,int b){
+    ((void (TC*)(void*,uint32_t,int,int,int))0x68043cb0)(self,id,a,flag,b);
+    if((int16_t)id!=9||!rd_ext) return;
+    int16_t a16=(int16_t)a,s5=a16?(int16_t)b:0; uint32_t *vt=*(uint32_t**)self;
+    for(int g_id=0x30;g_id<0x34;g_id++){ void **g=((void**(TC*)(void*,int))vt[0x48/4])(self,g_id); if(!g||IsBadReadPtr(g,4)) continue;
+        uint32_t *gv=(uint32_t*)*g; if(((short(TC*)(void*))gv[0x14/4])(g)!=8) continue;
+        ((void(TC*)(void*,int,int))gv[0x2c/4])(g,a16,s5); if((int16_t)flag) ((void(TC*)(void*))gv[4/4])(g); } }static void widen_cfg(void){
     char b[128]; int en=GetPrivateProfileIntA("widen","enable",0,ini_path); (void)en;
     const char *keys[2]={"bat","pit"};
     for(int v=0;v<2;v++){ GetPrivateProfileStringA("widen",keys[v],"",b,sizeof b,ini_path); if(!b[0]) continue;
@@ -299,12 +319,15 @@ static void dt_apply(HMODULE m){
 static int widen_apply(HMODULE m){
     if(!GetPrivateProfileIntA("widen","enable",0,ini_path)){ T("WIDEN off (bbfix.ini [widen] enable=0), BBShell left pristine"); return 0; }
     if((uintptr_t)m!=0x68000000){ T("WIDEN skip ALL: BBShell base %p != 68000000",m); return 0; }
-    widen_cfg();
+    widen_cfg(); rd_ext=GetPrivateProfileIntA("widen","rdext",1,ini_path);
     uint8_t want[NSITE][8]; int nap=0;
     for(int i=0;i<NSITE;i++){ Site *s=&sites[i]; uint8_t *p=(uint8_t*)(uintptr_t)s->va;
         if(IsBadReadPtr(p,s->n)){ T("WIDEN skip ALL: site %s %08x unreadable",s->name,s->va); return 0; }
+        if(s->call==1){ uint32_t r=0x68043cb0-(s->va+5); ((Site*)s)->orig[0]=0xe8; memcpy(((Site*)s)->orig+1,&r,4); }
         memcpy(want[i],s->orig,s->n);
-        if(s->stub){ uint32_t rel=(uint32_t)(uintptr_t)s->stub-(s->va+5); want[i][0]=0xe9; memcpy(want[i]+1,&rel,4); for(int k=5;k<s->n;k++) want[i][k]=0x90; *s->resume=s->va+s->n; }
+        if(s->call==2){ uint32_t r=(uint32_t)(uintptr_t)w_vt8; memcpy(want[i],&r,4); }
+        else if(s->call==1){ uint32_t r=(uint32_t)(uintptr_t)w_redraw-(s->va+5); memcpy(want[i]+1,&r,4); }
+        else if(s->stub){ uint32_t rel=(uint32_t)(uintptr_t)s->stub-(s->va+5); want[i][0]=0xe9; memcpy(want[i]+1,&rel,4); for(int k=5;k<s->n;k++) want[i][k]=0x90; *s->resume=s->va+s->n; }
         else want[i][s->immoff]=s->immnew;
         if(!memcmp(p,s->orig,s->n)) continue;
         if(!memcmp(p,want[i],s->n)){ nap++; continue; }

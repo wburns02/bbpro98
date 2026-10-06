@@ -1,0 +1,64 @@
+<title>BBPro98 Wide Stats Report</title>
+<style>
+:root{--bg:#f6f6f3;--fg:#1c1f1d;--mute:#5d645f;--line:#d9dbd5;--accent:#1f6b4a;--bad:#a63a2b;--panel:#ffffff}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#121513;--fg:#e6e9e4;--mute:#9aa39c;--line:#2b312d;--accent:#5cc38f;--bad:#e07a68;--panel:#1a1e1b;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#121513;--fg:#e6e9e4;--mute:#9aa39c;--line:#2b312d;--accent:#5cc38f;--bad:#e07a68;--panel:#1a1e1b;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font:15px/1.55 system-ui,sans-serif;padding-inline:16px;padding-block:24px}
+main{max-width:860px;margin:0 auto;display:flex;flex-direction:column;gap:22px;min-width:0}
+h1{font-size:1.5rem;margin:0;text-wrap:balance}
+h2{font-size:.78rem;letter-spacing:.09em;text-transform:uppercase;color:var(--mute);margin:0 0 6px}
+p,ul{margin:0}ul{padding-left:1.1rem}
+.v{border-left:4px solid var(--accent);padding:8px 12px;background:var(--panel)}
+.wrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;min-width:520px}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+code{font-family:ui-monospace,monospace;font-size:.9em}
+</style>
+<main>
+<h1>BBPro98 wide stats</h1>
+<div class="v"><h2>Verdict</h2><p>Mostly done, not 100%. The in-game League Statistics screen now shows 12 columns at once and is installed in the live game. Batting adds OBP, SLG, Pro and Iso. Pitching adds ER, HR, K/9 and BB/9. This replaces the earlier "not 100%" verdict, when the in-game widening had failed. Lineup, Hall of Fame and a full season were not tested.</p></div>
+
+<section><h2>What was accomplished</h2>
+<ul>
+<li>Root cause found: the screen is built from <code>SHELL.VOL</code> (<code>DIAL.REQ</code> block 13), not from the BBShell code the earlier patches targeted. Blocks that start above roughly 0xfe9x fail to load, so a large block was moved to the end of the volume (wide5).</li>
+<li>Seven in-memory hooks in <code>bbfix.dll</code> (<code>src-latest/bbfix.c</code>) add four body and four header gadgets and map them to stat ids. All-or-nothing, original bytes verified first, on-disk <code>BBShell.dll</code> stays pristine, re-applied on every load. Stat ids come from <code>bbfix.ini</code>.</li>
+<li>Installed in the live game with <code>work/patches/install_live.sh</code>. Revert with <code>revert_live.sh</code>, which restores the pristine 2006-end backup.</li>
+<li>Found the grid's real text routine (<code>DrawText_Shell</code> 68065650) and added a flag-gated trace hook. This is the base for the Career-data click-through idea.</li>
+<li>Ghidra 12.1.4 is now the live source of truth: 14 binaries in <code>/mnt/nvme/bbpro98/ghidra_proj</code>, queried and edited through <code>gh.sh</code> (pyghidra-mcp on port 18765). Named stats, STS, window-create, grid and text functions. Defined the StatSet struct. Regenerated <code>_all.c</code>.</li>
+<li>Process: work copy at <code>/mnt/nvme/bbpro98/work_install</code> with scripts that refuse the live target; private git repo (three more commits, not pushed); HANDOFF.md, progress.md and the memory file updated.</li>
+</ul></section>
+
+<section><h2>Verified, and by whom</h2>
+<div class="wrap"><table>
+<tr><th>Checked by me (screenshots read)</th><th>Not independently checked</th></tr>
+<tr><td>Live install: 12-column batting view with hooks loaded (<code>L2.png</code>). Work copy: pitching view, Players, Teams, Season and Career views; Change Columns dialog; Association News, Data, History; Team Statistics, Roster; Draft; one sim day, after which the Teams view showed live OBP/SLG/Pro/Iso. Spot checks: Eckersley K/9 = 130*9/143.67 = 8.14 matches the screen. SF 14 H / 37 AB = .378, OBP .465 + SLG .676 = 1.141 Pro, SLG minus AVG = .298 vs .297 shown (rounding). Positive and negative controls on the hooks. Trace "Avg" hit at x=152, y=99. <code>bbtrace.log</code> scan: no faults from the widen hooks.</td><td>Lineup (in-play) screen, Hall of Fame screen, a full season with hooks, and a restart on the real desktop launcher. Team Statistics is not widened and still shows 8 columns. Change Columns still edits 8 slots, so the four extra columns come from the ini, not the dialog. One logged first-chance exception came from the old trace build probing a stack value, caught by <code>IsBadReadPtr</code>; fixed in the shipped build, which I did not re-run through the trace.</td></tr>
+</table></div></section>
+
+<section><h2>Outstanding</h2>
+<ul>
+<li>Untested screens listed above. If one breaks, <code>revert_live.sh</code> restores the original in seconds.</li>
+<li>Ext columns are not user-selectable in-game. Cost: changing them means editing <code>bbfix.ini</code> and restarting.</li>
+<li>Commits are local only. I did not push the repo, per your rule.</li>
+<li>Not started, as instructed: Lahman import, Career-data click-through, GLM-Flash in-game features (in <code>IDEAS.md</code>).</li>
+</ul></section>
+
+<section><h2>Plan to resolve</h2>
+<ul>
+<li>Run a full season on the live install (<code>~/seasons.sh</code>) and play one game to cover Lineup. Gate: no dialogs and no crash lines in <code>bbtrace.log</code>. I can run this next without input.</li>
+<li>Extend Change Columns to 12 slots and widen Team Statistics. Needs the dialog code read in Ghidra first.</li>
+<li>Career-data click-through: hook the grid gadget handler (68077d5b) for row hit-testing, using the draw trace.</li>
+</ul></section>
+
+<section><h2>Loop stats</h2>
+<p>Four process changes plus the Ghidra item done in this stretch. Roughly 15 builds of <code>bbfix.dll</code> (zig cc), about 40 game launches or screen walks, about 30 screenshots read. No builder or Opus agents used on the hooks; hand-written C and asm by me, gated by screenshots. The Ghidra batch needed three tries (project lock, a missing globals dict, a function that did not exist).</p></section>
+
+<section><h2>Landmines learned</h2>
+<ul>
+<li>The thiscall helpers 680436c0 and 68043400 take two stack args and <code>ret 8</code>. Calling them with the wrong cleanup corrupts the stack.</li>
+<li>Hooks must be re-applied each time BBShell loads; it is unmapped and remapped per screen. Verify bytes, hook all sites or none.</li>
+<li>Game text is not GDI. GDI trace hooks log nothing for grid text.</li>
+<li>The "DLL loaded" path check must compare 9 characters, not 10 (the NUL broke it).</li>
+<li>Ghidra project lock: stop the MCP server before batch edits; <code>gh.sh batch</code> does this.</li>
+<li>Test sims need 1997 opening-day data; the 2006-end state sits at season-complete and Simulate is greyed.</li>
+</ul></section>
+</main>
