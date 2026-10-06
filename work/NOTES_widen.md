@@ -140,3 +140,6 @@ Bug found on the way: on_load compared "C:\Sierra" with n=10 (includes NUL) so "
 - 6800ec2c (cell): original mov cx,bx / sub cx,9. Only the low word of ecx changes (upper word preserved, pushed whole at ec33). Flags dead (push/push/lea/call follow).
 - 6800d3aa (init): displaced push 0 / mov eax,[esi+0x34] executed by the stub after the handler; handler calls FUN_680436c0 and FUN_68043400 (thiscall, this=0x6808dd10, 2 stack args, ret 8) for ids 0x30..0x33.
 Verified: screenshots h2b (default ids) and h3b (reversed ids positive control) on work_install with pristine BBShell.dll and SHELL_wide5.VOL.
+
+### Text trace hook (step 3)
+bbfix.ini [trace] text=1 match=STR (or env BBFIX_TRACE_TEXT/BBFIX_TRACE_MATCH). Hooks DrawTextA/TextOutA/ExtTextOutA (IAT, incl. GDI32), logs TEXT lines with caller + stack walk. Result 2026-10-06: the League Statistics grid does NOT use any GDI text call (only the splash 'FPS: Baseball Pro' via ExtTextOutA from ODASL.dll). BBShell imports TextOutA but it never fired for "Avg". The grid is drawn by a bitmap-font blitter inside the game. Next: find that function in Ghidra (string-pointer arg + glyph blit) and hook it with the same in-memory mechanism.

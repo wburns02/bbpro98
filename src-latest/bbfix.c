@@ -9,6 +9,7 @@
 #include <string.h>
 
 static FILE *lg;
+static char ini_path[MAX_PATH];
 static void L(const char *f, ...) { if(!lg) return; va_list a; va_start(a,f); vfprintf(lg,f,a); va_end(a); fputc('\n',lg); fflush(lg); }
 #include <stdarg.h>
 static HANDLE tr; static CRITICAL_SECTION trcs;
@@ -191,6 +192,31 @@ static int __cdecl H_sopen(const char*p,int f,int sh,int m){ int fd=R_sopen(p,f,
 static int __cdecl H_close(int fd){ untrack((void*)(intptr_t)(fd+1),0); return R_close(fd); }
 static void* __cdecl H_fopen(const char*p,const char*m){ void *f=R_fopen(p,m); if(f && is_stats(p)) track(f,1,__builtin_return_address(0),p,"fopen"); return f; }
 static int __cdecl H_fclose(void*f){ untrack(f,1); return R_fclose(f); }
+/* ---- text-draw trace (off by default). bbfix.ini [trace] text=1 match=Avg   or env BBFIX_TRACE_TEXT=1 BBFIX_TRACE_MATCH=Avg.
+   When a drawn string contains match (empty = every string), logs the API, string, caller and a raw stack walk of return
+   addresses (values inside game modules preceded by a call opcode) to bbtrace.log. Finds the drawing function in one run. */
+static int tx_on; static char tx_match[64]; static unsigned tx_cnt;
+static int looks_like_ret(uint32_t v){ if(IsBadReadPtr((void*)(uintptr_t)(v-6),6)) return 0; uint8_t *p=(uint8_t*)(uintptr_t)v;
+    return p[-5]==0xe8 || (p[-6]==0xff&&p[-5]==0x15) || (p[-2]==0xff&&(p[-1]&0xf8)==0xd0); }
+static void text_trace(const char *api,const char *s,int n,void *ret){
+    if(!tx_on||!s||IsBadReadPtr(s,1)) return; char b[160]; if(n<0) n=(int)strnlen(s,150); if(n>150) n=150; memcpy(b,s,n); b[n]=0;
+    if(tx_match[0] && !strstr(b,tx_match)) return; if(tx_cnt++>3000) return;
+    char c[96],w[700]; int k=snprintf(w,sizeof w,"TEXT   %s '%s' ret=%s stack:",api,b,modname(ret,c,96));
+    uint32_t *sp=(uint32_t*)__builtin_frame_address(0); int found=0;
+    for(int i=0;i<256&&found<10&&k<600;i++){ if(IsBadReadPtr(sp+i,4)) break; uint32_t v=sp[i]; HMODULE m=0;
+        if(v<0x10000||!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,(LPCSTR)(uintptr_t)v,&m)||!m) continue;
+        char p[MAX_PATH]; GetModuleFileNameA(m,p,MAX_PATH); if(_strnicmp(p,"C:\\Sierra",9)||!_stricmp(strrchr(p,'\\')+1,"bbfix.dll")) continue;
+        if(!looks_like_ret(v)) continue; k+=snprintf(w+k,sizeof w-k," %s(va %08x)",modname((void*)(uintptr_t)v,c,96),v); found++; }
+    T("%s",w); }
+static int (WINAPI *R_DrawTextA)(HDC,LPCSTR,int,LPRECT,UINT);
+static int WINAPI H_DrawTextA(HDC dc,LPCSTR s,int n,LPRECT r,UINT f){ text_trace("DrawTextA",s,n,__builtin_return_address(0)); return R_DrawTextA(dc,s,n,r,f); }
+static BOOL (WINAPI *R_TextOutA)(HDC,int,int,LPCSTR,int);
+static BOOL WINAPI H_TextOutA(HDC dc,int x,int y,LPCSTR s,int n){ text_trace("TextOutA",s,n,__builtin_return_address(0)); return R_TextOutA(dc,x,y,s,n); }
+static BOOL (WINAPI *R_ExtTextOutA)(HDC,int,int,UINT,const RECT*,LPCSTR,UINT,const INT*);
+static BOOL WINAPI H_ExtTextOutA(HDC dc,int x,int y,UINT o,const RECT*r,LPCSTR s,UINT n,const INT*d){ if(!(o&ETO_GLYPH_INDEX)) text_trace("ExtTextOutA",s,(int)n,__builtin_return_address(0)); return R_ExtTextOutA(dc,x,y,o,r,s,n,d); }
+static void trace_cfg(void){ char e[64]; tx_on=GetPrivateProfileIntA("trace","text",0,ini_path); GetPrivateProfileStringA("trace","match","",tx_match,sizeof tx_match,ini_path);
+    if(GetEnvironmentVariableA("BBFIX_TRACE_TEXT",e,sizeof e)) tx_on=atoi(e); if(GetEnvironmentVariableA("BBFIX_TRACE_MATCH",e,sizeof e)){ strncpy(tx_match,e,63); tx_match[63]=0; }
+    if(tx_on) T("TRACE  text trace ON match='%s'",tx_match); }
 static struct { const char *dll,*name; void *hook; void **real; } HK[]={
  {"msvcrt.dll","_open",H_open,(void**)&R_open},{"msvcrt.dll","_sopen",H_sopen,(void**)&R_sopen},{"msvcrt.dll","_close",H_close,(void**)&R_close},{"msvcrt.dll","fopen",H_fopen,(void**)&R_fopen},{"msvcrt.dll","fclose",H_fclose,(void**)&R_fclose},
  {"KERNEL32.dll","CreateFileW",H_CreateFileW,(void**)&R_CreateFileW},{"KERNEL32.dll","CloseHandle",H_CloseHandle,(void**)&R_CloseHandle},
@@ -201,6 +227,7 @@ static struct { const char *dll,*name; void *hook; void **real; } HK[]={
  {"KERNEL32.dll","ExitProcess",H_ExitProcess,(void**)&R_ExitProcess},{"KERNEL32.dll","CreateProcessA",H_CreateProcessA,(void**)&R_CreateProcessA},
  {"USER32.dll","CreateWindowExA",H_CreateWindowExA,(void**)&R_CreateWindowExA},{"USER32.dll","DestroyWindow",H_DestroyWindow,(void**)&R_DestroyWindow},
  {"USER32.dll","SetTimer",H_SetTimer,(void**)&R_SetTimer},{"USER32.dll","KillTimer",H_KillTimer,(void**)&R_KillTimer},
+ {"USER32.dll","DrawTextA",H_DrawTextA,(void**)&R_DrawTextA},{"GDI32.dll","TextOutA",H_TextOutA,(void**)&R_TextOutA},{"GDI32.dll","ExtTextOutA",H_ExtTextOutA,(void**)&R_ExtTextOutA},
  {"USER32.dll","MessageBoxA",H_MessageBoxA,(void**)&R_MessageBoxA},{"USER32.dll","PostQuitMessage",H_PostQuitMessage,(void**)&R_PostQuitMessage}};
 
 /* ---- BBShell.dll widening hooks (League Statistics screen: 4 extra stat columns) ----
@@ -212,7 +239,6 @@ static struct { const char *dll,*name; void *hook; void **real; } HK[]={
    only the registers a handler writes into Regs change, so a stray clobber (edx etc.) cannot happen.
    Liveness of every site is recorded in work/NOTES_widen.md. Config: bbfix.ini [widen] enable=1 bat=a,b,c,d pit=a,b,c,d */
 typedef struct { uint32_t edi,esi,ebp,esp_,ebx,edx,ecx,eax,efl; uint32_t stk[16]; } Regs;
-static char ini_path[MAX_PATH];
 static uint32_t ext_tab[2][4]={{49,50,57,52},{262,251,276,277}};   /* stat ids for ext columns: [view][col] */
 static uint32_t ext_id(uint32_t view,uint32_t k){ return (view<2&&k<4)?ext_tab[view][k]:0; }
 #define TC __attribute__((thiscall))
@@ -275,6 +301,7 @@ static int widen_apply(HMODULE m){
     for(i=0;i<NSITE;i++){ DWORD o; VirtualProtect((void*)(uintptr_t)sites[i].va,sites[i].n,old[i],&o); FlushInstructionCache(GetCurrentProcess(),(void*)(uintptr_t)sites[i].va,sites[i].n); }
     T("WIDEN applied %d hooks to BBShell.dll; bat=%u,%u,%u,%u pit=%u,%u,%u,%u",NSITE,ext_tab[0][0],ext_tab[0][1],ext_tab[0][2],ext_tab[0][3],ext_tab[1][0],ext_tab[1][1],ext_tab[1][2],ext_tab[1][3]);
     return 1; }
+
 static LONG CALLBACK VEH(EXCEPTION_POINTERS *ep){ static int n; static void *last; DWORD c=ep->ExceptionRecord->ExceptionCode;
     if(c==0xC0000005 || c==0xC000001D || c==0xC0000094 || c==0xC00000FD){ void*a=ep->ExceptionRecord->ExceptionAddress; if(a!=last && n<400){ char b[96]; last=a; n++; T("CRASH  exception %08lx at %s  (fault addr %p)",c,modname(a,b,96),c==0xC0000005&&ep->ExceptionRecord->NumberParameters>1?(void*)ep->ExceptionRecord->ExceptionInformation[1]:0);} }
     return EXCEPTION_CONTINUE_SEARCH; }
@@ -287,7 +314,7 @@ static void patch_iat(HMODULE m) {
     if(!dd.VirtualAddress) return;
     for(IMAGE_IMPORT_DESCRIPTOR *id=(IMAGE_IMPORT_DESCRIPTOR*)((char*)m+dd.VirtualAddress); id->Name; id++) {
         int isk=!_stricmp((char*)m+id->Name,"KERNEL32.dll"), isu=!_stricmp((char*)m+id->Name,"USER32.dll");
-        int ism=!_stricmp((char*)m+id->Name,"msvcrt.dll");
+        int ism=!_stricmp((char*)m+id->Name,"msvcrt.dll")||!_stricmp((char*)m+id->Name,"GDI32.dll");
         if(!isk && !isu && !ism) continue;
         IMAGE_THUNK_DATA *ot=(IMAGE_THUNK_DATA*)((char*)m+(id->OriginalFirstThunk?id->OriginalFirstThunk:id->FirstThunk));
         IMAGE_THUNK_DATA *ft=(IMAGE_THUNK_DATA*)((char*)m+id->FirstThunk);
@@ -320,7 +347,7 @@ BOOL WINAPI DllMain(HINSTANCE h, DWORD why, LPVOID r) {
         char p[MAX_PATH]; GetModuleFileNameA(h,p,MAX_PATH); char *s=strrchr(p,'\\'); if(s) strcpy(s+1,"bbfix.log");
         lg=fopen(p,"w"); L("bbfix loaded");
         strcpy(s+1,"bbfix.ini"); strcpy(ini_path,p); InitializeCriticalSection(&trcs); strcpy(s+1,"bbtrace.log"); tr=CreateFileA(p,GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,0,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,0);
-        T("=== BBPRO98 action trace started (pid %lu) ===",GetCurrentProcessId()); AddVectoredExceptionHandler(1,VEH); CreateThread(0,0,HandleWatch,0,0,0);
+        trace_cfg(); T("=== BBPRO98 action trace started (pid %lu) ===",GetCurrentProcessId()); AddVectoredExceptionHandler(1,VEH); CreateThread(0,0,HandleWatch,0,0,0);
         patch_all();
         typedef LONG (NTAPI *Reg_t)(ULONG,LDR_CB,PVOID,PVOID*);
         Reg_t reg=(Reg_t)GetProcAddress(GetModuleHandleA("ntdll.dll"),"LdrRegisterDllNotification");
