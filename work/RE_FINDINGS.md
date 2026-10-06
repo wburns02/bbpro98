@@ -63,3 +63,10 @@ Output looks plausible and cites strings/callees. Needs the audit gate (spot che
 - Audit (Claude vs decompile): FUN_68050eb0 (FRUNNRS2 init): the 20 PB->global writes (0x68097608..0x68097654, indices 0x2bc..0x2cf) CONFIRMED exactly; the draft's "MFC property sheet" narrative is a Ghidra FID false match (EnableStackedTabs) and is WRONG as semantics. FUN_6800a7ad: 48 PB->global copies (0x6808cef8..0x6808cfb4) CONFIRMED, numbers.inf load plus 0x1f..0x10 byte fill CONFIRMED.
 - Key structural finding: many of the 69 PB-reading FastSim functions are INIT LOADERS (copy PB into plain globals). The decision logic lives in functions that read those globals by data xref, not by getter call. Spec must follow the data xrefs from the globals (e.g. 0x6808cef8 look/discipline/checkChance block, 0x68097608 bat zone block) to find the real consumers. Direct readers (e.g. BBSIM 68056fbc relief logic, 112 params) are the exception and read PB at decision time.
 - Rule for drafts: trust tables (addresses, indices, defaults), distrust narrative semantics that cite MFC classes.
+
+## PB.INI experiment (2026-10-06)
+- Placed PB.INI with [PlayBalance] phForPitcherBase=77 and stealChance00Count=-999 next to the work exe (C:\Sierra\BBPRO_98_work\PB.INI), ran under WINEDEBUG=+profile, simulated one day via the UI.
+- CONFIRMED (Wine +profile trace): the game opens that exact file at runtime and reads all [PlayBalance] keys by name; PROFILE_Load shows phForPitcherBase=77 and stealChance00Count=-999 parsed. So PB.INI is a working, supported behavior-tuning path with no hooks.
+- NOT confirmed: the downstream effect on sim outcomes. sub.log and prlog.txt append across runs and the sim is not seeded identically, so a one-day before/after compare is noise. Needs a controlled design (same saved state, many days, compare aggregate rates) before claiming an effect size.
+- PB_DumpToFile (pb.txt) is wired to dialog button 0xbfa in the in-game debug options dialog (FUN_6807c3fc), not run automatically.
+- Test file kept at re/PB.INI.test; removed from the work copy.
