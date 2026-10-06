@@ -48,3 +48,18 @@ project has 14 (no RemotMgr.exe, Datain.exe). Raw: ~/bbpro98/work/M0_metrics.txt
 
 ## GLM labeling pilot (Baseball.exe, 99 residue functions, 3 batches, 0 failures)
 Output looks plausible and cites strings/callees. Needs the audit gate (spot check 100 across binaries) before trusting.
+
+## Tier 3 spec draft audit log (2026-10-06)
+- FUN_6802baf7 (FastSim_FINJURY init): audited by Claude against decompile. Open/read sizes (0x2c, 0x26), 19 PB indices 0x354..0x366 written as u16 at DAT_68113b88+0..0x24, discard of file-read table B: all correct. Grade CONFIRMED. GLM draft accuracy on init-style functions is good; formula-heavy functions still need audit.
+- Spec drafts: re/spec/FUN_*.md (68 of 69; one repeatedly fails, likely the largest). Hive streams can hang: label_glm.py ex.map blocks on a hung batch; kill and use label_escalate.py.
+
+## Label audit gate, FastSim (2026-10-06, Claude read 40 of 2353 against the decompile)
+- Accuracy: 38/40 acceptable, 2 wrong or unsupported (680371f8 mislabeled UI_MAIN splitter, it is a PB-driven sim function; 68008e05 cites an MFC FID collision). ~5% wrong, at the limit.
+- Evidence mix from GLM residue: XREF_CONFIDENT 46%, STRING_XREF 12%, PATTERN_GUESS 38%, UNKNOWN 4%. Below the 80% target as a distribution, so the gate was applied by policy instead: only XREF_CONFIDENT and STRING_XREF names are written to Ghidra; PATTERN_GUESS and UNKNOWN never are.
+- Noise filter: labels whose support cites IsTracking, _AFX_*, CSplitterWnd, CControlBar (Ghidra FID collisions) are dropped (22 in FastSim).
+- Applied via gh.sh batch: Baseball 94, FastSim 1255 renames (re/rename_spec_Baseball_FastSim.py). Verified by decomp readback. Renamed names are SUBSYS_short_name; treat as XREF_CONFIDENT at best, not CONFIRMED.
+- Hive streams can hang; label_glm.py then stalls on ex.map. Fix used: kill it, run label_escalate.py (split 10, then DeepSeek-Flash).
+
+- Audit (Claude vs decompile): FUN_68050eb0 (FRUNNRS2 init): the 20 PB->global writes (0x68097608..0x68097654, indices 0x2bc..0x2cf) CONFIRMED exactly; the draft's "MFC property sheet" narrative is a Ghidra FID false match (EnableStackedTabs) and is WRONG as semantics. FUN_6800a7ad: 48 PB->global copies (0x6808cef8..0x6808cfb4) CONFIRMED, numbers.inf load plus 0x1f..0x10 byte fill CONFIRMED.
+- Key structural finding: many of the 69 PB-reading FastSim functions are INIT LOADERS (copy PB into plain globals). The decision logic lives in functions that read those globals by data xref, not by getter call. Spec must follow the data xrefs from the globals (e.g. 0x6808cef8 look/discipline/checkChance block, 0x68097608 bat zone block) to find the real consumers. Direct readers (e.g. BBSIM 68056fbc relief logic, 112 params) are the exception and read PB at decision time.
+- Rule for drafts: trust tables (addresses, indices, defaults), distrust narrative semantics that cite MFC classes.
