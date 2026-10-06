@@ -10,3 +10,8 @@
 
 - 2026-10-06 step 3 done: grid text routine DrawText_Shell 68065650 found and trace-hooked (draw=1). Ghidra names backfilled (backfill_2.py). Wide view screenshot t2b verified 12 cols. Next: regen _all.c, regression screens (pitching, Lineup, Draft, HoF, Career, Players, Accumulated, Change Columns, sim day), revert script, M6.
 - 2026-10-06 M5/M6 done: regression screens read (pitching, Players, Teams, Change Columns, News, Data, History, Team Stats/Roster, Draft, sim day) all OK, no faults from widen hooks. install_live.sh run, live screenshot L2 shows 12 cols. revert_live.sh written. Untested: Lineup, Hall of Fame, full season.
+
+## RE tiers 1-3 (2026-10-06 session 9cc76df6)
+- Plan: work/RE_PLAN_tiers1-3.md (Opus planner, verified exists). Findings: work/RE_FINDINGS.md.
+- [x] M0 decompile all 14 binaries (index/*/_all.c, _functions.tsv; metrics in work/M0_metrics.txt)
+- [ ] M1 labeling: source-file anchors first (re/srcmap.py), then call-graph propagation, then GLM for residue
