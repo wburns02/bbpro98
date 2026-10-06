@@ -33,3 +33,18 @@ project has 14 (no RemotMgr.exe, Datain.exe). Raw: ~/bbpro98/work/M0_metrics.txt
   logic (112 params, BBSim_Roster), 6803a479 and 6803c8f5 (pitch speed/selection, BBSim_Players2), 6801f976 fielder positioning,
   68065947 steal chance, 6800b2fd baserunner lead logic, 6802c303 catch chance, 68065fba hit-and-run, 680583cb pinch runner.
 - Files: re/pbtable.py builds pb_table_<bin>.tsv. FastSim table addresses not yet derived (needs name-array and table addresses).
+
+## Built-in debug logs WORK (verified 2026-10-06, work copy)
+- Needs BBPRO.INI: [Sim] Fast=0 (BBSIM engine; FastSim never applies the log flags, its FUN_680621e0 has no callers) and
+  [Debug] DebugEnabled=1 plus RandomLog/HitLog/PitchResultLog/PitchSelLog/EventLog/InjuryLog/SubsLog/PlaySetupLog=1.
+  Gate is BBSIM FUN_6807cb44 (applies the flags), called only when DebugEnabled != 0.
+- One simulated day (15 games, April 4 1997) wrote to the game dir: pitchres.log (u32 counts, raw table behind prlog.txt),
+  prlog.txt (pitch outcome by ball-strike count: balls/swinging strikes/called strikes/fouls/in play, counts and percentages),
+  sub.log (substitution decisions with "Chance = N" values), hit.log (88 KB, mostly zero bytes, 1195 records), game.txt
+  (per-game stadium, weather). hilights/ gets files. Saved copies: /mnt/nvme/bbpro98/re/debuglogs/.
+- No random/event/injury log files appeared yet (maybe none triggered, or different path). Open item.
+- Use for Tier 3 validation: prlog.txt gives real pitch-outcome distributions per count for chi-square checks.
+- Caution: Fast=0 sims are slower; the work INI is now Fast=0 with debug on (original: re/BBPRO.INI.orig).
+
+## GLM labeling pilot (Baseball.exe, 99 residue functions, 3 batches, 0 failures)
+Output looks plausible and cites strings/callees. Needs the audit gate (spot check 100 across binaries) before trusting.
