@@ -20,3 +20,4 @@
 - Renames applied + readback-verified + regen: Baseball, FastSim, BBSIM, BBCfg, FPS_Pal, FPS_DCL, FPS_Ctrl, ODASL.
 - Pending: FPS_CT, LineUp, Upstats, EZShell, BBShell labeling (drive_rest.sh), then rename spec + regen, ASN decode, final Artifact report.
 - 2026-10-06 night: ALL 14 binaries labeled; renames applied + regen (total ~7516). Remaining: Tier 3 audits (about 5 of 74 audited), PB.INI downstream experiment, ASN field decode. Final report published (see below).
+- 2026-10-07: parked at 98% Claude usage. Next, in order: PB.INI controlled experiment, Tier 3 draft audits, ASN fields.

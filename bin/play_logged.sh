@@ -3,6 +3,9 @@
 # Per-run dir /mnt/nvme/bbpro98/logs/<ts>/: wine.log (stderr, err+process+loaddll+timestamp),
 # windows.log (500ms poll of window geometry/state/focus), bbtrace.log copy, exit.txt.
 export WINEPREFIX=$HOME/.bbpro98_prefix
+# Keep Wine off the system D-Bus: hung winedevice.exe orphans stop draining it, fill the
+# per-user quota, and dbus-broker then disconnects every UID 1000 peer (killed GNOME 2026-10-06/07).
+export DBUS_SYSTEM_BUS_ADDRESS=unix:path=/nonexistent
 export XDG_RUNTIME_DIR=/run/user/$(id -u) WAYLAND_DISPLAY=wayland-0
 [ -z "$DISPLAY" ] && export DISPLAY=:0
 [ -z "$XAUTHORITY" ] && export XAUTHORITY=$(ls /run/user/$(id -u)/.mutter-Xwaylandauth.* 2>/dev/null | head -1)
@@ -18,6 +21,7 @@ ls -t /mnt/nvme/bbpro98/logs | tail -n +31 | while read o; do rm -rf "/mnt/nvme/
 MON=$!
 cd "$G"; wine bblaunch.exe > "$D/wine.log" 2>&1; RC=$?
 kill $MON 2>/dev/null
+wineserver -k 2>/dev/null
 { echo "exit rc=$RC at $(date +%T.%N)"; journalctl --since "-3min" --no-pager 2>/dev/null | grep -iE "wine|Baseball|segfault|mutter|xwayland" | tail -20; } > "$D/exit.txt" 2>&1
 cp "$G/bbtrace.log" "$D/bbtrace.log" 2>/dev/null
 echo "$D"

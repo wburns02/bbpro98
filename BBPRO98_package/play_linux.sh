@@ -3,4 +3,5 @@
 # One-time:  export WINEPREFIX=~/.bbpro98_prefix; winecfg -v winxp ; mkdir -p ~/.bbpro98_prefix/drive_c/Sierra
 #            cp -r game ~/.bbpro98_prefix/drive_c/Sierra/BBPRO_98
 export WINEPREFIX=${WINEPREFIX:-$HOME/.bbpro98_prefix}
+export DBUS_SYSTEM_BUS_ADDRESS=unix:path=/nonexistent  # Wine on the system bus can stall it and kill the desktop session
 cd "$WINEPREFIX/drive_c/Sierra/BBPRO_98" && exec wine bblaunch.exe
