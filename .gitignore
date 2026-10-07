@@ -69,3 +69,7 @@ work/modsx/bbedit/bbedit/bbshare/BBEdit98.CAB
 mods_x/
 work/modsx/
 work/*.orig
+
+# third-party / Sierra material, never publish
+work/ref/
+BBPRO98_package/research/v11_patch_notes.txt
