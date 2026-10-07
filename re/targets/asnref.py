@@ -20,7 +20,8 @@ wins/losses and the newly played games equal that day's box scores ({(tid, runs)
 id a box score credits to a team is in that team's roster that day or the day before (>= 99%); round trip; and on the
 "edit" files: rename a team, add 3 wins to another, add a run to a played game, encode, and require (a) decode shows
 exactly those changes, (b) the trusted c-tree codec (work/ctree.py) still parses the file with consistent indexes and
-at most 8 records changed, (c) the new name is present, correctly enciphered, in a team record.
+no records added or dropped, at most 8 changed, the file length unchanged and at most 96 bytes changed (at most
+16 of them outside records, record headers and index keys), (c) the new name is present, correctly enciphered, in a team record.
 PASS = every visible check passes.
 """
 import sys, os, json, glob, struct, tempfile, collections, importlib.util
@@ -114,6 +115,9 @@ def schema(doc):
                 and isinstance(t.get('roster'), list) and all(isint(p) for p in t['roster'])):
             fail(f'bad team entry {str(t)[:200]}')
     if len({t['tid'] for t in teams}) != 28: fail('team ids not unique')
+    seen = collections.Counter(p for t in teams for p in set(t['roster']))
+    if any(len(set(t['roster'])) > 60 for t in teams): fail('a roster lists more than 60 player ids')
+    if any(c > 1 for c in seen.values()): fail('a player id is on more than one roster')
     if not isinstance(games, list) or not games: fail('no games')
     for g in games:
         if not (isinstance(g, dict) and isint(g.get('home')) and isint(g.get('away')) and 1 <= g['home'] <= 28
@@ -153,6 +157,23 @@ def trusted_records(blob):
         return dm, active
 
 
+def stray_bytes(blob, out, dm, slack=16, budget=96):
+    """No shadow storage: same length, few changed bytes, all inside records, record headers or index keys."""
+    if len(out) != len(blob): fail(f'edit: file length {len(blob)} -> {len(out)}')
+    changed = [i for i in range(len(blob)) if blob[i] != out[i]]
+    if len(changed) > budget: fail(f'edit: {len(changed)} bytes changed (expected <= {budget})')
+    spans = sorted([(r['off'] - 18, r['off'] + r['len']) for r in dm['records'] if not r['del']] +
+                   [(e['koff'], e['koff'] + e['klen']) for e in dm['index']])
+    import bisect
+    starts = [a for a, _ in spans]; ends = []; hi = -1
+    for _, b in spans: hi = max(hi, b); ends.append(hi)
+    def covered(i):
+        k = bisect.bisect_right(starts, i) - 1
+        return k >= 0 and i < ends[k]
+    outside = [i for i in changed if not covered(i)]
+    if len(outside) > slack: fail(f'edit: {len(outside)} changed bytes outside records and index keys, e.g. at {outside[:3]}')
+
+
 def edit_test(codec, blob, doc):
     tm, games = schema(doc)
     ed = json.loads(json.dumps(doc))
@@ -172,9 +193,11 @@ def edit_test(codec, blob, doc):
     key = lambda g: (g['home'], g['away'], g['played'], g['hr'] if g['played'] else 0, g['ar'] if g['played'] else 0)
     if [key(g) for g in ed['games']] != [key(g) for g in games2]: fail('edit: decoded games differ from the edited JSON')
     _, act0 = trusted_records(blob)
-    _, act1 = trusted_records(out)
-    diff = ctref.multiset(act0) - ctref.multiset(act1)
-    if sum(diff.values()) > 8: fail(f"edit: {sum(diff.values())} records changed (expected <= 8)")
+    dm1, act1 = trusted_records(out)
+    m0, m1 = ctref.multiset(act0), ctref.multiset(act1)
+    if len(act0) != len(act1): fail(f'edit: active record count {len(act0)} -> {len(act1)} (no records may be added or dropped)')
+    if sum((m0 - m1).values()) > 8: fail(f"edit: {sum((m0 - m1).values())} records changed (expected <= 8)")
+    stray_bytes(blob, out, dm1)
     nb = new.encode('latin-1')
     if not any(nb + b'\0' in bytes(INV[c] for c in rec) for _, rec in act1.values()):
         fail('edit: the new team name is not stored (enciphered) in any record')

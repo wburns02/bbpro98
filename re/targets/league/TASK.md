@@ -29,7 +29,9 @@ python3 league.py encode in.bin edited.json out.bin
   are free, and they are what makes the codec useful.
 - `encode` rebuilds the file from `in.bin` with every contract field (name, w, l, home, away, played, hr, ar, roster)
   taken from `edited.json`, using the c-tree record rewrite logic (keep indexes and headers consistent).
-  `encode(x, decode(x))` must equal `x` byte for byte.
+  `encode(x, decode(x))` must equal `x` byte for byte. Field edits must happen in place (same file length, no added
+  records, no data outside records, record headers and index keys). `work/ctree.py` apply does this for same-length
+  rewrites as of 2026-10-07 (it keeps the B-trees when no key changed), so re-copy it if you inlined an older one.
 
 ## The referee (do not edit it)
 `python3 /home/will/bbpro98/re/targets/asnref.py /home/will/bbpro98/re/targets/league $LANE [-v]`

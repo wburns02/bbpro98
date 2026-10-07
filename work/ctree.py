@@ -520,13 +520,10 @@ def do_apply(src, edits):
         pending = []
         first_off = end + sum(len(a) for a in appends) + REC_HDR
         shift = 0
+        new_its, same = {}, True
         for tr in trees:
             if not tr.klen:
                 continue
-            for np in tr.nodes:
-                h = np - REC_HDR
-                if 0 <= h and buf[h:h + 2] == FAFA:
-                    buf[h:h + NODE_TOTAL] = gap_bytes(NODE_TOTAL)
             if tr.keymap is None:
                 ents0 = [(k, orig_rec[p]) for k, p in tr.entries
                          if p in orig_rec and p not in tomb]
@@ -539,6 +536,19 @@ def do_apply(src, edits):
                     pay += bytes(tr.klen - len(pay))
                 its.append((key_of(tr.keymap, pay), r.hdr))
             its.sort(key=lambda e: (e[0], e[1]))
+            new_its[id(tr)] = its
+            old = sorted((bytes(k), p) for k, p in tr.entries if p not in tomb)
+            same = same and [(bytes(k), p) for k, p in its] == old
+        if same:
+            continue        # RWTREC semantics: no key changed, so the existing trees stay as they are
+        for tr in trees:
+            if not tr.klen:
+                continue
+            for np in tr.nodes:
+                h = np - REC_HDR
+                if 0 <= h and buf[h:h + 2] == FAFA:
+                    buf[h:h + NODE_TOTAL] = gap_bytes(NODE_TOTAL)
+            its = new_its[id(tr)]
             if its:
                 pls, root = pack_tree(its, tr.klen, first_off + shift)
                 shift += NODE_TOTAL * len(pls)
