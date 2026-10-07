@@ -1,0 +1,58 @@
+<title>BBPro98 near-term RE goals</title>
+<style>
+:root{--bg:#f6f6f3;--fg:#1c1f1d;--mute:#5d645f;--line:#d9dbd5;--accent:#1f6b4a;--bad:#a63a2b;--panel:#ffffff}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#121513;--fg:#e6e9e4;--mute:#9aa39c;--line:#2b312d;--accent:#5cc38f;--bad:#e07a68;--panel:#1a1e1b;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#121513;--fg:#e6e9e4;--mute:#9aa39c;--line:#2b312d;--accent:#5cc38f;--bad:#e07a68;--panel:#1a1e1b;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font:15px/1.55 system-ui,sans-serif;padding-inline:16px;padding-block:24px}
+main{max-width:860px;margin:0 auto;display:flex;flex-direction:column;gap:22px;min-width:0}
+h1{font-size:1.5rem;margin:0;text-wrap:balance}
+h2{font-size:.78rem;letter-spacing:.09em;text-transform:uppercase;color:var(--mute);margin:0 0 6px}
+p,ul{margin:0}ul{padding-left:1.1rem}
+.v{border-left:4px solid var(--accent);padding:8px 12px;background:var(--panel)}
+.wrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;min-width:520px}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+code{font-family:ui-monospace,monospace;font-size:.9em}
+</style>
+<main>
+<h1>BBPro98 near-term RE goals</h1>
+<div class="v"><h2>Verdict</h2><p>100% of the three near-term goals: every corrected-rule section in the spec is now audited and merged into the draft bodies, and the last unaudited draft has a verdict. All builder work ran on the Hive API; subscription usage was orchestration turns only.</p></div>
+
+<section><h2>What was accomplished</h2>
+<div class="wrap"><table>
+<tr><th>Goal</th><th>Result</th><th>Commit</th></tr>
+<tr><td>Pass-3 audit of 14 RULES v2 sections</td><td>14 of 14 RESOLVED. Two failed first audit (invented spacing claim, wrong quoted address); one Hive fix round each, then RESOLVED.</td><td>6b9b4bd</td></tr>
+<tr><td>FUN_68054d4a_consumer audit</td><td>Chunked the oversized slice in two and audited both halves: PARTIAL with 2 real findings, now annotated on the draft.</td><td>6b9b4bd</td></tr>
+<tr><td>Merge v2 into draft bodies</td><td>14 of 14 merged by a local mechanical tool (flagged rule spans replaced, appendix dropped, CORRECTIONS HISTORY kept). Two drafts needed a locator fix for bold and nested-numbered rule formats.</td><td>6b9b4bd</td></tr>
+</table></div></section>
+
+<section><h2>What was verified, and by whom</h2>
+<div class="wrap"><table>
+<tr><th>Checked by me (the gate)</th><th>Claimed by builders, not independently checked</th></tr>
+<tr><td>Post-merge spot re-audits on Hive: FUN_68053248 MATCH; FUN_68023dd3 PARTIAL, whose single bullet I verified against the decompile myself (grep of the slice shows <code>_DAT_6808e980 = FUN_68003170(0x1f9)</code>, <code>_DAT_6808e988 = FUN_68003170(0x1f7)</code>) and fixed inline. Diff inspection of all 14 merged drafts (91 insertions, 204 deletions, rule spans only). Merge idempotency and the CORRECTIONS HISTORY regression (first version collected every bullet in the file; restored from git and re-merged with a scoped extractor).</td><td>The 11 first-pass RESOLVED verdicts and 12 of the 14 merge outputs are Hive self-reports consistent with the diff; only 2 merged drafts got the independent post-merge re-audit. The consumer chunk audit's "all other visible behavior matches" tail was not independently re-derived.</td></tr>
+</table></div></section>
+
+<section><h2>Outstanding</h2>
+<ul>
+<li>One propagated error survived two audit passes because the pass-2 finding itself carried it: the wrong 6808e980/88 pairing was quoted in a CORRECTIONS bullet, copied into v2, and only the post-merge spot audit caught it. Fixed, but it shows corrections can inherit auditor errors. Cost if left in the other 13: unmeasured, likely zero, unproven.</li>
+<li>FUN_68054d4a_consumer's 2 findings are annotated, not yet applied as rule rewrites.</li>
+<li>ASN field semantics, BBSIM cross-check, FID false matches, other-format round-trips: unchanged from the prior list, untouched this run.</li>
+</ul></section>
+
+<section><h2>Plan to resolve</h2>
+<ul>
+<li>Post-merge audit the remaining 12 merged drafts on Hive (one sweep, ~20 min, no roadblock). Next session.</li>
+<li>Apply the consumer draft's 2 corrections via the same v2-and-merge pipeline (owner: GLM on Hive, gate: chunked re-audit).</li>
+<li>ASN semantics by box-score anchoring (owner: me plus the rig; a simmed day's UI box score matched against that day's tail-log record).</li>
+</ul></section>
+
+<section><h2>Loop stats</h2>
+<p>One run (tbl-20261007T142541Z-3e042e). Sections 1 and 2 ran as one Hive batch; section 3 was a local Python merge, so its fix round (the locator patterns and the history-block regression) was mine, not the builder's. Builder rounds: pass-3 audit 1, fix round 1 (2 files), chunked consumer audit 1, post-merge spot audit 1. Roughly 35 Hive calls, a few cents at Hive GLM-Flash rates. Subscription usage: about 12 short orchestration turns.</p></section>
+
+<section><h2>Landmines learned</h2>
+<ul>
+<li>Audit findings are evidence, not ground truth: the pass-2 bullet carried a wrong address/value pairing that propagated through the fix into the merged draft. Any single-source claim (even an audit's quoted bytes) gets a decompile grep before it becomes spec text.</li>
+<li>Merge tools that rebuild summary sections should extract the original block by its header bounds, not by line shape (collecting all bullets swept in unrelated draft content).</li>
+<li>Rule-header formats vary across drafts (bare <code>4.</code>, bold <code>**4)</code>, indented <code>6.2</code>); any rule-span locator needs all three shapes or must report what it could not locate (it did).</li>
+</ul></section>
+</main>
