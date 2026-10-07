@@ -1,0 +1,3 @@
+VERDICT: RESOLVED
+
+- caveat: v2's "same helper as rule 1" is accurate at the helper level (both call `FUN_68005b80`), but note the second arguments differ in source — rule 1 passes the `FUN_68003170(0x2d7)` lookup result while rule 4 passes the raw int field `*(int *)((int)this + 0x34)`; the v2 text already states this correctly, so no correction is needed.

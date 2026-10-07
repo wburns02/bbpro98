@@ -1,0 +1,1 @@
+replaces rule 0 (dispatch; corrects the `param_1` encoding in §2 INPUTS): `if (param_1 == 2)` → pitcher path (rules 1–10; score starts `local_18 = FUN_68003170(0xbe)`); `else if (param_1 == 0)` → hit path (rules 11–16; `local_18 = FUN_68003170(0xd4)`); `else` → run path (`local_18 = FUN_68003170(0x101)`). `param_1 == 1` executes the phForRun branch, not the pitcher branch.

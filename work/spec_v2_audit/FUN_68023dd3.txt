@@ -1,0 +1,2 @@
+VERDICT: RESOLVED
+- caveat: CORRECTIONS itself misquoted the array B last write as `_DAT_6808e988 = FUN_68003170(0x1f9)`; the decompile actually shows `_DAT_6808e988 = FUN_68003170(0x1f7)` (0x1f9 goes to `_DAT_6808e980`), and v2 correctly quotes 0x1f7 — so v2 matches the decompile even though it deviates from the CORRECTIONS' literal quote; the substantive finding (0x6808e98c never written, three gap dwords 0x6808e964/0x6808e98c/0x6808e9b4 untouched, 36 writes, void return, caller 68026a71) is fully resolved and verified.

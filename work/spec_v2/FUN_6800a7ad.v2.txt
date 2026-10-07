@@ -1,0 +1,9 @@
+replaces rule 1: Establish an SEH exception frame (saves FS:[0], handler `puStack_c = &LAB_6800ac4b`); body executes under it.
+
+replaces rule 7: Copy 48 dwords from PB[] in fixed order into the contiguous block at 0x6808cef8–0x6808cfb7 (this always executes, independent of rules 3–5):
+   - 0x6808cef8–0x6808cf24: `lookPrimaryType{0–3}{0–2}CountAdjust` (row-major: type 0 counts 0,1,2; type 1 counts 0,1,2; …)
+   - 0x6808cf28–0x6808cf54: `lookBestType{0–3}{0–2}CountAdjust`
+   - 0x6808cf58–0x6808cf84: `disciplineRating{0–3}{0–2}CountAdjust`
+   - 0x6808cf88–0x6808cf94: `checkChanceBase{Power,Normal,Contact,Bunt}`
+   - 0x6808cf98–0x6808cfa4: 0x253→`checkChanceCHPct{Power}`, 0x254→`checkChanceCHPct{Normal}`, 0x255→`phForHitBatPlatAdvAdjust` (default -10), 0x256→`checkChanceCHPct{Bunt}` — 0x6808cfa0 is not checkChanceCHPct{Contact}
+   - 0x6808cfa8–0x6808cfb4: `swingSpeed{Power,Normal,Contact,Bunt}Adjust`

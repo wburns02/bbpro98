@@ -1,0 +1,3 @@
+VERDICT: PARTIAL
+
+- FUN_68003170(0x15c)–(0x15f) (rule 10, newDef tier): the parenthetical "(rows 348–351, absent from the table; values unknown, not 75/49/28/14)" is contradicted by the verified PlayBalance table, which lists 348 defSubVeryHighNewDefThresh=75, 349 defSubHighNewDefThresh=49, 350 defSubMedNewDefThresh=28, 351 defSubLowNewDefThresh=14. The decompile gates the chain exactly on these reads (`iVar6 = FUN_68003170(0x15c);` … `FUN_68003170(0x15f)` under `if (local_60 < iVar6)`), so the names/defaults are citable and "values unknown, not 75/49/28/14" is wrong. The tier structure itself and the adjust rows 0x160–0x164 (352–356) are correct.

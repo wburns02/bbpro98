@@ -1,0 +1,3 @@
+VERDICT: RESOLVED
+
+- caveat: None of the v2 rules engage the PlayBalance getter FUN_68003170 or any listed idx/default rows — FUN_680829dc (two-index table lookup) and FUN_68005b80 (interpolation) are distinct helpers — so the supplied PlayBalance context imposes no additional constraints on rules 5/9/10; all three match the decompile verbatim (`iVar2 = FUN_680829dc(&DAT_68185a60,(int)local_44,(int)local_98); local_58 = (short)iVar2;`, the `local_40 = 0;` / `if (local_bc < 0x32)` branch pair storing `local_40 = (short)iVar2;`, and `local_58 = local_40 + local_58;` feeding `local_110 + local_58` in the CONCAT22 assignment), and both CORRECTIONS findings (wrong base DAT_68097660 → &DAT_68185a60; discarded adjustment → stored to local_40) are resolved.

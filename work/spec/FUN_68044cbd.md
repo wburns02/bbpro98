@@ -10,7 +10,7 @@ FAILED PART
 Continues accumulating the pinch-hit-for-pitcher desire score with inning/lead/fatigue/bench/injury adjustments and forced-PH overrides, then starts the pinch-hit-for-batter score (base, inning, home/away, lead, per-out terms).
 
 ## 2) INPUTS
-- `param_1` — decision mode: nonzero (part 1's branch, presumably 1) = PH-for-pitcher; `0` = PH-for-batter (guess on encoding).
+- `param_1` — decision mode (dispatch, corrected): `if (param_1 == 2)` → pitcher path (rules 1–10; score starts `local_18 = FUN_68003170(0xbe)`); `else if (param_1 == 0)` → hit path (rules 11–16; `local_18 = FUN_68003170(0xd4)`); `else` → run path (`local_18 = FUN_68003170(0x101)`). `param_1 == 1` executes the phForRun branch, not the pitcher branch.
 - `local_18` — accumulator from part 1 (pitcher base + early/middle-inning term already applied).
 - `local_1c` — inning number (guess; tested `<7/<9/<10`).
 - `local_44` — outs in current half-inning (guess; PerOut multiplier).

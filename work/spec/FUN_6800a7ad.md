@@ -2,9 +2,7 @@
 
 DRAFT (GLM-Flash, unaudited)
 
-**1) PURPOSE**
-Initialization routine for the fast-sim module: attempts to load the data file "numbers.inf" into an in-memory table, then copies 48 batter-decision balance parameters from the PB[] table into a contiguous runtime parameter block.
-
+**1) Establish an SEH exception frame (saves FS:[0], handler `puStack_c = &LAB_6800ac4b`); body executes under it.
 **2) INPUTS**
 - No arguments (void).
 - PB[] entries: the 48 named parameters listed below (all read unconditionally).
@@ -25,7 +23,7 @@ Initialization routine for the fast-sim module: attempts to load the data file "
    - 0x6808cf28–0x6808cf54: `lookBestType{0–3}{0–2}CountAdjust`
    - 0x6808cf58–0x6808cf84: `disciplineRating{0–3}{0–2}CountAdjust`
    - 0x6808cf88–0x6808cf94: `checkChanceBase{Power,Normal,Contact,Bunt}`
-   - 0x6808cf98–0x6808cfa4: `checkChanceCHPct{Power,Normal,Contact,Bunt}`
+   - 0x6808cf98–0x6808cfa4: 0x253→`checkChanceCHPct{Power}`, 0x254→`checkChanceCHPct{Normal}`, 0x255→`phForHitBatPlatAdvAdjust` (default -10), 0x256→`checkChanceCHPct{Bunt}` — 0x6808cfa0 is not checkChanceCHPct{Contact}
    - 0x6808cfa8–0x6808cfb4: `swingSpeed{Power,Normal,Contact,Bunt}Adjust`
 8. Leave the try block, call `FUN_6800ac42()` and `FUN_6800ac55()` (likely SEH/unwind helpers per their placement around the handler label), return.
 
@@ -51,3 +49,6 @@ No thresholds or probability formulas appear in this function; the only arithmet
 CORRECTIONS (audit pass 2, GLM-Flash vs decompile; findings verified shaped, apply when editing):
 - 0x6808cfa0: draft names the dst of FUN_68003170(0x255) as checkChanceCHPct{Contact} (3rd slot of the 0x253–0x256 group); table row 255 = phForHitBatPlatAdvAdjust (default -10) — index-to-name contradicted at this slot.
 - rule 1: SEH handler address wrong — decompile sets puStack_c = &LAB_6800ac4b; draft cites LAB_680ac4b (dropped digit).
+
+CORRECTIONS HISTORY (audit pass 2 findings; rules above were rewritten accordingly):
+- 0x6808cfa0: draft names the dst of FUN_68003170(0x255) as checkChanceCHPct{Contact} (3rd slot of the 0x253–0x256 group); table row 255 = phForHitBatPlatAdvAdjust (default -10) — index-to-name contradicted at this slot.

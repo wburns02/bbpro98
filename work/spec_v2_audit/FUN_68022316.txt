@@ -1,0 +1,2 @@
+VERDICT: RESOLVED
+- caveat: v2 rule's `base` is not restated; in the decompile it is `local_c = FUN_68023268(&DAT_680d26b0,uVar3)` (short), which the gate then modifies via `local_c = local_c - sVar2` — consistent assuming the draft defined `base` as that value.

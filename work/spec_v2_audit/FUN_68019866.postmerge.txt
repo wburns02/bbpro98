@@ -1,0 +1,3 @@
+VERDICT: MATCH
+
+- Caveat only: rule 4's trailing clauses ("'3B'=fd0/fd2, 'SS'=fd4/fd6 slot mapping is unsupported"; "reversing the claimed RF/CF/LF→slot assignment") are accurate as refutations of the old write-order inference, but the address→position mapping itself remains directly supported by the decompile's index→address pairs (0x30b/0x30c→_DAT_680c8fd0/fd2 = 3B, 0x309/0x30a→_DAT_680c8fd4/fd6 = SS; 0x329/0x32a→_DAT_680c8fe0/fe2 = RF, 0x327/0x328→_DAT_680c8fe4/fe6 = CF, 0x325/0x326→_DAT_680c8fe8/fea = LF); all 25 depth/angle pairs, write orders, conversions (`(short)uVar1 * 0x1e`, `(iVar2 << 0xd) / 0x2d`), the four 32-bit stores of 2 to param_1+0x15/0x19/0x1d/0x21, and the 0x680c8fc8–0x680c9043 range/0x24-stride record structure match the decompile exactly.

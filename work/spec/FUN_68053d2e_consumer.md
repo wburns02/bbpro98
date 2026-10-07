@@ -6,7 +6,7 @@ DRAFT (GLM-Flash, unaudited)
 Resolves one batter's swing against the pitched ball: rolls a contact outcome (0–5), applies a bat-power/handle modifier from the balance tables, and if contact is made, simulates the batted ball and writes the result into the play record.
 
 **INPUTS**
-- `param_1+0x6b` — view/renderer object; `param_1+0x7b` — team/side flag (0 selects first of two update targets) *(guess: home/away)*
+- `param_1+0x6b` — view/renderer object; `param_1+0x7b` — team/side flag (0 selects the `+0x173BE` update target, nonzero the base `&DAT_68114ba8`) *(guess: home/away)*
 - `DAT_680a224c` — game-state object (pitch data via `FUN_6800f750`, more via `FUN_68055730`)
 - `DAT_680a2254` (`local_4c`) — current pitch/at-bat object (`FUN_6800f3d0`, `FUN_6802fc70`, `FUN_6802e67c`, `FUN_6802e615`)
 - `DAT_68114948` — rating table read by `FUN_680556e0` *(guess: batter timing/eye rating)*
@@ -31,9 +31,8 @@ Resolves one batter's swing against the pitched ball: rolls a contact outcome (0
 | −3, −4 | rand < local_34 ? 1 : 0 |
 | −1, −2 | rand < local_34 ? 2 : 1 |
 | other | 5 |
-8. **Power/handle modifier:** `local_10 = FUN_68005b80(local_10, local_34)`, then `local_14 = PBG[batPowerHandleBase][outcome] + rand(PBG[batPowerHandleRange][outcome])` (both arrays indexed 0–5 by outcome), then `local_10 = FUN_68005b80(local_10, local_14)`.
 9. **Contact condition:** contact made iff `outcome != 5` **and** `FUN_68009560(local_58) < 0x4000` (16384).
-**Power/handle modifier:** `local_10 = FUN_68005b80(local_10, local_34)`, then `local_14 = *(int *)(&DAT_68097608 + outcome*4) + rand(*(uint *)(&DAT_68097618 + outcome*4))` (static arrays indexed 0–5 by outcome; no PlayBalance getter call in this function), then `local_10 = FUN_68005b80(local_10, local_14)`.
+**Power/handle modifier:** `local_10 = FUN_68005b80(local_10, local_34)`, then `local_14 = *(int *)(&DAT_68097608 + outcome*4) + rand(*(uint *)(&DAT_68097618 + outcome*4))` (static arrays indexed 0–5 by outcome; no getter feeds these arrays; the function's only getter call is `FUN_68003170(0x301)` (rule 3), then `local_10 = FUN_68005b80(local_10, local_14)`.
 
 **On contact:** zero-init `&local_7c` via `FUN_68011090(&local_7c,0,0,0)`; call `FUN_68054d4a(param_1, local_5c, (short)local_58, local_10, &local_70, &local_68, &local_7c)` (7 args; `&local_70` holds {local_48, local_44} via local_6c, `&local_68` holds local_38, `&local_7c` receives {local_7c, local_78, local_74}); copy pitch fields (`FUN_6802e67c(DAT_680a2254, buf, 0x1e)`) plus the batted-ball result into `DAT_680a58de+0xD..0x1E`; finalize via `FUN_6802fca0`/`FUN_68009c2c`; if view state == 3 set `DAT_681147a0 = 2`; post update message 4 to `&DAT_68114ba8 + 0x173BE` when `param_1+0x7b == 0`, else to `&DAT_68114ba8`; refresh document (`FUN_6802e615`, `FUN_68055770`, `InvalidateObjectCache`).
 replaces OUTPUT/SIDE EFFECTS (first bullet): Play record `DAT_680a58de` offsets 0xD–0x1E written (pitch fields + batted-ball result; final store `*(undefined2 *)(local_30 + 0x1d) = local_74;` is a 2-byte write).

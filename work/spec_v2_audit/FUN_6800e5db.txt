@@ -1,0 +1,2 @@
+VERDICT: RESOLVED
+- caveat: v2 rule's "result" corresponds to `*(int *)(param_1 + 0x129)` in the decompile; the rule omits the subsequent clamp `if (*(int *)(param_1 + 0x129) < 0) { *(undefined4 *)(param_1 + 0x129) = 0; }`, which is outside the scope of the corrected rule 4 but part of the same code path.

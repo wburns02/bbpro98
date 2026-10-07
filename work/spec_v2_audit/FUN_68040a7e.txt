@@ -1,0 +1,3 @@
+VERDICT: RESOLVED
+
+- caveat: v2's 6.13 rendering `((short)FUN_6803bdb0(0x68114948) + -0x4b) / 5` paraphrases the decompile's `*piVar7 = *piVar7 - ((short)CONCAT31(extraout_var,uVar2) + -0x4b) / 5;` — semantically equivalent since `CONCAT31(extraout_var,uVar2)` reconstructs FUN_6803bdb0's full return and `(short)` takes its low 16 bits, but the literal byte-level expression differs. All structural claims (guard `if (iVar4 != 0) {` enclosing 6.3–6.16 through `FUN_68049d61(this,local_c);` before the closing brace; id==0 falling through to `cVar3 = FUN_6800f270(&DAT_68114948,param_1,0x10); if (cVar3 == '\0') { FUN_68040628((int)this_00); }` with `this_00 = (void *)((int)this + local_c * 0x93c + 0x140)`) match the decompile and resolve the CORRECTIONS finding.

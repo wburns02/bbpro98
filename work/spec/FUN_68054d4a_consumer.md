@@ -21,14 +21,13 @@ Computes a hit-angle-derived adjustment value and begins loading two player reco
 2. Call `FUN_68082a7c(countPower, facesPower, basePower)` → produces an angle value (`local_104`).
 3. Clamp/map that value to range [0, 0x39] (0–57) via `FUN_6800f0e0` → `local_e4`.
 4. Use `local_e4` as index into lookup table at `DAT_68097660`: read two shorts (`local_44` at `index*2`, `local_98` at `index*2+2`).
-5. Call `FUN_680829dc(table, local_44, local_98)` → base angle value (`local_58`, truncated to short).
+Call `FUN_680829dc(&DAT_68185a60,(int)local_44,(int)local_98)` → base angle value (`local_58 = (short)iVar2`, truncated to short). The lookup base is `&DAT_68185a60`, **not** the rule-4 table `DAT_68097660`; `DAT_68097660` only supplies `local_44`/`local_98` (rule 4).
 6. Re-read tracking state (`local_c8`).
 7. Select one of two data blocks (offset `0x173be` apart) based on `FUN_680076c0(0x68143ee0)` result. From the selected block, read an int at offset `+0x6b0`, element index `0x23` (35).
 8. Compute `local_bc = (read_value + tracking_state) / 2`.
-9. If `local_bc < 0x32` (50): call `FUN_68005b80(0x4000 - local_58, 50 - local_bc)` → adjustment.
-   Else: call `FUN_68005b80(local_58 + 0x4000, 50 - local_bc)` → adjustment.
+`local_40 = 0;` If `local_bc < 0x32` (50): `iVar2 = FUN_68005b80(0x4000 - local_58,0x32 - local_bc); local_40 = (short)iVar2;` Else: `iVar2 = FUN_68005b80(local_58 + 0x4000,0x32 - local_bc); local_40 = (short)iVar2;` — the adjustment is stored to `local_40` (short), not discarded.
 10. `local_58 = adjustment + local_58` (final adjusted angle).
-11. Copy `param_4`'s 6 bytes into `local_3c`/`local_38`; copy `param_1`/`param_2` into `local_c4`/`local_c0`.
+Immediately after the branch: `local_58 = local_40 + local_58;` — the rule-9 adjustment `local_40` is added to `local_58` (16-bit), giving the final adjusted angle. This `local_58` is the value consumed in part 2 as the `local_110 + local_58` addend in `_local_110 = CONCAT22((short)((uint)local_c4 >> 0x10),local_110 + local_58);`.
 12. Call `FUN_6807d31c` on the `param_4`-derived data → `local_7c` (processed record 2).
 13. Set `local_90 = *param_5 * 1000`.
 14. Call `FUN_6807d31c` on the `param_1`/`param_2`-derived data → `local_34` (processed record 1).
@@ -93,5 +92,8 @@ Builds a 3D point (base vector + direction vector scaled by clamped factors deri
 - Whether `local_94`/`local_54` (step 2) and the `local_88` transforms (step 12) are dead stores or carry needed side effects.
 - Physical meaning (batted ball, throw, fielder positioning) and units of `local_b4`; exact widths of locals beyond what Ghidra casts show.
 
+STATUS: audited (chunked pass 3). Rules 5,9,10 rewritten from the audit corrections (v2 merged 2026-10-07); pass-3 verdict RESOLVED.
 
-STATUS: unaudited (slice too large for audit pass 2; two 32k-token attempts returned empty). Treat all rules as draft-only.
+CORRECTIONS HISTORY (chunked audit pass 3; rules above were rewritten accordingly):
+- 68054d4a rule 5: draft's `FUN_680829dc(table, …)` implies the rule-4 table `DAT_68097660`; decompile passes a different base: `FUN_680829dc(&DAT_68185a60,(int)local_44,(int)local_98)` (0x68185a60 ≠ 0x68097660; DAT_68097660 only supplies `local_44`/`local_98`).
+- 68054d4a rule 9: adjustment is stored to a local the draft never mentions — `local_40 = (short)iVar2` after `FUN_68005b80(0x4000 - local_58,0x32 - local_bc)`; `local_58` is not written anywhere in this half, so rule 10's `local_58 = adjustment + local_58` is not evidenced here (slice cuts off mid-branch).

@@ -1,0 +1,2 @@
+VERDICT: RESOLVED
+- caveat: v2 rule 10 does not restate the contact-eligibility gate guarding the whole block (`if (local_20 != 5)` plus `FUN_68009560((int)local_58) < 0x4000` setting `local_40`), so "On contact:" is undefined within v2 itself — nothing it does state contradicts the decompile, and all six findings (rule 3 comparison, rule 7 −3/−4 row, rule 8 static arrays/no PB getter, rule 10 message condition, rule 10 seven-arg call, 0xD–0x1E write range) are resolved and byte-consistent.
