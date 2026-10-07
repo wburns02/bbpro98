@@ -1,3 +1,2 @@
-VERDICT: PARTIAL
-
-- 0x6808e98c: draft claims only two dwords in 0x6808e940–0x6808e9d8 are untouched (0x6808e964 and 0x6808e9b4); the decompile leaves a third gap dword unwritten — array B's last write is `_DAT_6808e988 = FUN_68003170(0x1f9)` and array C's first is `_DAT_6808e990 = FUN_68003170(0x1dd)`, so 0x6808e98c is never written. Three untouched dwords total, not two. (All other structural claims check out: void(void) signature, 36 straight-line FUN_68003170 copies with no branches/arithmetic, four 9-dword arrays based at 0x6808e940/0x6808e968/0x6808e990/0x6808e9b8 with identical relative index order per block, caller 68026a71.)
+VERDICT: RESOLVED
+- caveat: CORRECTIONS itself misquoted the array B last write as `_DAT_6808e988 = FUN_68003170(0x1f9)`; the decompile actually shows `_DAT_6808e988 = FUN_68003170(0x1f7)` (0x1f9 goes to `_DAT_6808e980`), and v2 correctly quotes 0x1f7 — so v2 matches the decompile even though it deviates from the CORRECTIONS' literal quote; the substantive finding (0x6808e98c never written, three gap dwords 0x6808e964/0x6808e98c/0x6808e9b4 untouched, 36 writes, void return, caller 68026a71) is fully resolved and verified.

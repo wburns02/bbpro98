@@ -1,0 +1,5 @@
+VERDICT: PARTIAL
+
+- 0x6808e988: draft cites `_DAT_6808e988 = FUN_68003170(0x1f9)` as array B's last write; decompile has `_DAT_6808e980 = FUN_68003170(0x1f9)` and `_DAT_6808e988 = FUN_68003170(0x1f7)` — wrong address/value pairing, though the conclusion (0x6808e98c never written) still holds.
+
+All other structural claims verify: void(void), 36 straight-line FUN_68003170 copies, four 9-dword arrays at 0x6808e940/0x6808e968/0x6808e990/0x6808e9b8, gaps exactly 0x6808e964/0x6808e98c/0x6808e9b4, caller 68026a71.

@@ -1,7 +1,8 @@
+=== RULES v2 ===
 replaces rule 4: `row = FUN_6800f1c0()`, `col = FUN_6800f1e0()`; then two direct reads of two distinct globals (no `FUN_68003170` call exists in FUN_6800cccc; the INPUTS "row/col index into PB tables" framing is withdrawn):
    - `A[iVar4] += *(int *)(&DAT_6808cf28 + col*4 + row*0xc)`
    - `A[local_58] += *(int *)(&DAT_6808cef8 + col*4 + row*0xc)`
-   Bases `DAT_6808cf28` and `DAT_6808cef8` are 0xd0 apart and neither is the PlayBalance base `DAT_6808fde0`; the added value varies with `row`/`col` (table lookup, not a fixed PB scalar), so no lookBestType00CountAdjust (547) / lookPrimaryType00CountAdjust (535) attribution and no shared "PBG" source.
+   Bases `DAT_6808cf28` and `DAT_6808cef8` are 0x30 apart and neither is the PlayBalance base `DAT_6808fde0`; the added value varies with `row`/`col` (table lookup, not a fixed PB scalar), so no lookBestType00CountAdjust (547) / lookPrimaryType00CountAdjust (535) attribution and no shared "PBG" source.
 
 replaces rule 6: Build weights W = `aiStack_24` (never memset/zero-initialized in the function; only written entries are defined):
    - `sumA == 0 && sumB == 0`: only `aiStack_24[local_58] = 1` is assigned (`W[cur] = 1`); the other 7 entries are uninitialized stack, not 0 — this garbage flows into `total` (rule 7) and the RNG walk (rule 9).

@@ -1,0 +1,4 @@
+VERDICT: MATCH
+
+- Rules 5–7 now correctly model all nine band cutoffs as PB reads (`FUN_68003170(0x6d)/(0x6e)/(0x6f)`, `(0x74)/(0x75)/(0x76)`, `(0x7b)/(0x7c)/(0x7d)`) with strict `iVar8 < (int)(uint)bVar3` / `(uVar10 & 0xff)` / `(uVar11 & 0xff)` comparisons and adjust indices 0x70–0x73, 0x77–0x7a, 0x7e–0x81 — matches decompile.
+- §2 count fixed: decompile makes exactly 32 `FUN_68003170` calls spanning `0x67`–`0x86` (idx 103–134); gates (`bVar1 && bVar3 < 2`, first `IsTracking(...) == 0`), score-diff chain (`sVar12 < -2 / == -2 / == 1 / 1 <`), `bVar2` runner condition, wildness block select (`*(int *)(param_1 + 0x7b) == 0) * 0x173be`), count chain (`cVar5=='\x03'` → `cVar4=='\x02'` → `cVar5==cVar4` → `cVar4=='\x01'&&cVar5=='\0'`), and `FUN_68014c70(local_8,0,100)` all match the draft's rules 1–11.

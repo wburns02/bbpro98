@@ -27,7 +27,7 @@ Computes a swing-type-adjusted value from a rating field and stores it at struct
    - 1 → `PB[adjustUnitsNormalAdjust]` (0)
    - 2 → `PB[adjustUnitsContactAdjust]` (0)
    - 3 → `PB[adjustUnitsBuntAdjust]` (999)
-4. Let `A` = return value of the `IsTracking`-labeled call on `DAT_680a224c`; let `B` = `FUN_6803e0d5(&(*(param_1+0x70))+0x29e)`. If `B < A`: `result -= (A - B)`. This subtraction applies regardless of swing type.
+Let `A` = return value of the `IsTracking`-labeled call on `DAT_680a224c`; let `B` = `FUN_6803e0d5((*(param_1+0x70)) + 0x29e)` (decompile: `FUN_6803e0d5(*(int *)(param_1 + 0x70) + 0x29e)` — the pointer at `param_1+0x70` is dereferenced, then `0x29e` is added; no `&`). If `B < A`: `result -= (A - B)`. This subtraction applies regardless of swing type.
 5. If `result < 0`, set `result = 0`. There is no upper clamp.
 6. If `*(param_1+0xbd)` is not 0–3, steps 2–3 are skipped entirely (only the CH scaling in step 1 applies).
 
@@ -45,7 +45,5 @@ Writes `param_1+0x129`. No other fields modified; no return value.
 CORRECTIONS (audit pass 2, GLM-Flash vs decompile; findings verified shaped, apply when editing):
 - Rule 4 (argument to FUN_6803e0d5): draft writes `FUN_6803e0d5(&(*(param_1+0x70))+0x29e)`, i.e. address of the pointer field plus 0x29e, but the decompile passes the dereferenced pointer plus the offset: `iVar2 = FUN_6803e0d5(*(int *)(param_1 + 0x70) + 0x29e);` — the argument is `(*(param_1+0x70)) + 0x29e`, not `(param_1+0x70) + 0x29e`. (The draft's INPUTS section states the correct form; the `&` in rule 4 is the error.)
 
-
-RULES v2 (corrections applied; supersedes the flagged rules above; from audit-pass-2 findings):
-
-replaces rule 4: Let `A` = return value of the `IsTracking`-labeled call on `DAT_680a224c`; let `B` = `FUN_6803e0d5((*(param_1+0x70)) + 0x29e)` (decompile: `FUN_6803e0d5(*(int *)(param_1 + 0x70) + 0x29e)` — the pointer at `param_1+0x70` is dereferenced, then `0x29e` is added; no `&`). If `B < A`: `result -= (A - B)`. This subtraction applies regardless of swing type.
+CORRECTIONS HISTORY (audit pass 2 findings; rules above were rewritten accordingly):
+- Rule 4 (argument to FUN_6803e0d5): draft writes `FUN_6803e0d5(&(*(param_1+0x70))+0x29e)`, i.e. address of the pointer field plus 0x29e, but the decompile passes the dereferenced pointer plus the offset: `iVar2 = FUN_6803e0d5(*(int *)(param_1 + 0x70) + 0x29e);` — the argument is `(*(param_1+0x70)) + 0x29e`, not `(param_1+0x70) + 0x29e`. (The draft's INPUTS section states the correct form; the `&` in rule 4 is the error.)

@@ -1,0 +1,6 @@
+VERDICT: PARTIAL
+
+- 68054d4a rule 5: draft's `FUN_680829dc(table, …)` implies the rule-4 table `DAT_68097660`; decompile passes a different base: `FUN_680829dc(&DAT_68185a60,(int)local_44,(int)local_98)` (0x68185a60 ≠ 0x68097660; DAT_68097660 only supplies `local_44`/`local_98`).
+- 68054d4a rule 9: adjustment is stored to a local the draft never mentions — `local_40 = (short)iVar2` after `FUN_68005b80(0x4000 - local_58,0x32 - local_bc)`; `local_58` is not written anywhere in this half, so rule 10's `local_58 = adjustment + local_58` is not evidenced here (slice cuts off mid-branch).
+
+All other visible behavior matches: `this+0x6b` IsTracking → `local_9c`/`local_c8`; three arrays `DAT_68097628/68097638/68097648` at `+local_9c*4`; clamp `FUN_6800f0e0(local_104,0,0x39)`; shorts at `DAT_68097660 + e4*2` and `DAT_68097662 + e4*2`; block select `&DAT_68114ba8 + FUN_680076c0(0x68143ee0)*0x173be`, element read `FUN_6803e2e1(puVar3+0x6b0, 0x23)`; `local_bc = (*piVar4 + local_c8)/2`; `local_bc < 0x32` branch constants match. Rules 10–16 and all of draft part 2 are beyond this half — not verified.

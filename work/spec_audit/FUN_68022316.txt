@@ -1,3 +1,2 @@
-VERDICT: PARTIAL
-
-- 68022316: Draft rule 4 asserts a direct memory test — "If byte at `0x6809f510` != 0" — and lists `0x6809f510` in INPUTS as a "global byte flag" read directly. The decompile instead gates on a helper call that the draft omits entirely: `cVar1 = FUN_680099c0(0x6809f510); if ((cVar1 != '\0') && (cVar1 = FUN_68003110(0x680d26b0), cVar1 != '\0'))`. The byte-read mechanism is unsupported; only the address and the AND-gating with `FUN_68003110` are confirmed.
+VERDICT: RESOLVED
+- caveat: v2 rule's `base` is not restated; in the decompile it is `local_c = FUN_68023268(&DAT_680d26b0,uVar3)` (short), which the gate then modifies via `local_c = local_c - sVar2` — consistent assuming the draft defined `base` as that value.
