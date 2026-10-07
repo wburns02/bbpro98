@@ -1,0 +1,4 @@
+{"primary": ["/home/will/bbpro98/BBPRO98_package/game/SHELL.VOL", "/mnt/nvme/bbpro98/work_install/SHELL1.VOL", "/mnt/nvme/bbpro98/work_install/SHELL2.VOL"],
+ "secondary": ["/mnt/nvme/bbpro98/work_install/SHELL.VOL"],
+ "audit": ["/home/will/bbpro98/BBPRO98_package/game/SHELL.VOL", "/mnt/nvme/bbpro98/work_install/SHELL2.VOL"],
+ "min_entries": {"SHELL.VOL": 30, "SHELL1.VOL": 41, "SHELL2.VOL": 12}}

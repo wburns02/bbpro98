@@ -1,0 +1,3 @@
+{"primary": ["/mnt/nvme/bbpro98/work_install/Assn/MLBPA97.eos", "/mnt/nvme/bbpro98/work_install/Assn/_DEFAULT.ASN", "/mnt/nvme/bbpro98/work_install/Assn/MLBPA96E.ASN", "/mnt/nvme/bbpro98/work_install/SCHEDTMP.DAT", "/mnt/nvme/bbpro98/work_install/Stats/_DEFAULT.DAT", "/mnt/nvme/bbpro98/work_install/Stats/mlbpa96e.dat", "/mnt/nvme/bbpro98/work_install/Assn/MLBPA97.ASN", "/mnt/nvme/bbpro98/work_install/Stats/mlbpa97.DAT"],
+ "holdout": ["/mnt/nvme/bbpro98/work_state_s10/Assn/MLBPA97.eos", "/mnt/nvme/bbpro98/work_state_s10/Assn/MLBPA97.ASN", "/mnt/nvme/bbpro98/re/asnseq/day10/Assn/MLBPA97.ASN", "/mnt/nvme/bbpro98/re/asnseq/day10/Stats/mlbpa97.DAT"],
+ "audit": ["/mnt/nvme/bbpro98/work_install/Assn/MLBPA97.eos", "/mnt/nvme/bbpro98/work_install/Assn/_DEFAULT.ASN"]}

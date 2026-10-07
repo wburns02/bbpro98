@@ -1,0 +1,3 @@
+{"pyr": ["/mnt/nvme/bbpro98/work_install/Assn/MLBPA97.PYR", "/mnt/nvme/bbpro98/work_install/Assn/_DEFAULT.PYR", "/mnt/nvme/bbpro98/work_install/Assn/MLBPA96E.PYR"],
+ "hfiles": ["/mnt/nvme/bbpro98/work_install/Stats/*.H*"],
+ "holdout": ["/mnt/nvme/bbpro98/re/asnseq/day*/Stats/*.H*", "/mnt/nvme/bbpro98/work_state_s10/Stats/*.H*"]}
