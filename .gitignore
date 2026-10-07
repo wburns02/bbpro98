@@ -77,3 +77,6 @@ re/hfiles/lanes/_round1_aborted/
 re/hfiles/WINNER
 re/hfiles/__pycache__/
 re/hfiles/audits/
+.audits/
+re/targets/*/lanes/*/runs/
+re/targets/*/WINNER

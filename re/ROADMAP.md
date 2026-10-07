@@ -1,0 +1,39 @@
+# Full-unlock roadmap (2026-10-07)
+
+Goal: any change to the game: every data file and asset readable AND writable, and arbitrary game logic patchable.
+Supersedes the status column of `re/formats/STATUS.md` (2026-10-06, stale). Method for every item: a GLM-5.3-Flash
+lane loop (`re/targets/drive.sh <target> <lane>`) scored by a Claude-written mechanical referee, Haiku audit, Claude
+final verification. Fable/Opus only when a lane stalls 2-3 rounds.
+
+## Done
+| Item | Read | Write | Where |
+|---|---|---|---|
+| PYR rosters/ratings | yes | yes, byte round-trip | BBPRO98_package/research/pyr_io.py |
+| mlbpa97.DAT season/career stat lines | yes, screen-verified | no | work/lib.py, work/bbstats.py |
+| MLBPA97.H?? per-game box scores | yes, 1.0000 incl. holdout | trivial (plaintext tables) | re/hfiles/lanes/data/hdecode.py |
+| ASN news pool | yes | no | RE_FINDINGS.md |
+| VOL archives (SHELL, SHELL1) | yes | yes (rebuilt + in-game tested) | work/volx.py, work/patches/build_wide_vol.py |
+| PlayBalance (872 sim knobs) | yes | via PB.INI overlay, effect verified (SB 8.9x) | re/pb_params.tsv |
+| Standard media: BMP, WAV, AVI (Cinepak), TTF, ICO | standard tools | standard tools | none needed |
+
+## Open, by wave
+| # | Item | Gap | Referee (mechanical) | Size |
+|---|---|---|---|---|
+| 1 | DBM sprite/animation archives (ARCDBM x3 LOD, BPIDBM, NUMDBM x3, OVERDBM, NOVDBM, GAMEDBM, DMP) | "crushed" bitmaps, codec unknown | targets/imgref.py: decode, byte round-trip, edit survives, pixel-art stats, Haiku vision | L, RUNNING |
+| 2 | ASN main payload (teams, divisions, standings, schedule, results) | layout unknown | day-to-day snapshot diffs (asnseq) must match the decoded box scores (W/L, runs) + round-trip | M |
+| 3 | mlbpa97.DAT writer | no writer | round-trip + edit a stat, re-read with lib.load | S |
+| 4 | Per-file substitution cipher (PYR, H-file 2698-byte blob) | how the game builds the 256-byte table | reproduce dump_pyr's id-derived table from the file alone | M |
+| 5 | Shell graphics: PCX-in-VOL (not standard PCX), SHELL2.VOL (volx extracts 0 files), BMX, PLX/PAL palettes, FNX fonts | formats unknown, one extractor bug | imgref.py (same contract) + Haiku vision | M |
+| 6 | UI layout: DIAL.REQ, MENU.REQ (screens, gadgets, columns) | format unknown (block 13 = stats-grid rows known) | round-trip + edit (move a gadget) + Wine screenshot diff | L |
+| 7 | SOUND.DAT (17 MB) | container unknown | round-trip + extracted clips are valid PCM with speech/crowd spectra | M |
+| 8 | SCHEDTMP.DAT, SIM.DAT (1.9 MB), Stadia/*.dat, INJURY.DAT, pgen*.dat, HHA.DAT, bb.cfg, .apc/.pyc/.pyf/.eos, ARC, hilights .tap, STS writer | unknown or reader-only | per-format: round-trip + cross-check against decoded ASN/H/DAT truth | S-M each |
+| 9 | Code hook framework | bbfix.dll injects + logs only; no detours | a hook replaces one known function (e.g. steal chance) and the season stat shifts as predicted vs a null arm | L (Claude/Sonnet design) |
+| 10 | Function labels (M1-M3), sim formulas (M9-M11), RNG + seed (M12) | ~1350/3800 P1 labelled; RNG not located | xref consistency; formula predicts logged pitch outcomes; seeded replay is deterministic | L |
+| 11 | Automated in-game test harness | partial (probe_screen.sh, simdays.py) | itself the referee for 6 and 9 | M |
+
+Order: wave 1 = #1. Wave 2 = #2, #3, #4, #5, #7 (independent, one target each, 1-2 lanes). Wave 3 = #6, #8, #9,
+#10, #11 (#9 and #11 unlock arbitrary logic changes; #6 unlocks arbitrary screen changes).
+
+## Budget per target
+GLM-5.3-Flash via Hive for all lane rounds (cents per round, cap 8 rounds/lane), Haiku for audits (~$0.01-0.05
+each), Claude for the referee (once per target) and the final check. No pay-per-token Anthropic API.

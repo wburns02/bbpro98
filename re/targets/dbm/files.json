@@ -1,0 +1,5 @@
+{"dir": "/mnt/nvme/bbpro98/work_install",
+ "palette": "/mnt/nvme/bbpro98/work_install/BB0.PAL",
+ "primary": ["NOVDBM.DAT", "NUMDBM4.DAT", "NUMDBM8.DAT", "NUMDBM.DAT", "OVERDBM.DAT", "BPIDBM.DAT", "Arcdbm4.dat", "Arcdbm8.dat", "ARCDBM.DAT"],
+ "secondary": ["GAMEDBM.DAT", "DMP.DAT"],
+ "audit": ["ARCDBM.DAT", "BPIDBM.DAT", "NUMDBM.DAT", "OVERDBM.DAT"]}
