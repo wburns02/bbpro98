@@ -223,7 +223,7 @@ def main():
     days = cfg['holdout_days'] if hold else cfg['days']
     prev = cfg['holdout_prev'] if hold else None
     singles = cfg['holdout_files'] if hold else cfg['base_files']
-    names = sorted(cfg['names'])
+    names_for = lambda path: sorted(cfg.get('names_by_file', {}).get(os.path.basename(path), cfg['names']))
     ok_all, results, decoded = True, [], {}
 
     def record(name, ok, **kw):
@@ -245,7 +245,7 @@ def main():
         if path not in decoded: continue
         name = path.split('/')[-1]; blob, doc, tm, games = decoded[path]
         try:
-            consistency(tm, games, names)
+            consistency(tm, games, names_for(path))
             pdir = order[order.index(path) - 1] if order.index(path) > 0 else None
             truth_g, tw, tl, credits = day_truth(path, pdir)
             info = {'played': sum(g['played'] for g in games), 'box_games': sum(truth_g.values())}
@@ -274,7 +274,7 @@ def main():
         name = '/'.join(path.split('/')[-3:])
         try:
             blob = safe_read(path, 64 << 20); doc = decode(codec, blob); tm, games = schema(doc)
-            consistency(tm, games, names)
+            consistency(tm, games, names_for(path))
             if encode(codec, blob, doc) != blob: fail('encode(decode(x)) != x')
             info = {'played': sum(g['played'] for g in games)}
             if os.path.basename(path) in cfg.get('edit', []) and not hold: edit_test(codec, blob, doc); info['edit'] = True

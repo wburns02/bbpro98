@@ -19,6 +19,7 @@ final verification. Fable/Opus only when a lane stalls 2-3 rounds.
 | VOL archives (SHELL, SHELL1, SHELL2: 83 entries) | yes | yes, byte round-trip + add/resize | work/volcodec.py; format re/targets/vol/lanes/code/FORMAT.md (GLM code lane, round 1) |
 | c-tree Plus superfiles: ASN, eos, Stats DAT, SCHEDTMP.DAT (records + B-tree indexes) | yes | yes: rewrite (incl. grow), add, delete with index + free-space upkeep; 8/8 files + 4 holdout saves | work/ctree.py; format re/targets/ctree/lanes/data/FORMAT.md (GLM data lane, round 2) |
 | Compressed chunk graphics: SCR: screens (6), multi-frame sprites (60), FNT: fonts (5); 'crush' LZ | yes, eyeballed | yes, byte round-trip + edit, all 71 | work/chunkgfx.py; format re/targets/chunkgfx/lanes/data/FORMAT.md (GLM data lane, round 3) |
+| League file ASN (teams, names, managers, stadiums, divisions, W/L, rosters, schedule with dates/scores/innings, transactions, playoff, draft) | yes, day-pair diffs vs box scores + holdout day10/s10 | yes, in-place edit | work/league.py (GLM data lane, round 1) |
 | DBM sprite archives (ARCDBM x3 LOD, BPIDBM, NUMDBM x3, OVERDBM, NOVDBM, GAMEDBM) | yes, eyeballed (players, overhead views, jersey numerals; some frames are multi-pose strips) | yes, byte round-trip + edit, crush LZ | work/dbmcodec.py (GLM code lane, round 4) |
 | Shell BMX (MENUBRS, STADIA) + FNX fonts (0-5) | yes, eyeballed | yes, byte round-trip + edit | work/shellgfx.py (GLM data lane, round 1) |
 | Shell PCX (59, inside the VOLs) + PLX palettes | yes: standard 8-bit PCX, no embedded palette (BB0.PAL); MU0/MU1.PLX = raw 768-byte RGB | standard tools | none needed |
@@ -28,7 +29,6 @@ final verification. Fable/Opus only when a lane stalls 2-3 rounds.
 ## Open, by wave
 | # | Item | Gap | Referee (mechanical) | Size |
 |---|---|---|---|---|
-| 2 | ASN main payload (teams, divisions, standings, schedule, results) | member layouts (a, l, d, t, r, s, xs, tr, df, po, sp) | targets/asnref.py: day-pair diffs vs box scores (W/L, runs, rosters) + round-trip + in-place edit | M, RUNNING 2026-10-07 |
 | 1b | DMP.DAT (10 frames, not DBM layout) | unknown | imgref | S |
 | 3 | mlbpa97.DAT writer | falls out of #2a | round-trip + edit a stat, re-read with lib.load | S |
 | 5a | VOL DAT entries (18: AGEPLYR, ASNEW, ASNEWS, ASSERTXT, BOXTEXT, MENU, PGEND, PGENFRST, PGENLAST, ...) | layouts unknown (some plain text) | per-file round-trip + game-visible edit | S-M |
@@ -40,7 +40,7 @@ final verification. Fable/Opus only when a lane stalls 2-3 rounds.
 | 10 | Function labels (M1-M3), sim formulas (M9-M11), RNG + seed (M12) | ~1350/3800 P1 labelled; RNG not located | xref consistency; formula predicts logged pitch outcomes; seeded replay is deterministic | L |
 | 11 | Automated in-game test harness | partial (probe_screen.sh, simdays.py) | itself the referee for 6 and 9 | M |
 
-Order: wave 1 done 2026-10-07 (DBM, VOL, cipher, c-tree, shell BMX/FNX, chunk graphics). Now: #2 (running), then #3, #4. Wave 2 = #2, #3, #5, #7 (independent, one target each, 1-2 lanes). Wave 3 = #6, #8, #9,
+Order: wave 1 done 2026-10-07 (DBM, VOL, cipher, c-tree, shell BMX/FNX, chunk graphics). #2 league done 2026-10-07. Now: #3, #4. Wave 2 = #2, #3, #5, #7 (independent, one target each, 1-2 lanes). Wave 3 = #6, #8, #9,
 #10, #11 (#9 and #11 unlock arbitrary logic changes; #6 unlocks arbitrary screen changes).
 
 ## Budget per target

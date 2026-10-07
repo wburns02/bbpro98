@@ -55,5 +55,37 @@
   "St. Louis",
   "Toronto",
   "Minnesota"
- ]
+ ],
+ "names_by_file": {
+  "MLBPA96E.ASN": [
+   "Atlanta",
+   "Chicago (N)",
+   "Colorado",
+   "Baltimore",
+   "Chicago (A)",
+   "California",
+   "Florida",
+   "Cincinnati",
+   "Los Angeles",
+   "Boston",
+   "Cleveland",
+   "Oakland",
+   "Montreal",
+   "Houston",
+   "San Diego",
+   "Detroit",
+   "Kansas City",
+   "Seattle",
+   "New York (N)",
+   "Pittsburgh",
+   "San Francisco",
+   "New York (A)",
+   "Milwaukee",
+   "Texas",
+   "Philadelphia",
+   "St. Louis",
+   "Toronto",
+   "Minnesota"
+  ]
+ }
 }
