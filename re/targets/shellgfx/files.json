@@ -4,5 +4,6 @@
  "min_expansion": 1.0,
  "min_expansion_files": {"0.FNX": 2.0, "1.FNX": 2.0, "2.FNX": 2.0, "3.FNX": 2.0, "4.FNX": 2.0, "5.FNX": 1.2},
  "primary": ["MENUBRS.BMX", "STADIA.BMX", "0.FNX", "1.FNX", "2.FNX", "3.FNX", "4.FNX", "5.FNX"],
- "secondary": []
+ "secondary": [],
+ "audit": ["MENUBRS.BMX", "STADIA.BMX", "0.FNX", "4.FNX", "5.FNX"]
 }

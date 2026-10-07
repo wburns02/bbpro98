@@ -121,7 +121,10 @@ def sheet(man, data, out_png, default_pal):
     for i in idx:
         f = man['frames'][i]
         im = Image.frombytes('P', (f['w'], f['h']), data[i]); im.putpalette(flat)
-        im = im.convert('RGB'); im.thumbnail((240, 240))
+        im = im.convert('RGB')
+        k = max(1, min(240 // max(f['w'], 1), 240 // max(f['h'], 1)))   # integer nearest-neighbour upscale for tiny frames
+        if k > 1: im = im.resize((f['w'] * k, f['h'] * k), Image.NEAREST)
+        im.thumbnail((240, 240))
         tiles.append(im)
     W, cols = 1024, 4
     rows = (len(tiles) + cols - 1) // cols
@@ -148,7 +151,7 @@ def main():
     if '--audit' in sys.argv:
         out = sys.argv[sys.argv.index('--audit') + 1]; os.makedirs(out, exist_ok=True)
         default_pal = riff_pal(cfg['palette']) if cfg.get('palette') else [[k, k, k] for k in range(256)]
-        for name in cfg['audit']:
+        for name in cfg.get('audit') or cfg['primary']:
             src = safe_read(f'{cfg["dir"]}/{name}', 64 << 20)
             with tempfile.TemporaryDirectory(prefix='imgref') as td:
                 with open(f'{td}/in.bin', 'wb') as fh: fh.write(src)

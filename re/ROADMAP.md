@@ -17,6 +17,7 @@ final verification. Fable/Opus only when a lane stalls 2-3 rounds.
 | Raw chunk images (340 chunks, 25.8 MB: stadium stands PB/RC, field AF/GF) + PAL: palettes | yes, rendered | yes (38-byte header + w*h indices) | RE_FINDINGS 2026-10-07 |
 | File cipher, any seed (PYR, ASN, H-file 2698-byte table) | yes | yes | work/fpscipher.py; algorithm re/targets/cipher/lanes/data/CIPHER.md (GLM data lane, round 2; 82/82 + 36/36 holdout) |
 | VOL archives (SHELL, SHELL1, SHELL2: 83 entries) | yes | yes, byte round-trip + add/resize | work/volcodec.py; format re/targets/vol/lanes/code/FORMAT.md (GLM code lane, round 1) |
+| Shell BMX (MENUBRS, STADIA) + FNX fonts (0-5) | yes, eyeballed | yes, byte round-trip + edit | work/shellgfx.py (GLM data lane, round 1) |
 | Shell PCX (59, inside the VOLs) + PLX palettes | yes: standard 8-bit PCX, no embedded palette (BB0.PAL); MU0/MU1.PLX = raw 768-byte RGB | standard tools | none needed |
 | PlayBalance (872 sim knobs) | yes | via PB.INI overlay, effect verified (SB 8.9x) | re/pb_params.tsv |
 | Standard media: BMP, WAV, AVI (Cinepak), TTF, ICO | standard tools | standard tools | none needed |
@@ -28,7 +29,6 @@ final verification. Fable/Opus only when a lane stalls 2-3 rounds.
 | 2 | ASN main payload (teams, divisions, standings, schedule, results) | c-tree superfile, names enciphered (f5dc); member layouts (a, l, d, t, r, s, xs) unknown; needs #2a | day-to-day snapshot diffs (asnseq) must match the decoded box scores (W/L, runs) + round-trip | M |
 | 2a | c-tree Plus codec (ASN, eos, Stats DAT, SCHEDTMP.DAT): records + B-tree indexes, rewrite/add/delete | engine is FPS_CT.dll | targets/ctref.py: literal offsets, index order + coverage, 6 edit cases, holdout saves | L, RUNNING |
 | 3 | mlbpa97.DAT writer | falls out of #2a | round-trip + edit a stat, re-read with lib.load | S |
-| 5 | Shell graphics: BMX (MENUBRS, STADIA), FNX fonts (0-5) | formats unknown | targets/imgref.py via target shellgfx + Haiku vision | M, RUNNING |
 | 5a | VOL DAT entries (18: AGEPLYR, ASNEW, ASNEWS, ASSERTXT, BOXTEXT, MENU, PGEND, PGENFRST, PGENLAST, ...) | layouts unknown (some plain text) | per-file round-trip + game-visible edit | S-M |
 | 6 | UI layout: DIAL.REQ, MENU.REQ (screens, gadgets, columns) | format unknown (block 13 = stats-grid rows known) | round-trip + edit (move a gadget) + Wine screenshot diff | L |
 | 7 | Compressed chunk graphics: SCR: 640x480 screens (6), multi-frame sprites RG/JS/KS/WT/XT (60), FNT: fonts (5) | compression unknown (maybe the DBM 'crush') | targets/imgref.py via target chunkgfx (fonts gated at 2x expansion) + Haiku vision | M, RUNNING |
@@ -39,7 +39,7 @@ final verification. Fable/Opus only when a lane stalls 2-3 rounds.
 | 10 | Function labels (M1-M3), sim formulas (M9-M11), RNG + seed (M12) | ~1350/3800 P1 labelled; RNG not located | xref consistency; formula predicts logged pitch outcomes; seeded replay is deterministic | L |
 | 11 | Automated in-game test harness | partial (probe_screen.sh, simdays.py) | itself the referee for 6 and 9 | M |
 
-Order: wave 1 = #1, #2a, #7, #5 (running 2026-10-07; VOL + cipher done). Wave 2 = #2, #3, #5, #7 (independent, one target each, 1-2 lanes). Wave 3 = #6, #8, #9,
+Order: wave 1 = #1, #2a, #7 (running 2026-10-07; VOL, cipher, shell BMX/FNX done). Wave 2 = #2, #3, #5, #7 (independent, one target each, 1-2 lanes). Wave 3 = #6, #8, #9,
 #10, #11 (#9 and #11 unlock arbitrary logic changes; #6 unlocks arbitrary screen changes).
 
 ## Budget per target

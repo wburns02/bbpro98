@@ -95,10 +95,11 @@ LEAK GUARD FAILED: $DECODER references forbidden paths. It may read only its com
     echo "LEAK GUARD" >> "$R/run.log"; continue
   fi
   A=$AU/round$r; mkdir -p "$A"
+  arc=0
   if [ "$AUDIT" = image ]; then
-    "${REFEREE[@]}" "$L" --audit "$A" >> "$A/sheets.log" 2>&1
+    "${REFEREE[@]}" "$L" --audit "$A" >> "$A/sheets.log" 2>&1 || arc=$?
   else
-    "${REFEREE[@]}" "$L" --audit "$A" > "$A/sample.txt" 2>&1
+    "${REFEREE[@]}" "$L" --audit "$A" > "$A/sample.txt" 2>&1 || arc=$?
     safe_cat "$L/$DECODER" > "$A/decoder.txt"
   fi
   python3 -I -B - "$A" "$AUDIT_RULES" "$AUDIT" > "$A/msg.jsonl" <<'PY'
@@ -120,7 +121,12 @@ else:
 end = '\nEnd your reply with exactly one line: VERDICT: CLEAN (every sheet/output is real decoded content) or VERDICT: LEAK <which and why>.'
 print(json.dumps({'type': 'user', 'message': {'role': 'user', 'content': [{'type': 'text', 'text': text}] + content + [{'type': 'text', 'text': end}]}}))
 PY
-  v=$(haiku "$A/msg.jsonl" "$A/haiku.log" | grep -o 'VERDICT: [A-Z]*.*' | tail -n 1 | cut -c1-200); echo "$v" >> "$R/run.log"
+  if [ "$arc" != 0 ] || { [ "$AUDIT" = image ] && ! ls "$A"/*.png >/dev/null 2>&1; }; then
+    v="VERDICT: ERROR referee --audit failed (exit $arc) or produced no sheets"   # fail closed, never ask the model
+  else
+    v=$(haiku "$A/msg.jsonl" "$A/haiku.log" | grep -o 'VERDICT: [A-Z]*.*' | tail -n 1 | cut -c1-200)
+  fi
+  echo "$v" >> "$R/run.log"
   if [[ "$v" != "VERDICT: CLEAN"* ]]; then last="$out
 Vision/text audit: ${v:-no verdict}. Fix it."; continue; fi
   if [ "$HOLDOUT" = 1 ]; then
