@@ -1,0 +1,7 @@
+replaces rule 6: For each A: a = A's current slot (0–8; 13 = bench). If a≠13, build B list: ≠A, ≠P, ≠slot-9, eligible, can play a, health <5. For each B: b = B's slot; if b≠13, build C list: ≠A, ≠B, ≠P, ≠slot-9, eligible, can play b, health <3. (C list **does** exclude A — `*(int *)(&DAT_68114af8 + local_40*4) != local_68`.)
+
+replaces rule 11: newDef tier (own threshold rows, not currDef's 0x153–0x156): cutoffs are separate getter reads `FUN_68003170(0x15c)`–`FUN_68003170(0x15f)` (rows 348–351, absent from the table; values unknown, not 75/49/28/14): ≥thresh[0x15c] → +PB[defSubVeryHighNewDefAdjust] (50); ≥thresh[0x15d] → +PB[defSubHighNewDefAdjust] (20); ≥thresh[0x15e] → +PB[defSubMedNewDefAdjust] (0); ≥thresh[0x15f] → +PB[defSubLowNewDefAdjust] (−50); else +PB[defSubVeryLowNewDefAdjust] (−100). Adjust rows 0x160–0x164 (352–356) as originally cited.
+
+replaces INPUTS bullet (eligibility flag): eligibility tested by `FUN_6803d839((int)this + idx*0x93c + 0x144)` — the record base+4 block pointer (same block passed to `FUN_6803d9f9(local_78+4,...)` and `FUN_6803d745(local_18+4)`), not base+0x144 (abs 0x284).
+
+replaces UNCERTAIN bullet (C-list duplicate A): resolved — C list excludes A (`*(int *)(&DAT_68114af8 + local_40*4) != local_68`), so A cannot appear twice in a chain.

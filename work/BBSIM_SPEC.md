@@ -48,19 +48,18 @@ Caveat: the three calls Ghidra names CSplitterWnd::IsTracking are an FID false m
 | 6805 MATCH (audit pass 2) ft, unaudited |
 | 68036d52 | ? | 4  MATCH (audit pass 2)  |
 | 6800d44f | FastSi MATCH (audit pass 2) raft, unaudited |
-| 68 MATCH (au MATCH (audit pass 2) (audit pass 2) raft, unaudited |
+| MATCH (audit pass 2) |
 | 68 MATCH (audit pass 2) raft, unaudited |
 | 68 PARTIAL (pass 2, see re/spec_audit/FUN_6800 MATCH (audit pass 2) ted |
 | 6802ef90 | ? | MATCH (audit pass 2) ted |
 | 6805e93b | Fas MATCH (audit pass 2) draft, unaudited |
-| 6 MATCH (audit pass 2) draft, u MATCH (audit pass 2) , unaudited |
-| 6 MATCH (audit pass 2) dr MATCH (audit pass 2) 30a6f | ? |  PARTIAL (pass 2, see re/spec_audit/FUN_6804 MATCH (audit pass 2) 899 | ? | 2 | GLM draf MATCH (audit pass 2) c50 | ? | 1 | GLM draf MATCH (audit pass 2) ab6 | ? | 1 | GLM draft, unaudited MATCH (audit pass 2) | GLM draft, unaudited |
+| 6 MATCH (audit pass 2) draft, u MATCH (audi MATCH (audit pass 2) ass 2) 30a6f | ? |  PARTIAL (pass 2, see re/spec_audit/FUN_6804 MATCH (audit pass 2) 899 | ? | 2 | GLM draf MATCH (audit pass 2) c50 | ? | 1 | GLM draf MATCH (audit pass 2) ab6 | ? | 1 | GLM draft, unaudited MATCH (audit pass 2) | GLM draft, unaudited |
 | 6805c22c MATCH (audit pass 2) unaudited |
 | 68053d2e PARTIAL (pass 2, see re/spec_audit/FUN_6802 MATCH (audit pass 2) | 680506fd | ? | 1 | GLM draft, unau MATCH (audit pass 2) astSim_FRUNNER | 1 | G MATCH (audit pass 2) | 68043fcf | ? | 1 | GLM draft, unaud MATCH (audit pass 2) | 1 | GLM draft, unaudited |
 | 6803a6 MATCH (audit pass 2) , unaudited |
 | 68039750 | FastSim_FBALL | 1 | GLM draft, unaudited |
 | 68023268 | FastSim_FFIELD MATCH (audit pass 2) dited |
-| 68022316 | ? | 1 | GLM dr MATCH (audit pass 2) 21fca | ? | 1 | GLM dr PARTIAL (pass 2, see re/spec_audit/FUN_6802 MATCH (audit pass 2) Sim_FARCADE | 1 | GLM draft, unaudit MATCH (audit pass 2) 1 | GLM draft, unaudit MATCH (audit pass 2) Sim_fbattr2d | 1 | GLM draft, unaudit MATCH (audit pass 2) Sim_fbattr2d | 1 | GLM draft, unaudit MATCH (audit pass 2) fts: work/spec/FUN_<addr>.md (also /mnt/nvme/bbpro98/re/spec/). 7 drafts hand-audited by Claude (6802baf7, 68050eb0, 6800a7ad, 6800cccc, 68044cbd part 1, table checks); all 73 drafts machine-audited by GLM-Flash in progress (re/spec_audit/), verdicts PARTIAL-heavy; see RE_FINDINGS for calibration of false positives. FUN_68036e91 draft corrected (pitchOutChance indices 14..23). PB.INI A/B validation: stealChance00Count=100 raised SB 9x over 10 sim days (2026-10-07).
+| 68022 MATCH (audit pass 2) ATCH (audit pass 2) 21fca | ? | 1 | GLM dr PARTIAL (pass 2, see re/spec_audit/FUN_6802 MATCH (audit pass 2) Sim_FARCADE | 1 | GLM draft, unaudit MATCH (audit pass 2) 1 | GLM draft, unaudit MATCH (audit pass 2) Sim_fbattr2d | 1 | GLM draft, unaudit MATCH (audit pass 2) Sim_fbattr2d | 1 | GLM draft, unaudit MATCH (audit pass 2) fts: work/spec/FUN_<addr>.md (also /mnt/nvme/bbpro98/re/spec/). 7 drafts hand-audited by Claude (6802baf7, 68050eb0, 6800a7ad, 6800cccc, 68044cbd part 1, table checks); all 73 drafts machine-audited by GLM-Flash in progress (re/spec_audit/), verdicts PARTIAL-heavy; see RE_FINDINGS for calibration of false positives. FUN_68036e91 draft corrected (pitchOutChance indices 14..23). PB.INI A/B validation: stealChance00Count=100 raised SB 9x over 10 sim days (2026-10-07).
 
 ## Open work
 - Trace data xrefs from the init-loaded globals to their consumers and spec those (the actual formulas).

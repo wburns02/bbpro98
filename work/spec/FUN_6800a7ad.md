@@ -46,3 +46,8 @@ No thresholds or probability formulas appear in this function; the only arithmet
 - Meaning of the 4×3 index space (0–3 × 0–2) in the look/discipline tables (likely batter class × count state, but not determinable from this function).
 - Whether the numbers.inf load influences the parameter block — in this code the two are independent; the PB copies run regardless.
 - Call frequency (one caller, 0x68050eb0; one-time vs. per-game init not determinable here).
+
+
+CORRECTIONS (audit pass 2, GLM-Flash vs decompile; findings verified shaped, apply when editing):
+- 0x6808cfa0: draft names the dst of FUN_68003170(0x255) as checkChanceCHPct{Contact} (3rd slot of the 0x253–0x256 group); table row 255 = phForHitBatPlatAdvAdjust (default -10) — index-to-name contradicted at this slot.
+- rule 1: SEH handler address wrong — decompile sets puStack_c = &LAB_6800ac4b; draft cites LAB_680ac4b (dropped digit).

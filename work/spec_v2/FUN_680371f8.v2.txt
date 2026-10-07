@@ -1,0 +1,3 @@
+replaces rule 5: "PH" block: `dR ≥ 2` → + `PB[pitchAroundChancePH2BatAdjust]` (65); `dR == 1` → + `PB[pitchAroundChancePH1BatAdjust]` (35); `dR == 0` → if raw `B < A`: + `PB[pitchAroundChancePHBatAdjust]` (10), else + `PB[pitchAroundChancePHODAdjust]` (−5); `dR == −1` → + `PB[pitchAroundChancePH1ODAdjust]` (−20); `dR ≤ −2` → + `PB[pitchAroundChancePH2ODAdjust]` (−40) (separate check, not chained).
+
+replaces rule 7: Net `dR` contribution (defaults): ≥2 → +75; 1 → +40; 0 & B<A → +10; 0 otherwise → −5; −1 → −25; ≤−2 → −50.

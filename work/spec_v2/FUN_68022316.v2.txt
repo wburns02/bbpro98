@@ -1,0 +1,1 @@
+replaces rule 4: If `FUN_680099c0(0x6809f510) != 0` **AND** `FUN_68003110(0x680d26b0) != 0`, then `base = base - FUN_68002d90(0x6809f515)` (short arithmetic). Otherwise `base` unchanged. (Gate on `0x6809f510` is via helper call FUN_680099c0, not a direct byte read — only the address and the AND-gating with FUN_68003110 are confirmed.)

@@ -44,3 +44,8 @@ Writes `param_1+0x129`. No other fields modified; no return value.
 
 CORRECTIONS (audit pass 2, GLM-Flash vs decompile; findings verified shaped, apply when editing):
 - Rule 4 (argument to FUN_6803e0d5): draft writes `FUN_6803e0d5(&(*(param_1+0x70))+0x29e)`, i.e. address of the pointer field plus 0x29e, but the decompile passes the dereferenced pointer plus the offset: `iVar2 = FUN_6803e0d5(*(int *)(param_1 + 0x70) + 0x29e);` — the argument is `(*(param_1+0x70)) + 0x29e`, not `(param_1+0x70) + 0x29e`. (The draft's INPUTS section states the correct form; the `&` in rule 4 is the error.)
+
+
+RULES v2 (corrections applied; supersedes the flagged rules above; from audit-pass-2 findings):
+
+replaces rule 4: Let `A` = return value of the `IsTracking`-labeled call on `DAT_680a224c`; let `B` = `FUN_6803e0d5((*(param_1+0x70)) + 0x29e)` (decompile: `FUN_6803e0d5(*(int *)(param_1 + 0x70) + 0x29e)` — the pointer at `param_1+0x70` is dereferenced, then `0x29e` is added; no `&`). If `B < A`: `result -= (A - B)`. This subtraction applies regardless of swing type.

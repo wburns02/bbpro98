@@ -60,3 +60,17 @@ Picks one of 8 "type" indices by weighted random draw from a blend of two count 
 CORRECTIONS (audit pass 2, GLM-Flash vs decompile; findings verified shaped, apply when editing):
 - 6800cccc: rule 4 (and the INPUTS framing "row/col index into PB tables") — PB attribution unsupported. FUN_6800cccc contains no call to FUN_68003170 anywhere; the two "tunable adjustments" are direct reads of two distinct globals: `local_48[iVar4] = local_48[iVar4] + *(int *)(&DAT_6808cf28 + local_50 * 4 + local_54 * 0xc);` and `local_48[local_58] = local_48[local_58] + *(int *)(&DAT_6808cef8 + local_50 * 4 + local_54 * 0xc);`. The bases DAT_6808cf28 and DAT_6808cef8 are 0xd0 apart and neither is the PlayBalance base DAT_6808fde0, so citing lookBestType00CountAdjust (547) / lookPrimaryType00CountAdjust (535) — and a single shared "PBG" source for both — is not supported by this decompile; the added value also varies with local_54/local_50, unlike a fixed PB scalar.
 - 6800cccc: rule 6 first branch — "W[cur] = 1, rest 0" is contradicted. The decompile performs only `aiStack_24[local_58] = 1;` under `if ((local_84 == 0) && (local_4c == 0))`, and `aiStack_24` is never memset/zero-initialized in the function, so the remaining 7 weights are uninitialized stack, not 0 (affecting the `local_90` total and the RNG walk).
+
+
+RULES v2 (corrections applied; supersedes the flagged rules above; from audit-pass-2 findings):
+
+replaces rule 4: `row = FUN_6800f1c0()`, `col = FUN_6800f1e0()`; then two direct reads of two distinct globals (no `FUN_68003170` call exists in FUN_6800cccc; the INPUTS "row/col index into PB tables" framing is withdrawn):
+   - `A[iVar4] += *(int *)(&DAT_6808cf28 + col*4 + row*0xc)`
+   - `A[local_58] += *(int *)(&DAT_6808cef8 + col*4 + row*0xc)`
+   Bases `DAT_6808cf28` and `DAT_6808cef8` are 0xd0 apart and neither is the PlayBalance base `DAT_6808fde0`; the added value varies with `row`/`col` (table lookup, not a fixed PB scalar), so no lookBestType00CountAdjust (547) / lookPrimaryType00CountAdjust (535) attribution and no shared "PBG" source.
+
+replaces rule 6: Build weights W = `aiStack_24` (never memset/zero-initialized in the function; only written entries are defined):
+   - `sumA == 0 && sumB == 0`: only `aiStack_24[local_58] = 1` is assigned (`W[cur] = 1`); the other 7 entries are uninitialized stack, not 0 — this garbage flows into `total` (rule 7) and the RNG walk (rule 9).
+   - `sumA == 0`: `W[i] = B[i]` for all i.
+   - `sumB == 0`: `W[i] = A[i]` for all i.
+   - otherwise: `W[i] = (A[i]*sumB + B[i]*sumA) * 100 / (sumB * sumA)` (integer division). Mathematically `100*(A[i]/sumA + B[i]/sumB)`; total ≈ 200 when both nonzero.

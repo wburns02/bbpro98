@@ -49,3 +49,9 @@ CONTINUATION (GLM-Flash, covers the decompile after the stop point; unaudited):
 16. Rest spot: `FUN_6803a4fc(param_1,·,*(param_1+0x73a))` → `FUN_68002ce0(·)` → `*(param_1+0x24) = *ret`.
 17. Restore scalars: `*param_1 = local_18`; `param_1[2] = local_14`; `*(param_1+3) = local_5c`; `param_1[5] = local_58`; `*(param_1+0x2c) = local_10`; `param_1[0x2e] = local_c`.
 18. Restore vecs: `FUN_68014b50(param_1+0xe,&local_54)`; `FUN_68014b50(param_1+0x14,&local_68)`; `FUN_68014b50(param_1+0x1a,&local_74)`; `*(u8*)(param_1+0x746) = 1`; return.
+
+
+CORRECTIONS (audit pass 2, GLM-Flash vs decompile; findings verified shaped, apply when editing):
+- 6803aad7: arc-mode target is `FUN_680110d0(&local_7c,(int)param_1[0x22],(int)param_1[0x23])` — bytes +0x44/+0x46, not "+0x88/+0x8A"; decompile never reads +0x88/+0x8A.
+- 6803aad7: roll zero-reset applies only to x/y (`local_90`←+0x28, `local_8c`←+0x2C); vel z (+0x30, `local_88`) is copied but never ==0-checked — "each component" is wrong for z.
+- 6803aad7: only the `FUN_6803a4fc(·,·,*(param_1+0x744))` refresh of `local_34` is inside the `+0x744 != -1` branch; `FUN_68002ce0` and the `*(param_1+0x26)` (byte +0x4C) store execute unconditionally — draft item 15 misplaces the branch boundary.

@@ -1,0 +1,1 @@
+replaces rule 4: `this+0x38 = FUN_68005b80((int)*(short *)((int)this + 0x32), *(int *)((int)this + 0x34))` — same helper as rule 1, applied to the final speed read back from `this+0x32` as a sign-extended short (value, not address) and field `0x34` as int; result stored as full 32-bit int (no short truncation).

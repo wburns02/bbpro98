@@ -150,3 +150,9 @@ Computes the "run"-variant pinch-hit desirability score (the `phForRun*` paramet
 - Roles of FUN_680573db, FUN_680460a5, FUN_680460bb, and the `local_8 = 0 / 0xffffffff` pattern (assumed logging/cleanup or exception-scope scaffolding).
 - Player struct stride 0x93c and name offset 0x144 are inferred from the logging calls only.
 - That the `local_3c==2` (scoring position) branch and the score base/innings/lead terms live in parts 1–3 is inferred from the else-if chain and the unused parameter list.
+
+
+CORRECTIONS (audit pass 2, GLM-Flash vs decompile; findings verified shaped, apply when editing):
+- 68044cbd: dispatch encoding — draft says pitcher path runs for "nonzero (presumably 1)" `param_1`; decompile branches `if (param_1 == 2)` → pitcher (0xbe chain), `else if (param_1 == 0)` → hit (0xd4), `else` → run (0x101). `param_1==1` executes the phForRun branch, not the pitcher branch.
+- 68044cbd: forced-PH nesting — decompile calls `FUN_6804a64d(this)` only in the `else` of `if (FUN_68049663(this))`, i.e. only when FUN_68049663 is false; draft's "if A AND B → 100; else if C → 100" would also test FUN_6804a64d when FUN_68049663 true but FUN_6804a357 false.
+- 68044cbd: draft part 4 rule 2 computes "`5 * outs`"; decompile adds `FUN_68003170(0x10e) * local_44` with 0x10e=270 → phForRunPerOutAdjust default −5 (which the draft itself cites), so the multiplier is −5, not +5.

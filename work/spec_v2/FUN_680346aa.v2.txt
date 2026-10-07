@@ -1,0 +1,8 @@
+replaces rule 12:
+12. Wild-catch roll (only if G), all 16-bit signed arithmetic:
+    - chance = **PB[wildCatchChanceBase] (90)** + FUN_68005b80(FUN_68039140(*(+0x6b)), **PB[wildCatchChanceFAPct] (25)**).
+    - If FUN_68038d80(+0x6f)==0: (dx,dy) = two shorts from FUN_6800f750(*(+0x67)); if (dx<−4 AND FUN_6800f680(*(+0x6b))==1) OR (dx>4 AND FUN_6800f680(*(+0x6b))==0) → chance += **PB[wildCatchChanceOppMod] (−5)**; if dy>4 → chance += FUN_68003170(0x2d3) = **PB[0x2d3]=723 (wildCatchChanceHighMod −5)**.
+    - roll = FUN_68082999(&DAT_68185a60,100); if chance ≤ roll → FUN_68038bb2(param_1, chance, roll).
+
+new rule 13:
+13. End of update path (outside the G gate): if DAT_681147a0==0 AND (FUN_68038f40(0x680a57b7)&0xff)≠0 → DAT_681147bc=5; then if (FUN_68039010(0x680a57b7)&0xff)==0 → DAT_681147a0=9, else DAT_681147a0=10; invalidate cache (DAT_680a2158). Then unconditionally: state (+0x3492)=0xb (11).
