@@ -1,0 +1,29 @@
+{
+ "days": [
+  "/mnt/nvme/bbpro98/targets_data/stats/day01",
+  "/mnt/nvme/bbpro98/targets_data/stats/day02",
+  "/mnt/nvme/bbpro98/targets_data/stats/day03",
+  "/mnt/nvme/bbpro98/targets_data/stats/day04",
+  "/mnt/nvme/bbpro98/targets_data/stats/day05",
+  "/mnt/nvme/bbpro98/targets_data/stats/day06",
+  "/mnt/nvme/bbpro98/targets_data/stats/day07",
+  "/mnt/nvme/bbpro98/targets_data/stats/day08",
+  "/mnt/nvme/bbpro98/targets_data/stats/day09"
+ ],
+ "base_files": [
+  "/mnt/nvme/bbpro98/targets_data/stats/base/_DEFAULT.DAT",
+  "/mnt/nvme/bbpro98/targets_data/stats/base/mlbpa96e.dat"
+ ],
+ "holdout_days": [
+  "/mnt/nvme/bbpro98/targets_holdout/stats/day10"
+ ],
+ "holdout_prev": "/mnt/nvme/bbpro98/targets_data/stats/day09",
+ "holdout_files": [
+  "/mnt/nvme/bbpro98/targets_holdout/stats/s10/mlbpa97.DAT"
+ ],
+ "edit": [
+  "day05",
+  "day09",
+  "mlbpa96e.dat"
+ ]
+}
