@@ -1,6 +1,6 @@
 """Ground-truth oracle for the per-game Stats/MLBPA97.Hxx decoder.
 
-usage: python3 check_hdecode.py <decoder.py> [--days 2-10] [-v]
+usage: python3 check_hdecode.py <decoder.py> [--days 2-7] [-v]   (days 8-10 = holdout, scored by the driver only)
 
 Contract for <decoder.py>: `python3 <decoder.py> <path-to-Hxx>` prints one JSON object:
   {"batters":  [{"pid": int, "ab": int, "h": int, "hr": int, "rbi": int, "bb": int, "so": int, "r": int, "sb": int}, ...],
@@ -10,6 +10,7 @@ Every player who appeared in the game must be listed once per team side (a playe
 Truth: for snapshot day D, the per-player change in Stats/mlbpa97.DAT scope-1 season lines between day D-1 and D,
 summed over all H files that are new or changed on day D (one H file per game). Team-total rows are excluded.
 Snapshots: /mnt/nvme/bbpro98/re/asnseq/dayNN (read only). This file is the referee: do not edit it.
+The decoder runs in a bwrap jail: no network, no filesystem except /usr and a tempdir holding hdecode.py + game.bin.
 """
 import sys, os, json, hashlib, subprocess, collections, tempfile, shutil
 sys.path[:0] = ['/home/will/bbpro98/work']
@@ -51,9 +52,19 @@ def hfiles(day):
     return {f: hashlib.md5(open(f'{d}/{f}', 'rb').read()).hexdigest() for f in os.listdir(d) if '.H' in f.upper()}
 
 
+def run_jailed(dec, td):
+    """Run the decoder with only /usr and td visible, no network, empty env."""
+    shutil.copy(dec, f'{td}/hdecode.py')
+    cmd = ['bwrap', '--ro-bind', '/usr', '/usr', '--symlink', 'usr/lib', '/lib', '--symlink', 'usr/lib64', '/lib64',
+           '--symlink', 'usr/bin', '/bin', '--proc', '/proc', '--dev', '/dev', '--bind', td, '/w', '--chdir', '/w',
+           '--unshare-all', '--die-with-parent', '--clearenv', '--setenv', 'PATH', '/usr/bin',
+           '/usr/bin/python3', '-I', 'hdecode.py', 'game.bin']
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+
+
 def main():
     dec = sys.argv[1]; verbose = '-v' in sys.argv
-    lo, hi = 2, 10
+    lo, hi = 2, 7
     if '--days' in sys.argv:
         lo, hi = map(int, sys.argv[sys.argv.index('--days') + 1].split('-'))
     bkeys = ['ab', 'h', 'hr', 'rbi', 'bb', 'so', 'r', 'sb']
@@ -71,7 +82,7 @@ def main():
             try:
                 with tempfile.TemporaryDirectory() as td:  # anonymous copy: the decoder must not learn day/game from the path
                     shutil.copy(f'{SNAP}/{cur}/Stats/{f}', f'{td}/game.bin')
-                    r = subprocess.run([sys.executable, dec, f'{td}/game.bin'], capture_output=True, text=True, timeout=60, cwd=td)
+                    r = run_jailed(dec, td)
                 js = json.loads(r.stdout)
             except Exception as e:
                 errors += 1; print(f'{cur} {f}: decoder failed: {e} {r.stderr[-300:] if "r" in dir() else ""}'); continue

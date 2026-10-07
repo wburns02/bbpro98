@@ -72,3 +72,5 @@ work/*.orig
 
 # third-party / Sierra material, never publish
 BBPRO98_package/research/v11_patch_notes.txt
+re/hfiles/runs/
+re/hfiles/__pycache__/
