@@ -1,0 +1,5 @@
+VERDICT: PARTIAL
+
+- FUN_6804684c C-list build: draft's "(C list does **not** exclude A)" (rule 6 and UNCERTAIN) is flatly contradicted — C-list condition includes `*(int *)(&DAT_68114af8 + local_40*4) != local_68`, excluding the current A candidate; C excludes A, B, P, and the slot-9 player.
+- FUN_6804684c eligibility test: draft places the eligibility flag at record base (`this+idx*0x93c+0x140`) +0x144 (= abs 0x284); decompile calls `FUN_6803d839((int)this + idx*0x93c + 0x144)` — the same +4 block pointer passed to `FUN_6803d9f9(local_78+4,...)` and `FUN_6803d745(local_18+4)`, i.e. base+4, not base+0x144.
+- FUN_6804684c newDef tier chain: draft's "(same thresholds, New params)" is contradicted — the four newDef cutoffs are separate getter reads `FUN_68003170(0x15c)`–`FUN_68003170(0x15f)` (rows 348–351, absent from the table), not a reuse of the currDef threshold rows 0x153–0x156; the adjust rows 0x160–0x164 (352–356) do match the draft's citations.

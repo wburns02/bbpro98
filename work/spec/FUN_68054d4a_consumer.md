@@ -92,3 +92,6 @@ Builds a 3D point (base vector + direction vector scaled by clamped factors deri
 - Aliasing risk: if `FUN_68014b50(&local_b8, &local_f4)` copies >4 bytes, it overwrites `local_b4` before it is read at steps 5/10 — order dependency unresolvable without part 1.
 - Whether `local_94`/`local_54` (step 2) and the `local_88` transforms (step 12) are dead stores or carry needed side effects.
 - Physical meaning (batted ball, throw, fielder positioning) and units of `local_b4`; exact widths of locals beyond what Ghidra casts show.
+
+
+STATUS: unaudited (slice too large for audit pass 2; two 32k-token attempts returned empty). Treat all rules as draft-only.

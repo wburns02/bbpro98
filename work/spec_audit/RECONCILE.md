@@ -8,8 +8,9 @@ Bullets flagged FP cite indices whose names and defaults match pb_table_FastSim.
 |---|---|---|---|---|
 | FUN_68001935 | MATCH | 1 | 0 | 68001935 (rules 2 & 4): minor imprecision only — draft writes `dist(Fi→P)`/`dist(F→P)`, while the decompile's distance calls use fielder+0x08 as the point (`uVa |
 | FUN_68003899 | PARTIAL | 1 | 0 | 68003899 (rule 4, final `FUN_68005b80` call): draft formula passes `(int)this+0x32` — the *address* of the speed slot — as the first argument. The decompile pas |
+| FUN_6800a7ad | PARTIAL | 2 | 0 | 0x6808cfa0: draft names the dst of FUN_68003170(0x255) as checkChanceCHPct{Contact} (3rd slot of the 0x253–0x256 group); table row 255 = phForHitBatPlatAdvAdjus; rule 1: SEH handler address wrong — de |
 | FUN_6800b36e | MATCH | 1 | 0 | Caveat only: the swing-type adjust getters at FUN_68003170(0x261)/FUN_68003170(0x262)/FUN_68003170(0x263) (indices 609/610/611, in the `+0xbd` == 1/2/3 branches |
-| FUN_6800cccc_consumer | PARTIAL | 2 | 0 | 6800cccc: rule 4 (and the INPUTS framing "row/col index into PB tables") — PB attribution unsupported. FUN_6800cccc contains no call to FUN_68003170 anywhere; t; 6800cccc: rule 6 first branch — "W[cur |
+| FUN_6800cccc_consumer | PARTIAL | 2 | 1 | 6800cccc: rule 6 first branch — "W[cur] = 1, rest 0" is contradicted. The decompile performs only `aiStack_24[local_58] = 1;` under `if ((local_84 == 0) && (loc |
 | FUN_6800d44f | MATCH | 1 | 0 | Caveat only: the worked example (`ch == pr, expS == 0 → 70`) and the "90%/100%" readings rest on the unverified assumption `FUN_68005b80(v,p) = v*p/100`; the de |
 | FUN_6800d51a | MATCH | 1 | 0 | 6800d51a–6800d5xx: All structural claims verified against the decompile: initial store `*(int *)(param_1 + 0xfa) = iVar1` after `CSplitterWnd::IsTracking(DAT_68 |
 | FUN_6800d6be | MATCH | 1 | 0 | 6800d6be (FUN_68005b80 call site): width-only caveat — draft describes the rating at `+0xf1` as u8 (`*(u8*)(param_1+0xf1)`), but the decompile passes a 4-byte r |
@@ -31,6 +32,7 @@ Bullets flagged FP cite indices whose names and defaults match pb_table_FastSim.
 | FUN_6802ef90 | MATCH | 1 | 0 | 6802ef90: no contradicted claims. Getter indices check out (0x181=385 sureStrikeDist, 0x182=386 closeStrikeDist, 0x183=387 closeBallDist); branch semantics matc |
 | FUN_6802fe35 | MATCH | 1 | 0 | Caveat: the draft never states the actual getter indices; the decompile shows 72 consecutive verbatim calls FUN_68003170(0x274)…FUN_68003170(0x2bb) (final call  |
 | FUN_68030a6f | MATCH | 1 | 0 | Caveat: in cases 0/2/3 the running max starts at 0 with strict `>` (`local_28 < local_14[local_24]`, `local_40 < local_14[local_3c]`), so candidate[0] is also k |
+| FUN_6803122b | MATCH | 1 | 0 | FUN_6803122b (rule 13): hex constant 0xfb06 matches the decompile, but its decimal gloss is wrong — 0xfb06 = −1274, not −1258 (all other glosses check out: 0xfc |
 | FUN_680346aa | PARTIAL | 3 | 0 | 680346aa (update path, rule 12 tail): draft truncates mid-clause ("if dy>4 → chance +=") and never states the added value; decompile completes it as `if (4 < lo; 680346aa (update path, after the dx/dy |
 | FUN_68036a52 | MATCH | 1 | 0 | Caveat only: §1's "returns 0 in all other cases" and §4's "−40" example hold only for the low 16 bits under extra assumptions — when gated out the full return i |
 | FUN_68036c6c | MATCH | 1 | 0 | 68036c6c: caveat only — draft header says object `0x680a57b7` is read "via three getters" but lists four functions; per the decompile, `FUN_68038e10(iVar6)` is  |
@@ -43,12 +45,15 @@ Bullets flagged FP cite indices whose names and defaults match pb_table_FastSim.
 | FUN_6803a5ff | MATCH | 1 | 0 | 6803a5ff: minor caveat only — the temp fetch is short-circuited (`p_Var2 == DAT_68096a54) && (uVar1 = FUN_6803bdb0(0x68114948), (short)CONCAT31(...) == DAT_6809 |
 | FUN_6803a6f0 | MATCH | 1 | 0 | 6803a6f0: caveat only — FUN_6803bdf0's return is compared/stored as a full 32-bit value (`CONCAT31(extraout_var,uVar1) == DAT_68096a5c`, `DAT_68096a5c = CONCAT3 |
 | FUN_6803aa6b | MATCH | 1 | 0 | Caveat only: the copy direction of `FUN_68014b50(&DAT_68114908,param_1)` (dest=DAT_68114908, source=param_1) and the "full copy back" semantics of `FUN_6803bab0 |
+| FUN_6803aad7 | PARTIAL | 3 | 0 | 6803aad7: arc-mode target is `FUN_680110d0(&local_7c,(int)param_1[0x22],(int)param_1[0x23])` — bytes +0x44/+0x46, not "+0x88/+0x8A"; decompile never reads +0x88; 6803aad7: roll zero-reset applies only |
 | FUN_6803e684 | MATCH | 1 | 0 | 6803e684 (tail beyond draft's declared truncation point): the full decompile continues after derived[2]←slot0x21 — derived[3]←slot0x22 (`FUN_6803e39f(this+0x774 |
 | FUN_68040a7e | PARTIAL | 1 | 0 | 68040a7e (draft step 6.2, wrong branch structure): draft claims "If id == 0, skip to 6.13", but the decompile's `if (iVar4 != 0) {` guard encloses steps 6.3–6.1 |
 | FUN_68043fcf | MATCH | 1 | 0 | Caveat (phrasing only): R5's "Pass B runs iff PB[posPlayerPitchingRuns] <= (int)(bVar2 - bVar3)" omits that the getter call `iVar6 = FUN_68003170(0x303)` (0x303 |
 | FUN_680447dc | MATCH | 2 | 0 | 0x680447dc: All structural claims verified — PB getter indices 0xa7/0xa8/0xa9/0xaa/0xab map to table rows 167–171 (warmupSecsPerWarmPitch/QuickPitch/MaintPitch/; Caveat: helper semantics (FUN_68002dd0 |
+| FUN_68044cbd | PARTIAL | 3 | 0 | 68044cbd: dispatch encoding — draft says pitcher path runs for "nonzero (presumably 1)" `param_1`; decompile branches `if (param_1 == 2)` → pitcher (0xbe chain); 68044cbd: forced-PH nesting — decompil |
 | FUN_68044cbd_part1 | MATCH | 1 | 0 | 68044cbd (bench-scan loop): minor caveat — draft renders the combined-rating case as `param_1 == 2`, but the decompile uses the bare `else` of the `param_1==0`/ |
 | FUN_680460cc | MATCH | 1 | 0 | Caveats (non-contradictions): §4's log claim is incomplete — the decompile gates the "=== Check_For_Sub ===" block on an additional inner check (`FUN_680825ac(l |
+| FUN_6804684c | PARTIAL | 3 | 0 | FUN_6804684c C-list build: draft's "(C list does **not** exclude A)" (rule 6 and UNCERTAIN) is flatly contradicted — C-list condition includes `*(int *)(&DAT_68; FUN_6804684c eligibility test: draft p |
 | FUN_68047511 | MATCH | 1 | 0 | FUN_68003170(0x176)–(0x179) / (0x17b)–(0x17d): caveat only — the decompile does call these new-def threshold/adjust getters in exactly the claimed nested-`<` st |
 | FUN_68049d61 | MATCH | 1 | 0 | 68049d61: caveat only — the PURPOSE line "raises a flag when the pitcher **first** drops out of the top two states" could be read as a one-time latch, but the d |
 | FUN_6804a357 | MATCH | 1 | 0 | 6804a357 (PB loads 0xae–0xb6, table indexed by `FUN_6800f0e0(local_8,1,9)`): caveat only — the per-inning defaults cited in rule 1 (−20/−25/−21/−17/−13/−7/−1/5/ |
@@ -60,7 +65,8 @@ Bullets flagged FP cite indices whose names and defaults match pb_table_FastSim.
 | FUN_68053248 | PARTIAL | 4 | 0 | 68053248 (rule 5, SP bands): draft hardcodes cutoffs 39/59/79/80 as fixed constants; the decompile reads all three SP thresholds from PlayBalance — `FUN_6800317; 68053248 (rule 6, CH bands): draft har |
 | FUN_680537ad | MATCH | 1 | 0 | Caveat only: Rule 2's phrase "same call site is reused for both thresholds" is loosely worded — the decompile contains two separate but identical `IsTracking(*( |
 | FUN_68053b36 | MATCH | 1 | 0 | 68053b36: caveat only — the decompile's second else-if condition contains `local_c = sVar1` (with `sVar1 = local_c` = 0 from the prologue `local_c = 0; sVar1 =  |
-| FUN_68053d2e_consumer | PARTIAL | 6 | 1 | Rule 3 (view-state-2 gate): comparison inverted. Decompile: `uVar5 = FUN_68082999(&DAT_68185a60,100); iVar4 = FUN_68003170(0x301); if (iVar4 < (int)uVar5) { loc; Rule 7 table, row "−3, −4": outcomes i |
+| FUN_68053d2e | MATCH | 1 | 0 | Caveat: §2/rules omit the two producer calls FUN_6800bae4(param_1+0x6b → local_24) and FUN_6800bb2c(param_1+0x6b → local_5c); their results are consumed in rule |
+| FUN_68053d2e_consumer | PARTIAL | 6 | 0 | Rule 3 (view-state-2 gate): comparison inverted. Decompile: `uVar5 = FUN_68082999(&DAT_68185a60,100); iVar4 = FUN_68003170(0x301); if (iVar4 < (int)uVar5) { loc; Rule 7 table, row "−3, −4": outcomes i |
 | FUN_68054b0a | MATCH | 1 | 0 | Caveat only: the draft's shorthand `FUN_68038e10(ctx+0x91)` / `(ctx+0x95)` omits the dereference — the decompile passes the value read from the struct (`FUN_680 |
 | FUN_6805be15 | MATCH | 1 | 0 | 6805be15: caveat only — draft rule 4 lists the {1,6} flag (`local_20`) with the other position flags, but the decompile computes it later (after the threshold b |
 | FUN_6805c22c | MATCH | 1 | 0 | 6805c2a2/6805c2b6: caveat only — Ghidra shows `_local_14 = CONCAT22(uStack_12, sVar2);` after `FUN_6807c1c0(*(short *)((int)this + 0x16), local_14, 0x1555)`; th |
@@ -73,7 +79,7 @@ Bullets flagged FP cite indices whose names and defaults match pb_table_FastSim.
 | FUN_6805e93b | MATCH | 1 | 0 | Caveat: `param_1+0x06` is written as a full 4-byte store, not a u8 as the INPUTS layout guesses — decompile: `*(uint *)((int)param_1 + 6) = CONCAT31(extraout_va |
 | FUN_6805ecfd | MATCH | 1 | 0 | 0x68143ee0: minor caveat only — draft says the byte is "read twice," but the decompile shows three `FUN_68002c80(0x68143ee0)` call sites (two within the forced- |
 
-Totals: 83 bullets, 1 false positives, 82 still to review
+Totals: 96 bullets, 1 false positives, 95 still to review
 
 ## FUN_68001935 (MATCH)
 - 68001935 (rules 2 & 4): minor imprecision only — draft writes `dist(Fi→P)`/`dist(F→P)`, while the decompile's distance calls use fielder+0x08 as the point (`uVa
@@ -81,11 +87,14 @@ Totals: 83 bullets, 1 false positives, 82 still to review
 ## FUN_68003899 (PARTIAL)
 - 68003899 (rule 4, final `FUN_68005b80` call): draft formula passes `(int)this+0x32` — the *address* of the speed slot — as the first argument. The decompile pas
 
+## FUN_6800a7ad (PARTIAL)
+- 0x6808cfa0: draft names the dst of FUN_68003170(0x255) as checkChanceCHPct{Contact} (3rd slot of the 0x253–0x256 group); table row 255 = phForHitBatPlatAdvAdjus; rule 1: SEH handler address wrong — decompile sets puStack_c = &LAB_6800ac4b; draft cites LAB_680ac4b (dropped digit).
+
 ## FUN_6800b36e (MATCH)
 - Caveat only: the swing-type adjust getters at FUN_68003170(0x261)/FUN_68003170(0x262)/FUN_68003170(0x263) (indices 609/610/611, in the `+0xbd` == 1/2/3 branches
 
 ## FUN_6800cccc_consumer (PARTIAL)
-- 6800cccc: rule 4 (and the INPUTS framing "row/col index into PB tables") — PB attribution unsupported. FUN_6800cccc contains no call to FUN_68003170 anywhere; t; 6800cccc: rule 6 first branch — "W[cur] = 1, rest 0" is contradicted. The decompile performs only `aiStack_24[local_58] = 1;` under `if ((local_84 == 0) && (loc
+- 6800cccc: rule 6 first branch — "W[cur] = 1, rest 0" is contradicted. The decompile performs only `aiStack_24[local_58] = 1;` under `if ((local_84 == 0) && (loc
 
 ## FUN_6800d44f (MATCH)
 - Caveat only: the worked example (`ch == pr, expS == 0 → 70`) and the "90%/100%" readings rest on the unverified assumption `FUN_68005b80(v,p) = v*p/100`; the de
@@ -150,6 +159,9 @@ Totals: 83 bullets, 1 false positives, 82 still to review
 ## FUN_68030a6f (MATCH)
 - Caveat: in cases 0/2/3 the running max starts at 0 with strict `>` (`local_28 < local_14[local_24]`, `local_40 < local_14[local_3c]`), so candidate[0] is also k
 
+## FUN_6803122b (MATCH)
+- FUN_6803122b (rule 13): hex constant 0xfb06 matches the decompile, but its decimal gloss is wrong — 0xfb06 = −1274, not −1258 (all other glosses check out: 0xfc
+
 ## FUN_680346aa (PARTIAL)
 - 680346aa (update path, rule 12 tail): draft truncates mid-clause ("if dy>4 → chance +=") and never states the added value; decompile completes it as `if (4 < lo; 680346aa (update path, after the dx/dy adjustments): the roll and its action are omitted from the rules (only implied by PURPOSE "rolls against it"); decompile:; 680346aa (update path, trailing block): entirely absent from the draft; decompile: `if ((DAT_681147a0 == 0) && (uVar5 = FUN_68038f40(0x680a57b7), (uVar5 & 0xff)
 
@@ -186,6 +198,9 @@ Totals: 83 bullets, 1 false positives, 82 still to review
 ## FUN_6803aa6b (MATCH)
 - Caveat only: the copy direction of `FUN_68014b50(&DAT_68114908,param_1)` (dest=DAT_68114908, source=param_1) and the "full copy back" semantics of `FUN_6803bab0
 
+## FUN_6803aad7 (PARTIAL)
+- 6803aad7: arc-mode target is `FUN_680110d0(&local_7c,(int)param_1[0x22],(int)param_1[0x23])` — bytes +0x44/+0x46, not "+0x88/+0x8A"; decompile never reads +0x88; 6803aad7: roll zero-reset applies only to x/y (`local_90`←+0x28, `local_8c`←+0x2C); vel z (+0x30, `local_88`) is copied but never ==0-checked — "each component"; 6803aad7: only the `FUN_6803a4fc(·,·,*(param_1+0x744))` refresh of `local_34` is inside the `+0x744 != -1` branch; `FUN_68002ce0` and the `*(param_1+0x26)` (byt
+
 ## FUN_6803e684 (MATCH)
 - 6803e684 (tail beyond draft's declared truncation point): the full decompile continues after derived[2]←slot0x21 — derived[3]←slot0x22 (`FUN_6803e39f(this+0x774
 
@@ -198,11 +213,17 @@ Totals: 83 bullets, 1 false positives, 82 still to review
 ## FUN_680447dc (MATCH)
 - 0x680447dc: All structural claims verified — PB getter indices 0xa7/0xa8/0xa9/0xaa/0xab map to table rows 167–171 (warmupSecsPerWarmPitch/QuickPitch/MaintPitch/; Caveat: helper semantics (FUN_68002dd0 = max(v,1), FUN_6800f0e0 = clamp, FUN_68049d61 purpose) remain unverifiable from this decompile alone, but the draft alre
 
+## FUN_68044cbd (PARTIAL)
+- 68044cbd: dispatch encoding — draft says pitcher path runs for "nonzero (presumably 1)" `param_1`; decompile branches `if (param_1 == 2)` → pitcher (0xbe chain); 68044cbd: forced-PH nesting — decompile calls `FUN_6804a64d(this)` only in the `else` of `if (FUN_68049663(this))`, i.e. only when FUN_68049663 is false; draft'; 68044cbd: draft part 4 rule 2 computes "`5 * outs`"; decompile adds `FUN_68003170(0x10e) * local_44` with 0x10e=270 → phForRunPerOutAdjust default −5 (which the
+
 ## FUN_68044cbd_part1 (MATCH)
 - 68044cbd (bench-scan loop): minor caveat — draft renders the combined-rating case as `param_1 == 2`, but the decompile uses the bare `else` of the `param_1==0`/
 
 ## FUN_680460cc (MATCH)
 - Caveats (non-contradictions): §4's log claim is incomplete — the decompile gates the "=== Check_For_Sub ===" block on an additional inner check (`FUN_680825ac(l
+
+## FUN_6804684c (PARTIAL)
+- FUN_6804684c C-list build: draft's "(C list does **not** exclude A)" (rule 6 and UNCERTAIN) is flatly contradicted — C-list condition includes `*(int *)(&DAT_68; FUN_6804684c eligibility test: draft places the eligibility flag at record base (`this+idx*0x93c+0x140`) +0x144 (= abs 0x284); decompile calls `FUN_6803d839((in; FUN_6804684c newDef tier chain: draft's "(same thresholds, New params)" is contradicted — the four newDef cutoffs are separate getter reads `FUN_68003170(0x15c)
 
 ## FUN_68047511 (MATCH)
 - FUN_68003170(0x176)–(0x179) / (0x17b)–(0x17d): caveat only — the decompile does call these new-def threshold/adjust getters in exactly the claimed nested-`<` st
@@ -237,8 +258,11 @@ Totals: 83 bullets, 1 false positives, 82 still to review
 ## FUN_68053b36 (MATCH)
 - 68053b36: caveat only — the decompile's second else-if condition contains `local_c = sVar1` (with `sVar1 = local_c` = 0 from the prologue `local_c = 0; sVar1 = 
 
+## FUN_68053d2e (MATCH)
+- Caveat: §2/rules omit the two producer calls FUN_6800bae4(param_1+0x6b → local_24) and FUN_6800bb2c(param_1+0x6b → local_5c); their results are consumed in rule
+
 ## FUN_68053d2e_consumer (PARTIAL)
-- Rule 3 (view-state-2 gate): comparison inverted. Decompile: `uVar5 = FUN_68082999(&DAT_68185a60,100); iVar4 = FUN_68003170(0x301); if (iVar4 < (int)uVar5) { loc; Rule 7 table, row "−3, −4": outcomes inverted. Decompile: `case -4: case -3: uVar5 = FUN_68082999(&DAT_68185a60,100); local_20 = (uint)((int)uVar5 < local_34);`; Rule 10 (update message): condition inverted. Decompile: `FUN_6804869a(&DAT_68114ba8 + (uint)(*(int *)((int)param_1 + 0x7b) == 0) * 0x173be,4);` — the `+0x173BE; Rule 10 (FUN_68054d4a call): parameter count/grouping wrong. Draft lists 6 args with `&{local_48, local_44, local_38}` merged; decompile passes 7: `FUN_68054d4a; OUTPUT/SIDE EFFECTS: write range off by one byte. Last store `*(undefined2 *)(local_30 + 0x1d) = local_74;` is a 2-byte write, so DAT_680a58de bytes 0xD–0x1E ar
+- Rule 3 (view-state-2 gate): comparison inverted. Decompile: `uVar5 = FUN_68082999(&DAT_68185a60,100); iVar4 = FUN_68003170(0x301); if (iVar4 < (int)uVar5) { loc; Rule 7 table, row "−3, −4": outcomes inverted. Decompile: `case -4: case -3: uVar5 = FUN_68082999(&DAT_68185a60,100); local_20 = (uint)((int)uVar5 < local_34);`; Rule 8: unsupported PlayBalance citation. Decompile contains no `FUN_68003170` call with 700/704; the modifier reads static arrays: `uVar5 = FUN_68082999(&DAT_6; Rule 10 (update message): condition inverted. Decompile: `FUN_6804869a(&DAT_68114ba8 + (uint)(*(int *)((int)param_1 + 0x7b) == 0) * 0x173be,4);` — the `+0x173BE; Rule 10 (FUN_68054d4a call): parameter count/grouping wrong. Draft lists 6 args with `&{local_48, local_44, local_38}` merged; decompile passes 7: `FUN_68054d4a; OUTPUT/SIDE EFFECTS: write range off by one byte. Last store `*(undefined2 *)(local_30 + 0x1d) = local_74;` is a 2-byte write, so DAT_680a58de bytes 0xD–0x1E ar
 
 ## FUN_68054b0a (MATCH)
 - Caveat only: the draft's shorthand `FUN_68038e10(ctx+0x91)` / `(ctx+0x95)` omits the dereference — the decompile passes the value read from the struct (`FUN_680

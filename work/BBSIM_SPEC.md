@@ -1,6 +1,6 @@
 # BBSIM / FastSim simulation spec (Tier 3)
 
-Status: DRAFT, audit pass 2 (2026-10-07). 73 function drafts; 70 audited by GLM-Flash against the FastSim decompile with the verified PlayBalance-getter identity (FUN_68003170(idx) = *(u32*)(&DAT_6808fde0+idx*4)) and per-draft pb_table rows injected: 54 MATCH, 16 PARTIAL (each PARTIAL draft carries a CORRECTIONS section quoting the findings; 3 large functions unaudited). Draft headers' params= field (which counted PB-getter calls) was replaced with real decompile signatures. Independent validation: PB.INI stealChance00Count experiment (SB 8.9x, CS 11.5x, outside the arm-pair null spread; RE_FINDINGS.md). Pass 1 (untrained prompt) was discarded: 24/25 PARTIALs were false positives from getter opaqueness; re/spec_audit_v1 keeps them.
+Status: DRAFT, audit pass 2 (2026-10-07). 73 function drafts; 70 audited by GLM-Flash against the FastSim decompile with the verified PlayBalance-getter identity (FUN_68003170(idx) = *(u32*)(&DAT_6808fde0+idx*4)) and per-draft pb_table rows injected: 55 MATCH, 17 PARTIAL (each PARTIAL draft carries a CORRECTIONS section quoting the findings); 1 draft (FUN_68054d4a_consumer) unaudited, its slice exceeded the audit budget twice. Draft headers' params= field (which counted PB-getter calls) was replaced with real decompile signatures. Independent validation: PB.INI stealChance00Count experiment (SB 8.9x, CS 11.5x, outside the arm-pair null spread; RE_FINDINGS.md). Pass 1 (untrained prompt) was discarded: 24/25 PARTIALs were false positives from getter opaqueness; re/spec_audit_v1 keeps them.
 
 ## Architecture (CONFIRMED by reading code)
 - BBSIM.dll (animated) and FastSim.dll (no animation) are twins built from the same C++ modules (assert strings: BBSim_*.cpp / FastSim_F*.cpp). Read FastSim for pure logic, BBSIM as cross-check.
@@ -29,7 +29,7 @@ Caveat: the three calls Ghidra names CSplitterWnd::IsTracking are an FID false m
 | 68 MATCH (audit pass 2) RS2 | 72 | GLM draft, unaudited |
 | 68 MATCH (audit pass 2) RS2 | 72 | GLM draft, unaudited |
 | PARTIAL (pass 2, see re/spec_audit/FUN_68019 MATCH (audit pass 2) M draft, unaudited |
-| 68052bd5 | ? |  PARTIAL (pass 2, see re/spec_audit/FUN_6800a7 PARTIAL (pass 2, see re/spec_audit/FUN_68023 PARTIAL (pass 2, see re/spec_audit/FUN_68053248.txt)  | Fa MATCH (audit pass 2) CONFIRMED |
+| 68052bd5 | ? |  PARTIAL (pass 2, see re/spec_audit/FUN_6800a7 PARTIAL (pass 2, see re/spec_audit/FUN_68023 PARTIAL (pass 2, see re/spec_audit/FUN_68053248.txt)  | MATCH (audit pass 2) |
 | 68023dd3 | FastSim_FGAME | 36 | GLM draft, unaudited | MATCH (audit pass 2)  GLM draft, unaudited |
 | 680460cc | F MATCH (audit pass 2) GLM draft, unaudited |
  PARTIAL (pass 2, see re/spec_audit/FUN_680371f8.txt) GLM dr MATCH (audit pass 2) ft, unaudited |
@@ -48,29 +48,19 @@ Caveat: the three calls Ghidra names CSplitterWnd::IsTracking are an FID false m
 | 6805 MATCH (audit pass 2) ft, unaudited |
 | 68036d52 | ? | 4  MATCH (audit pass 2)  |
 | 6800d44f | FastSi MATCH (audit pass 2) raft, unaudited |
-| 68 MATCH (audit pass 2) raft, unaudited |
-| 68 MATCH (audit pass 2) raft, unaudited |
+| 68 MATCH (au MATCH (audit pass 2) (audit pass 2) raft, unaudited |
 | 68 MATCH (audit pass 2) raft, unaudited |
 | 68 PARTIAL (pass 2, see re/spec_audit/FUN_6800 MATCH (audit pass 2) ted |
 | 6802ef90 | ? | MATCH (audit pass 2) ted |
 | 6805e93b | Fas MATCH (audit pass 2) draft, unaudited |
-| 6 MATCH (audit pass 2) draft, unaudited |
-| 68049d61 | ? | 2 | GLM draft, unaudited |
-| 6 MATCH (audit pass 2) draft, unaudited |
-| 68030a6f | ? |  PARTIAL (pass 2, see re/spec_audit/FUN_6804 MATCH (audit pass 2) 899 | ? | 2 | GLM draf MATCH (audit pass 2) c50 | ? | 1 | GLM draf MATCH (audit pass 2) ab6 | ? | 1 | GLM draft, unaudited MATCH (audit pass 2) | GLM draft, unaudited |
+| 6 MATCH (audit pass 2) draft, u MATCH (audit pass 2) , unaudited |
+| 6 MATCH (audit pass 2) dr MATCH (audit pass 2) 30a6f | ? |  PARTIAL (pass 2, see re/spec_audit/FUN_6804 MATCH (audit pass 2) 899 | ? | 2 | GLM draf MATCH (audit pass 2) c50 | ? | 1 | GLM draf MATCH (audit pass 2) ab6 | ? | 1 | GLM draft, unaudited MATCH (audit pass 2) | GLM draft, unaudited |
 | 6805c22c MATCH (audit pass 2) unaudited |
 | 68053d2e PARTIAL (pass 2, see re/spec_audit/FUN_6802 MATCH (audit pass 2) | 680506fd | ? | 1 | GLM draft, unau MATCH (audit pass 2) astSim_FRUNNER | 1 | G MATCH (audit pass 2) | 68043fcf | ? | 1 | GLM draft, unaud MATCH (audit pass 2) | 1 | GLM draft, unaudited |
 | 6803a6 MATCH (audit pass 2) , unaudited |
 | 68039750 | FastSim_FBALL | 1 | GLM draft, unaudited |
-| 68023268 | FastSim_FFIELD | 1 | GLM draft, unaudited |
-| 68022316 | ? | 1 | GLM draft, unaudited |
-| 68021fca | ? | 1 | GLM draft, unaudited |
-| 68020f87 | FastSim_FARCADE | 1 | GLM draft, unaudited |
-| 68016855 | ? | 1 | GLM draft, unaudited |
-| 6800d6be | FastSim_fbattr2d | 1 | GLM draft, unaudited |
-| 6800d51a | FastSim_fbattr2d | 1 | GLM draft, unaudited |
-
-Per-function drafts: work/spec/FUN_<addr>.md (also /mnt/nvme/bbpro98/re/spec/). 7 drafts hand-audited by Claude (6802baf7, 68050eb0, 6800a7ad, 6800cccc, 68044cbd part 1, table checks); all 73 drafts machine-audited by GLM-Flash in progress (re/spec_audit/), verdicts PARTIAL-heavy; see RE_FINDINGS for calibration of false positives. FUN_68036e91 draft corrected (pitchOutChance indices 14..23). PB.INI A/B validation: stealChance00Count=100 raised SB 9x over 10 sim days (2026-10-07).
+| 68023268 | FastSim_FFIELD MATCH (audit pass 2) dited |
+| 68022316 | ? | 1 | GLM dr MATCH (audit pass 2) 21fca | ? | 1 | GLM dr PARTIAL (pass 2, see re/spec_audit/FUN_6802 MATCH (audit pass 2) Sim_FARCADE | 1 | GLM draft, unaudit MATCH (audit pass 2) 1 | GLM draft, unaudit MATCH (audit pass 2) Sim_fbattr2d | 1 | GLM draft, unaudit MATCH (audit pass 2) Sim_fbattr2d | 1 | GLM draft, unaudit MATCH (audit pass 2) fts: work/spec/FUN_<addr>.md (also /mnt/nvme/bbpro98/re/spec/). 7 drafts hand-audited by Claude (6802baf7, 68050eb0, 6800a7ad, 6800cccc, 68044cbd part 1, table checks); all 73 drafts machine-audited by GLM-Flash in progress (re/spec_audit/), verdicts PARTIAL-heavy; see RE_FINDINGS for calibration of false positives. FUN_68036e91 draft corrected (pitchOutChance indices 14..23). PB.INI A/B validation: stealChance00Count=100 raised SB 9x over 10 sim days (2026-10-07).
 
 ## Open work
 - Trace data xrefs from the init-loaded globals to their consumers and spec those (the actual formulas).
