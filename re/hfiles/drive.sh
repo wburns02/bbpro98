@@ -11,7 +11,7 @@
 #    sibling lanes), work/, BBPRO98_package/, the Ghidra index, snapshots day01..07. Days 08..10 are not
 #    mounted. Env is cleared (no Anthropic key). /run is empty except DNS (no docker.sock, no D-Bus).
 #  - Network: a private netns via pasta, with sandbox/egress.nft rejecting host loopback, LAN, tailnet and
-#    link-local. Outbound internet stays open (GLM needs its API), so exfiltrating what GLM can read is not
+#    link-local, IPv4 only with all IPv6 rejected, and no pasta port forwarding in either direction. Outbound internet stays open (GLM needs its API), so exfiltrating what GLM can read is not
 #    prevented; nothing it can read is secret except its own API keys.
 #  - Host-side Python runs with -I -B from cwd / so nothing in a lane dir can shadow a module.
 #  - The referee copies hdecode.py (regular file only, no symlinks) into a bwrap jail: no network, /usr + game file.
@@ -50,7 +50,7 @@ glm_sandboxed() {
     --ro-bind /mnt/nvme/bbpro98/index /mnt/nvme/bbpro98/index
   )
   for i in 01 02 03 04 05 06 07; do b+=(--ro-bind "$SNAP/day$i" "$SNAP/day$i"); done
-  pasta --config-net --no-map-gw --dns-forward 169.254.1.1 --quiet -- bash -c 'nft -f "$1" && shift && exec "$@"' _ \
+  pasta --config-net --ipv4-only --no-map-gw --dns-forward 169.254.1.1 -t none -u none -T none -U none --quiet -- bash -c 'nft -f "$1" && shift && exec "$@"' _ \
     "$D/sandbox/egress.nft" \
   bwrap "${b[@]}" --chdir "$L" --unshare-user --uid 1000 --gid 1000 --unshare-pid --unshare-ipc --unshare-uts \
     --die-with-parent --new-session --clearenv --setenv HOME "$H" --setenv PATH "$H/.local/bin:$H/bin:/usr/bin" --setenv LANG C.UTF-8 --setenv TERM dumb \
