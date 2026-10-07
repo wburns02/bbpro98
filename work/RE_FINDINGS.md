@@ -70,3 +70,7 @@ Output looks plausible and cites strings/callees. Needs the audit gate (spot che
 - NOT confirmed: the downstream effect on sim outcomes. sub.log and prlog.txt append across runs and the sim is not seeded identically, so a one-day before/after compare is noise. Needs a controlled design (same saved state, many days, compare aggregate rates) before claiming an effect size.
 - PB_DumpToFile (pb.txt) is wired to dialog button 0xbfa in the in-game debug options dialog (FUN_6807c3fc), not run automatically.
 - Test file kept at re/PB.INI.test; removed from the work copy.
+
+## ASN payload probe (2026-10-06, Claude)
+- No plaintext, additive-shift or XOR-encoded (all 255 constants) occurrences of Astros/Yankees/Houston/Red Sox in MLBPA97.ASN. Team and player names are not stored as strings in the ASN; payloads are numeric ids and small-int fields (team record 0 payload starts 01 1d 1d 1d a6 01 ...). Names likely live in PYR or other files and are joined by id. ASN stays PARTIAL: container + framing verified, field semantics unknown.
+- Renames applied and readback-verified: IC_Cfg (66), FPS_CT (217, c-tree engine: IO_FILE_* / IO_REGISTRY_* names).
