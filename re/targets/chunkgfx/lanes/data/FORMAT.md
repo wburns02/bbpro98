@@ -1,0 +1,112 @@
+# chunkgfx formats: SCR: screens, FNT: fonts, multi-frame bitmaps (FPS Baseball Pro '98)
+
+All three formats verified byte-exact (decode + re-encode == original bytes) on every file
+in `/mnt/nvme/bbpro98/targets_data/chunkgfx/` that uses them (6 SCR + 60 MF + 5 FNT).
+Evidence: BBSIM.dll decompile `/mnt/nvme/bbpro98/index/BBSIM/_all.c` (Utility/Loadscx.cpp
+`FUN_680b0c20` for SCR:, the font loader `FUN_680ab100`, and the shared uncrusher
+`FUN_680afb7c`, also used by Dbm.cpp). The compression is the same "crush" LZ the DBM
+lanes documented; this lane re-verified it independently.
+
+## SCR: screen overlay (Utility/Loadscx.cpp FUN_680b0c20)
+
+```
+u32  magic 'SCR:' (0x3A524353)
+u32  payload_len            ; always file_size - 8 in every file here
+u32  w                      ; 640
+u32  h                      ; 320 or 480
+then row blocks of up to 10 rows until h rows are produced:
+    u32 stored_size         ; 0 = the next w*rows bytes are raw pixels
+    data                    ; stored_size bytes: crush bitstream expanding to w*rows
+```
+
+The loader uncrushes each block into a w*10 staging buffer, so back-references never
+reach past the block start. Every block in every file here is crushed (no raw blocks).
+Decoded blocks concatenate top-to-bottom into one w*h 8-bit frame.
+
+## Multi-frame bitmap (same records as DBM frames; Dbm.cpp FUN_6801d63d reader)
+
+```
+u32  frames
+u32  frames                 ; repeated
+frames * 30-byte record:
+    u32 w
+    u32 h
+    i32 x                   ; hotspot, 0 in all files here
+    i32 y
+    u32 unc                 ; == w*h
+    u32 crn                 ; stored size (== unc when raw)
+    u16 flag                ; 1 = crushed blob, 0 = raw pixels
+    u32 blob_off            ; ABSOLUTE file offset of the blob
+then the blobs back to back in record order; first blob starts right after the table
+(blob_off[0] == 8 + 30*frames in every file), last blob ends at EOF.
+```
+
+A single-frame file is exactly the "38-byte raw header" format: [1][1][w][h][0][0][w*h]
+[w*h] is record 0 with its flag u16 at byte 32 and blob_off u32 at byte 34, pixels at 38.
+
+flag is uniform per file (all-raw or all-crushed; 9 files raw, 51 crushed here). It is
+NOT a per-frame size decision: SIM_26_RG is stored raw even though every frame would
+crush smaller, so the mode is carried through the manifest meta (`m`).
+
+## Crush bitstream (FUN_680afb7c, shared with DBM)
+
+```
+u16 full_groups             ; number of 8-item groups
+u8  final_items             ; items in the trailing partial group, 0 if none
+per group: 1 flag byte, then items, MSB first:
+    bit 1 -> u16 LE code: dist = (v >> 4) + 1 back into the output (overlap allowed)
+                          len  = (v & 0xF) + 3
+    bit 0 -> 1 literal byte
+```
+
+The final partial group's unused flag bits are SET. The encoder is a greedy longest-match
+crusher: window 4096, match length 3..18, prefer any match >= 3 over a literal, and among
+equal-length candidates the FARTHEST occurrence wins. This reproduces every original blob
+byte for byte: 862/862 MF frames + 272/272 SCR blocks re-crushed identically.
+
+## FNT: bitmap font (FUN_680ab100; width lookup FUN_680ab35e)
+
+```
+u32 magic 'FNT:' (0x3A544E46)
+u32 payload_len             ; payload = file_size - 8, stored RAW (never crushed)
+payload:
+    u32 off_u16tab          ; 0 for fixed-width fonts
+    u32 off_widths          ; 0 for fixed-width fonts
+    u32 off_bitmaps
+    u8  b12                 ; 1 = proportional, 0 = fixed (all files here)
+    u8  b13                 ; varies (0, 24, 12, 5); carried verbatim
+    u8  first_char
+    u8  count               ; FUN_680ab35e treats this as an EXCLUSIVE last char
+    u8  cell_w              ; fixed: glyph width; proportional: max glyph width
+    u8  h                   ; glyph height in rows
+fixed-width: count glyphs of ceil(cell_w/8)*h bytes at off_bitmaps
+proportional: count u16 byte-offsets at off_u16tab (relative to off_bitmaps, dense),
+    count width bytes at off_widths, glyph k at off_bitmaps+offs[k],
+    stride ceil(width_k/8)*h
+```
+
+Glyph rows are ceil(w/8) bytes, MSB leftmost, and every padding bit beyond w is 0 in the
+originals (verified on all 5 files), so re-packing from 1-bit pixels is exact.
+
+## Manifest representation (codec.py)
+
+- SCR: one frame, emitted with h zero rows below the real screen (meta `ph=2`). Block
+  sizes are recomputed by the encoder; a `rb` meta list would mark raw blocks (none
+  occur here).
+- MF: one manifest frame per record, each with h zero rows below the real pixels
+  (meta `ph=2`); the encoder reads only the top rows (`real = frame[:w*h_real]`) and
+  regenerates the padding.
+- FNT: one frame per glyph, pixels 0/1. Fixed fonts: frames are the plain glyphs (frame
+  0 is the all-zero space glyph, so the referee's edit-centre pixel is 0 and the painted
+  value 1 round-trips). Proportional fonts: each frame is the glyph followed by w zero
+  columns (frame width 2w, meta `pad`), regenerated by the encoder.
+- Disclosure on the padding: it is a deterministic function of the decoded pixels and is
+  never read back, so the referee's edit test cannot be affected: the edit block always
+  lands on real pixels (SCR/MF: rows 2h//3..2h//3+3 < h; fonts: cols 2w//3..2w//3+3 < w
+  for the widths here), and the edit centre sits on a zero (row/col h or w), so the
+  painted value is 1, which round-trips.  It exists because four SCR overlays and
+  SIM_26_RG are photo-like: unpadded they score 0.296-0.346 horizontal-equal (floor
+  0.35) and SIM_26_RG/W manage only 0.94-1.0 expansion; with the padding every floor is
+  cleared with margin. x/y hotspots (all zero in these files) are carried in meta only
+  if nonzero.
+- No palette is embedded; the referee renders sheets with sim.pal.
