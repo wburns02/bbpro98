@@ -1,0 +1,98 @@
+Baseball Card Utility 2.0
+
+Programmer: Rudy Kamman
+
+Date: June 1, 1998
+
+Purpose:
+Maintains and displays in html format hitting and pitching stats as well as 
+player ratings from previous seasons for players, teams, leagues and assocations.
+
+Installation:
+Place the "bbcard.exe" file in your baseball directory.
+
+There are two files associated with this package:
+bbcard.exe - the executable program
+bbcard.txt - this instruction file
+
+Execution:
+Open a background DOS window and type "bbcard" followed by the FILENAME
+of the league as it is listed in the ASSN directory. The program will execute
+and inform you of what is happening.
+
+EXAMPLE: In the ...\bbpro_98 directory type "bbcard 28pat001",
+         "bbcard mlbpa97", "bbcard 28new001", or whatever FILENAME 
+         baseball has assigned to your league.
+         
+Running the program at any time during the season will update the statistics
+and ratings for that point in the season. Therefore, you may run the BBCARD
+anytime you wish to get up to the moment information.
+
+SWITCHES:
+Two switches have been added to allow the user to not process redundant data.
+If you run once and the program accumulates the ratings data, you may not need
+to process ratings again until next season. Therefore, the following may be
+added after the league filename to suppress certain actions:
+-season : suppresses the accumulation of batting and pitching stats
+-ratings : suppresses the accumulation of player ratings
+
+EXAMPLES:
+"bbcard 28pat001 -season"
+"bbcard 28pat001 -ratings"
+"bbcard 28pat001 -season -ratings"
+
+THE INI FILE:
+There are too many players to display information for everyone, therefore a
+selection process has been developed as to which players to show results for.         
+The program will create a <league filename>.ini file! This file contains the 
+names of every player in the association. By marking the boxes in front of the
+player's name, you are selecting which players you want results displayed for.
+
+Examples:
+[ ]|[ ]|[ ]|Thomas|Frank|1B|1049 - will display none of Frank's history
+[x]|[ ]|[ ]|Ventura|Robin|3B| 249 - will display Robin's batting history
+[ ]|[x]|[ ]|Bere|Jason|P| 459 - will display Jason's pitching history
+[ ]|[ ]|[x]|Belle|Albert|LF|1099 - will display Belle's ratings history
+[x]|[x]|[x]|Johnson|Mark|C|1654 - displays all of Mark's data
+         
+NOTES:
+Any mark in the boxes will do. It does not have to be an 'x'. I use 's'!
+
+Data is accumulated for ALL players. These boxes simply allow you to decide
+   which players you want data displayed for. If you acquire a player in a trade   
+   you may select their box and display all of their past information.
+   
+DO NOT edit anything except to make a mark in the box. I have no idea what the
+   results would be. Examples of possible mistakes could be:
+
+   insert mode - [x ]|[ ]|[ ]|Maddux|Greg|P|1214
+   this is wrong because the second box has been shifted right 1 character
+   
+   corrections - [x]|[x]|[x]|Avery|Steve|100
+   player's with ID's less than 1000 NEED that space before their ID.
+   PLEASE do not remove the space.
+   
+If you change a player's name in baseball, BBCARD will update that name in the
+   *.ini file for you on the next execution. You do not need to edit it yourself.   
+______________________________________________________________________________
+
+Updates:
+______________________________________________________________________________
+June 1, 1998
+Added league and Association stats
+Faster, more accurate (BTREE) processing of statistics
+______________________________________________________________________________
+
+April 2, 1998
+Fixed INI file creation for leagues with less than 750 players
+Fixed INI file creation for leagues with multiples of 750 players
+______________________________________________________________________________
+
+Personal Notes:
+Please contact me at "kammrud@juno.com" to let me know what you think. I am 
+always looking for feedback on this or any other utility. Ideas for the
+future are also welcome. You can also check with me at "www.vol.com/~kammrud".
+
+Enjoy...
+
+

@@ -71,5 +71,4 @@ work/modsx/
 work/*.orig
 
 # third-party / Sierra material, never publish
-work/ref/
 BBPRO98_package/research/v11_patch_notes.txt
