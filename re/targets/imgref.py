@@ -66,7 +66,7 @@ def smooth(frames):
     return eq / n if n else 0.0
 
 
-def check_file(codec, path, verbose):
+def check_file(codec, path, verbose, min_exp=1.0):
     src = safe_read(path, 64 << 20)
     res = {'file': os.path.basename(path), 'size': len(src)}
     with tempfile.TemporaryDirectory(prefix='imgref') as td:
@@ -107,7 +107,7 @@ def check_file(codec, path, verbose):
         _, data2 = load_frames(f'{td}/d', len(edited))
         res['edit'] = len(data2) == len(data) and data2[k] == bytes(ed) and all(
             data2[i] == data[i] for i in range(len(data)) if i != k)
-    res['ok'] = res['roundtrip'] and res['edit'] and res['expansion'] >= 1.0 and res['smooth'] >= 0.35
+    res['ok'] = res['roundtrip'] and res['edit'] and res['expansion'] >= min_exp and res['smooth'] >= 0.35
     return res
 
 
@@ -164,7 +164,7 @@ def main():
     ok_all = True
     for name in names:
         try:
-            r = check_file(codec, f'{cfg["dir"]}/{name}', verbose)
+            r = check_file(codec, f'{cfg["dir"]}/{name}', verbose, cfg.get('min_expansion_files', {}).get(name, cfg.get('min_expansion', 1.0)))
         except Exception as e:
             r = {'file': name, 'ok': False, 'error': J.err(e)}
         gating = name in cfg['primary']
