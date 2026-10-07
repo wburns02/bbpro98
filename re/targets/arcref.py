@@ -14,7 +14,10 @@ at least min_entries entries (files.json, counted from the directory); every ent
 resizing one entry and deleting another survives pack+unpack with every other entry unchanged.
 <target_dir>/files.json = {"primary": [abs paths], "secondary": [abs paths], "audit": [abs paths]}.
 """
-import sys, os, json, stat, shutil, subprocess, tempfile
+import sys, os, json, tempfile
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import jailutil as J
+from jailutil import fail, safe_read
 
 MAX_CODEC = 120_000
 MAX_ENTRIES = 100_000
@@ -22,44 +25,13 @@ TIMEOUT = 900
 MAGIC = {'PCX': (b'\x0a',), 'WAV': (b'RIFF',), 'BMP': (b'BM',)}
 
 
-def fail(msg):
-    raise ValueError(msg)
-
-
-def safe_read(path, limit):
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
-    try:
-        st = os.fstat(fd)
-        if not stat.S_ISREG(st.st_mode): fail(f'{os.path.basename(path)}: not a regular file')
-        if st.st_size > limit: fail(f'{os.path.basename(path)}: {st.st_size} bytes exceeds limit {limit}')
-        chunks = []
-        while True:
-            b = os.read(fd, 1 << 20)
-            if not b: break
-            chunks.append(b)
-        return b''.join(chunks)
-    finally:
-        os.close(fd)
-
-
 def jail(codec, workdir, args):
-    st = os.lstat(codec)
-    if not stat.S_ISREG(st.st_mode) or st.st_size > MAX_CODEC:
-        fail(f'codec.py must be a regular file under {MAX_CODEC} bytes')
-    shutil.copyfile(codec, f'{workdir}/codec.py', follow_symlinks=False)
-    cmd = ['bwrap', '--ro-bind', '/usr', '/usr', '--symlink', 'usr/lib', '/lib', '--symlink', 'usr/lib64', '/lib64',
-           '--symlink', 'usr/bin', '/bin', '--proc', '/proc', '--dev', '/dev', '--bind', workdir, '/w', '--chdir', '/w',
-           '--unshare-all', '--die-with-parent', '--clearenv', '--setenv', 'PATH', '/usr/bin',
-           '/usr/bin/prlimit', '--fsize=268435456', '--as=6442450944', '--',
-           '/usr/bin/python3', '-I', 'codec.py'] + args
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT)
-    if r.returncode: fail(f'codec.py {args[0]} exit {r.returncode}: {r.stderr.strip()[-400:]}')
-    return r
+    return J.jail(codec, workdir, args, max_size=MAX_CODEC, timeout=TIMEOUT)
 
 
-def load_entries(outdir, insize):
-    names = os.listdir(outdir)
-    man = json.loads(safe_read(f'{outdir}/manifest.json', 64_000 + insize // 100))
+def load_entries(w, insize):
+    names = J.list_dir(w, 'out')
+    man = json.loads(J.read_file(w, 'out/manifest.json', 64_000 + insize // 100))
     ents = man.get('entries')
     if not isinstance(ents, list) or not ents: fail('manifest has no entries')
     if len(ents) > MAX_ENTRIES: fail('too many entries')
@@ -72,7 +44,7 @@ def load_entries(outdir, insize):
         n, fn = e.get('name'), e.get('file')
         if not (isinstance(n, str) and n and all(32 <= ord(c) < 127 for c in n)): fail(f'bad entry name {n!r}')
         if not isinstance(fn, str) or '/' in fn or fn.startswith('.') or fn == 'manifest.json': fail(f'bad file {fn!r}')
-        data.append(safe_read(f'{outdir}/{fn}', 64 << 20))
+        data.append(J.read_file(w, f'out/{fn}', 64 << 20))
     return man, data
 
 
@@ -80,7 +52,7 @@ def unpack(codec, td, tag, blob):
     w = f'{td}/{tag}'; os.mkdir(w); os.mkdir(f'{w}/out')
     with open(f'{w}/in.bin', 'wb') as fh: fh.write(blob)
     jail(codec, w, ['unpack', 'in.bin', 'out'])
-    return load_entries(f'{w}/out', len(blob))
+    return load_entries(w, len(blob))
 
 
 def pack(codec, td, tag, man, data):
@@ -89,7 +61,7 @@ def pack(codec, td, tag, man, data):
     for e, d in zip(man['entries'], data):
         with open(f'{w}/out/{e["file"]}', 'wb') as fh: fh.write(d)
     jail(codec, w, ['pack', 'out', 'packed.bin'])
-    return safe_read(f'{w}/packed.bin', 256 << 20)
+    return J.read_file(w, 'packed.bin', 256 << 20)
 
 
 def check_file(codec, path, verbose, min_entries=1):
@@ -148,7 +120,7 @@ def main():
         try:
             r = check_file(codec, path, '-v' in sys.argv, cfg.get('min_entries', {}).get(os.path.basename(path), 1))
         except Exception as e:
-            r = {'file': os.path.basename(path), 'ok': False, 'error': str(e)[:300]}
+            r = {'file': os.path.basename(path), 'ok': False, 'error': J.err(e)}
         gating = path in cfg['primary']
         if gating and not r['ok']: ok_all = False
         print(('  ' if gating else '  (secondary) ') + json.dumps(r))

@@ -23,45 +23,17 @@ Checks per file (identity of records is by content, so records may move):
   apply: [] is the identity; same-length rewrite, grown rewrite, add, delete and a combined edit list each produce a
   file whose dump passes the same checks and whose active records equal the expected multiset.
 """
-import sys, os, json, stat, shutil, subprocess, tempfile, struct, collections
+import sys, os, json, tempfile, struct, collections
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import jailutil as J
+from jailutil import fail, safe_read
 
 MAX_CODEC = 150_000
 TIMEOUT = 900
 
 
-def fail(msg):
-    raise ValueError(msg)
-
-
-def safe_read(path, limit):
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
-    try:
-        st = os.fstat(fd)
-        if not stat.S_ISREG(st.st_mode): fail(f'{os.path.basename(path)}: not a regular file')
-        if st.st_size > limit: fail(f'{os.path.basename(path)}: {st.st_size} bytes exceeds limit {limit}')
-        chunks = []
-        while True:
-            b = os.read(fd, 1 << 20)
-            if not b: break
-            chunks.append(b)
-        return b''.join(chunks)
-    finally:
-        os.close(fd)
-
-
 def jail(codec, workdir, args):
-    st = os.lstat(codec)
-    if not stat.S_ISREG(st.st_mode) or st.st_size > MAX_CODEC:
-        fail(f'codec.py must be a regular file under {MAX_CODEC} bytes')
-    shutil.copyfile(codec, f'{workdir}/codec.py', follow_symlinks=False)
-    cmd = ['bwrap', '--ro-bind', '/usr', '/usr', '--symlink', 'usr/lib', '/lib', '--symlink', 'usr/lib64', '/lib64',
-           '--symlink', 'usr/bin', '/bin', '--proc', '/proc', '--dev', '/dev', '--bind', workdir, '/w', '--chdir', '/w',
-           '--unshare-all', '--die-with-parent', '--clearenv', '--setenv', 'PATH', '/usr/bin',
-           '/usr/bin/prlimit', '--fsize=268435456', '--as=6442450944', '--',
-           '/usr/bin/python3', '-I', 'codec.py'] + args
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT)
-    if r.returncode: fail(f'codec.py {args[0]} exit {r.returncode}: {r.stderr.strip()[-400:]}')
-    return r
+    return J.jail(codec, workdir, args, max_size=MAX_CODEC, timeout=TIMEOUT)
 
 
 def scan(d):
@@ -87,14 +59,14 @@ class Ctx:
         w = self.wdir()
         with open(f'{w}/in.bin', 'wb') as fh: fh.write(blob)
         jail(self.codec, w, ['dump', 'in.bin', 'out.json'])
-        return json.loads(safe_read(f'{w}/out.json', 40 * len(blob) + (4 << 20)))
+        return json.loads(J.read_file(w, 'out.json', 40 * len(blob) + (4 << 20)))
 
     def apply(self, blob, edits):
         w = self.wdir()
         with open(f'{w}/in.bin', 'wb') as fh: fh.write(blob)
         with open(f'{w}/edits.json', 'w') as fh: json.dump(edits, fh)
         jail(self.codec, w, ['apply', 'in.bin', 'edits.json', 'out.bin'])
-        return safe_read(f'{w}/out.bin', 4 * len(blob) + (16 << 20))
+        return J.read_file(w, 'out.bin', 4 * len(blob) + (16 << 20))
 
 
 def check_dump(src, dm, need_scan=True):
@@ -188,7 +160,7 @@ def check_file(ctx, path, verbose):
             res[name] = True
         except Exception as e:
             res[name] = False
-            if verbose: print(f'  {res["file"]} {name}: {str(e)[:300]}')
+            if verbose and not J.QUIET: print(f'  {res["file"]} {name}: {str(e)[:300]}')
     res['ok'] = res['identity'] and all(res[c] for c in cases)
     return res
 
@@ -199,8 +171,9 @@ def run(ctx, paths, gating_set, verbose):
         try:
             r = check_file(ctx, path, verbose)
         except Exception as e:
-            r = {'file': os.path.basename(path), 'ok': False, 'error': str(e)[:300]}
+            r = {'file': os.path.basename(path), 'ok': False, 'error': J.err(e)}
         if path in gating_set and not r['ok']: ok_all = False
+        if J.QUIET: r = {'file': r['file'], 'ok': r['ok']}  # holdout: nothing lane-influenced beyond pass/fail
         print(('  ' if path in gating_set else '  (secondary) ') + json.dumps(r))
     return ok_all
 

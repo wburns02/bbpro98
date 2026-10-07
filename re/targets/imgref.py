@@ -15,54 +15,24 @@ out/ holds only manifest.json and the frame files, and manifest.json is small (n
 The files and the PASS rule come from <target_dir>/files.json: {"dir": ..., "primary": [...], "secondary": [...]}.
 PASS = every primary file passes every check. Secondary files must round-trip (reported, not gating).
 """
-import sys, os, json, stat, shutil, subprocess, tempfile, hashlib
+import sys, os, json, shutil, tempfile, hashlib
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import jailutil as J
+from jailutil import fail, safe_read
 
 MAX_CODEC = 120_000          # bytes; a codec cannot carry the 28 MB of art inside itself
 MAX_FRAMES = 200_000
 TIMEOUT = 900
 
 
-def fail(msg):
-    raise ValueError(msg)
-
-
-def safe_read(path, limit):
-    """Read a regular file without following symlinks (the jail's output is untrusted)."""
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
-    try:
-        st = os.fstat(fd)
-        if not stat.S_ISREG(st.st_mode): fail(f'{os.path.basename(path)}: not a regular file')
-        if st.st_size > limit: fail(f'{os.path.basename(path)}: {st.st_size} bytes exceeds limit {limit}')
-        chunks, n = [], 0
-        while True:
-            b = os.read(fd, 1 << 20)
-            if not b: break
-            chunks.append(b); n += len(b)
-        return b''.join(chunks)
-    finally:
-        os.close(fd)
-
-
 def jail(codec, workdir, args):
-    """Run codec.py with only /usr and workdir visible. Per-file size and address-space limits via prlimit."""
-    st = os.lstat(codec)
-    if not stat.S_ISREG(st.st_mode) or st.st_size > MAX_CODEC:
-        fail(f'codec.py must be a regular file under {MAX_CODEC} bytes')
-    shutil.copyfile(codec, f'{workdir}/codec.py', follow_symlinks=False)
-    cmd = ['bwrap', '--ro-bind', '/usr', '/usr', '--symlink', 'usr/lib', '/lib', '--symlink', 'usr/lib64', '/lib64',
-           '--symlink', 'usr/bin', '/bin', '--proc', '/proc', '--dev', '/dev', '--bind', workdir, '/w', '--chdir', '/w',
-           '--unshare-all', '--die-with-parent', '--clearenv', '--setenv', 'PATH', '/usr/bin',
-           '/usr/bin/prlimit', '--fsize=268435456', '--as=6442450944', '--',
-           '/usr/bin/python3', '-I', 'codec.py'] + args
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT)
-    if r.returncode: fail(f'codec.py {args[0]} exit {r.returncode}: {r.stderr.strip()[-400:]}')
-    return r
+    return J.jail(codec, workdir, args, max_size=MAX_CODEC, timeout=TIMEOUT)
 
 
-def load_frames(outdir, insize):
+def load_frames(wd, insize):
     """Validate out/ and return (manifest, [bytes per frame])."""
-    names = os.listdir(outdir)
-    man = json.loads(safe_read(f'{outdir}/manifest.json', 64_000 + insize // 50))
+    names = J.list_dir(wd, 'out')
+    man = json.loads(J.read_file(wd, 'out/manifest.json', 64_000 + insize // 50))
     frames = man.get('frames')
     if not isinstance(frames, list) or not frames: fail('manifest has no frames')
     if len(frames) > MAX_FRAMES: fail('too many frames')
@@ -75,7 +45,7 @@ def load_frames(outdir, insize):
         if not (isinstance(w, int) and isinstance(h, int) and 0 < w <= 4096 and 0 < h <= 4096):
             fail(f'bad frame size {w}x{h}')
         if not isinstance(fn, str) or '/' in fn or fn.startswith('.'): fail(f'bad frame file name {fn!r}')
-        b = safe_read(f'{outdir}/{fn}', w * h)
+        b = J.read_file(wd, f'out/{fn}', w * h)
         if len(b) != w * h: fail(f'{fn}: {len(b)} bytes, expected {w}x{h}={w * h}')
         data.append(b); total += len(b)
         if total > 64 * insize + (256 << 20): fail('decoded output implausibly large')
@@ -105,19 +75,19 @@ def check_file(codec, path, verbose):
         with open(f'{a}/in.bin', 'wb') as fh: fh.write(src)
         os.mkdir(f'{a}/out')
         jail(codec, a, ['decode', 'in.bin', 'out'])
-        man, data = load_frames(f'{a}/out', len(src))
+        man, data = load_frames(a, len(src))
         dims = [(f['w'], f['h']) for f in man['frames']]
         res['frames'] = len(data)
         res['expansion'] = round(sum(map(len, data)) / len(src), 2)
         res['smooth'] = round(smooth(list(zip(dims, data))), 3)
         # round trip: encode sees only the manifest + frames, copied as plain files
         os.mkdir(f'{b}/out')
-        shutil.copyfile(f'{a}/out/manifest.json', f'{b}/out/manifest.json', follow_symlinks=False)
+        with open(f'{b}/out/manifest.json', 'wb') as fh: fh.write(J.read_file(a, 'out/manifest.json', 64_000 + len(src) // 50))
         for f, d in zip(man['frames'], data):
             with open(f'{b}/out/{f["file"]}', 'wb') as fh: fh.write(d)
         shutil.copytree(f'{b}/out', f'{c}/out')
         jail(codec, b, ['encode', 'out', 'rebuilt.bin'])
-        rebuilt = safe_read(f'{b}/rebuilt.bin', 64 << 20)
+        rebuilt = J.read_file(b, 'rebuilt.bin', 64 << 20)
         res['roundtrip'] = rebuilt == src
         if not res['roundtrip'] and verbose:
             i = next((i for i in range(min(len(src), len(rebuilt))) if src[i] != rebuilt[i]), min(len(src), len(rebuilt)))
@@ -130,11 +100,11 @@ def check_file(codec, path, verbose):
             for x in range(w // 3, min(w, w // 3 + 4)): ed[y * w + x] = val
         with open(f'{c}/out/{man["frames"][k]["file"]}', 'wb') as fh: fh.write(bytes(ed))
         jail(codec, c, ['encode', 'out', 'edited.bin'])
-        edited = safe_read(f'{c}/edited.bin', 64 << 20)
+        edited = J.read_file(c, 'edited.bin', 64 << 20)
         os.mkdir(f'{td}/d'); os.mkdir(f'{td}/d/out')
         with open(f'{td}/d/in.bin', 'wb') as fh: fh.write(edited)
         jail(codec, f'{td}/d', ['decode', 'in.bin', 'out'])
-        _, data2 = load_frames(f'{td}/d/out', len(edited))
+        _, data2 = load_frames(f'{td}/d', len(edited))
         res['edit'] = len(data2) == len(data) and data2[k] == bytes(ed) and all(
             data2[i] == data[i] for i in range(len(data)) if i != k)
     res['ok'] = res['roundtrip'] and res['edit'] and res['expansion'] >= 1.0 and res['smooth'] >= 0.35
@@ -184,7 +154,7 @@ def main():
                 with open(f'{td}/in.bin', 'wb') as fh: fh.write(src)
                 os.mkdir(f'{td}/out')
                 jail(codec, td, ['decode', 'in.bin', 'out'])
-                man, data = load_frames(f'{td}/out', len(src))
+                man, data = load_frames(td, len(src))
                 sheet(man, data, f'{out}/{name}.png', default_pal)
             print(f'sheet {name}: {len(data)} frames')
         return
@@ -196,7 +166,7 @@ def main():
         try:
             r = check_file(codec, f'{cfg["dir"]}/{name}', verbose)
         except Exception as e:
-            r = {'file': name, 'ok': False, 'error': str(e)[:300]}
+            r = {'file': name, 'ok': False, 'error': J.err(e)}
         gating = name in cfg['primary']
         if gating and not r['ok']: ok_all = False
         if not gating and not r.get('roundtrip'): pass  # reported only

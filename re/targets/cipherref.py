@@ -11,31 +11,21 @@ for every H file, decoding the 2696-byte blob after its 2-byte seed with gen(see
 0x00 and yields >= 80% zero bytes (the blob is mostly zero padding). Reported, not gating: how many non-zero byte
 positions decode to the same value across >= 90% of files (structure that only a right full table produces).
 """
-import sys, os, json, stat, glob, shutil, subprocess, tempfile, collections
+import sys, os, json, glob, tempfile, collections
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import jailutil as J
+from jailutil import fail
 
 MAX_GEN = 30_000
 
 
-def fail(msg):
-    raise ValueError(msg)
-
-
 def jail_many(gen, seeds):
-    st = os.lstat(gen)
-    if not stat.S_ISREG(st.st_mode) or st.st_size > MAX_GEN: fail(f'gen.py must be a regular file under {MAX_GEN} bytes')
     out = {}
     with tempfile.TemporaryDirectory(prefix='cipherref') as td:
-        shutil.copyfile(gen, f'{td}/gen.py', follow_symlinks=False)
         for s in seeds:
-            cmd = ['bwrap', '--ro-bind', '/usr', '/usr', '--symlink', 'usr/lib', '/lib', '--symlink', 'usr/lib64', '/lib64',
-                   '--symlink', 'usr/bin', '/bin', '--proc', '/proc', '--dev', '/dev', '--ro-bind', td, '/w', '--chdir', '/w',
-                   '--unshare-all', '--die-with-parent', '--clearenv', '--setenv', 'PATH', '/usr/bin',
-                   '/usr/bin/prlimit', '--as=1073741824', '--', '/usr/bin/python3', '-I', 'gen.py', s]
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-            if r.returncode: fail(f'gen.py {s} exit {r.returncode}: {r.stderr.strip()[-300:]}')
-            h = r.stdout.strip()
+            r = J.jail(gen, td, [s], name='gen.py', max_size=MAX_GEN, timeout=60, mem='2G', writable=False)
             try:
-                t = bytes.fromhex(h)
+                t = bytes.fromhex(r.stdout.strip())
             except ValueError:
                 fail(f'gen.py {s}: output is not hex')
             if len(t) != 256 or len(set(t)) != 256: fail(f'gen.py {s}: not a 256-byte permutation')
@@ -95,7 +85,7 @@ def main():
     try:
         tabs = jail_many(gen, sorted({'f5dc'} | {s for _, s, _ in bl}))
     except Exception as e:
-        print(f'  error: {str(e)[:300]}'); print('FAIL'); sys.exit(1)
+        print(f'  error: {J.err(e)}'); print('FAIL'); sys.exit(1)
     exact = tabs['f5dc'] == pyr_table(cfg['pyr'])
     good, agree, dec = score(tabs, bl)
     if '--audit' in sys.argv:
@@ -105,7 +95,7 @@ def main():
             print(f'{n} seed {s}: {p.count(0)}/{len(p)} zero; first non-zero (pos, byte): {nz}')
         return
     ok = exact and bl and good >= 0.97 * len(bl)
-    print(json.dumps({'f5dc_exact': exact, 'h_files': len(bl), 'h_zero_ok': good, 'nonzero_agree_positions': agree}))
+    if not hold: print(json.dumps({'f5dc_exact': exact, 'h_files': len(bl), 'h_zero_ok': good, 'nonzero_agree_positions': agree}))
     if '-v' in sys.argv and not exact:
         t = pyr_table(cfg['pyr']); print('  f5dc mismatches at', [i for i in range(256) if tabs['f5dc'][i] != t[i]][:30])
     print('PASS' if ok else 'FAIL')
