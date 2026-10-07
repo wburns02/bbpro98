@@ -41,7 +41,7 @@ Comprehensive status table for all known formats:
 **Key findings:**
 1. **PYR (Player Roster):** Decoded with round-trip test ✓ (pyr_io.py reader/writer verified)
 2. **mlbpa97.DAT (Stats):** Decoded read-only ✓ (parse_stats.py + lib.py filters, verified against game screen)
-3. **SHELL.VOL:** Decoded read-only ✓ (volx.py unpacker works; VOLM format understood)
+3. **SHELL.VOL:** Read + write ✓ (volcodec.py, byte round-trip on all three VOLs)
 4. **ASN (Association):** Partial (structure found, encoding not broken)
 5. **DBM.DAT family:** Unknown (6 files, high entropy, likely encrypted/compressed)
 6. **Other:** SIM.DAT, SCHEDTMP.DAT, DIAL.REQ, MENU.REQ, etc. remain unknown
@@ -135,7 +135,7 @@ No other formats currently have both reader AND writer, so round-trip testing no
 |--------|----------|---------------|
 | **PYR** | pyr_io.py read/write | 4/4 round-trip tests pass (byte-identical) |
 | **Stats DAT** | parse_stats.py + lib.py | Verified vs game screen (6 players, exact AB/H/HR/RBI match) |
-| **SHELL.VOL** | volx.py unpacker | Directory extracted, files recovered |
+| **SHELL.VOL** | volcodec.py unpacker | Directory extracted, files recovered |
 | **ASN structure** | asn_read.py + ASN.md | 11 blocks identified, ~9300 records per block scanned |
 
 ---

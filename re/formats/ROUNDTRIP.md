@@ -80,7 +80,7 @@ Action: Cannot test round-trip until a writer is implemented. Current reader is 
 
 | Format | Reader | Writer | Round-Trip Status |
 |--------|--------|--------|-------------------|
-| SHELL.VOL | volx.py (crude) | NO | Cannot test |
+| SHELL.VOL, SHELL1.VOL, SHELL2.VOL | volcodec.py | YES | byte round-trip all three (2026-10-07) |
 | SIM.DAT | NO | NO | Cannot test |
 | ASN | (in progress) | NO | (pending TASK 4) |
 | bb.cfg | NO | NO | Cannot test |

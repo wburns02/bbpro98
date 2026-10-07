@@ -6,9 +6,9 @@
 |--------|--------|----------|-------|-------------|
 | **PYR** (Player Roster) | Decoded (round-trip verified) | /home/will/bbpro98/BBPRO98_package/research/pyr_io.py both read/write; header 192B + 192B records with per-file substitution table | CONFIRMED: byte-identical round-trip test included in pyr_io.py __main__. 256-entry inverse table recovered from record IDs. | None: fully done |
 | **mlbpa97.DAT** (Stats Container) | Decoded (read-only, filtered) | /home/will/bbpro98/work/parse_stats.py (record scanner), /home/will/bbpro98/work/lib.py (filters OK records), /home/will/bbpro98/work/bbstats.py (batting/pitching extractor). NOTES_stats_format.md: 512B pages, 0xfafa record markers, 40/70/36/22/150-byte payloads. | CONFIRMED via game screen verification (Maddux AB, monthly splits sum to totals). scope 1=current season, scope 2=career. 40-byte batting line: AB,1B,2B,3B,HR,RBI,BB,SO,IBB,HBP,SH,SF,G,R,SB,CS,GIDP. 70-byte pitching line: same batting-block + pitcher fields (outs, W/L/SV, ER, etc.). | Write round-trip test (no writer yet); map unmapped pitch cols (c23-c25, c26-c27) |
-| **SHELL.VOL** (Resource Archive) | Decoded (read-only) | /home/will/bbpro98/work/volx.py unpacks VOLM archive (directory, offsets, file extraction). Magic: "VOLM". | CONFIRMED: crude unpacker reads offset table, extracts files. SHELL.VOL unpacks to MENU.REQ, DIAL.REQ, and others. | Reverse inner file formats (MENU.REQ, DIAL.REQ); test round-trip on SHELL.VOL rebuild |
-| **DIAL.REQ** | Partial | Inside SHELL.VOL; unpacked by volx.py. No parser yet. | Size ~unknown; format TBD. Suspect dialog/resource format. | Reverse structure; likely Win32 resource or custom binary format |
-| **MENU.REQ** | Partial | Inside SHELL.VOL; unpacked by volx.py. No parser yet. | Size ~unknown; format TBD. Suspect menu/UI resource format. | Reverse structure |
+| **SHELL.VOL, SHELL1.VOL, SHELL2.VOL** (Resource Archive) | Read + write | /home/will/bbpro98/work/volcodec.py unpack/pack. Magic "VOLM". Format: re/targets/vol/lanes/code/FORMAT.md | CONFIRMED: byte round-trip on all three; 59 PCX are standard 8-bit (palette BB0.PAL), plus DAT, REQ, WAV entries | Inner formats: MENU.REQ, DIAL.REQ (roadmap #6), the 18 DAT entries (#5a) |
+| **DIAL.REQ** | Partial | Inside SHELL.VOL; unpacked by volcodec.py. No parser yet. | Size ~unknown; format TBD. Suspect dialog/resource format. | Reverse structure; likely Win32 resource or custom binary format |
+| **MENU.REQ** | Partial | Inside SHELL.VOL; unpacked by volcodec.py. No parser yet. | Size ~unknown; format TBD. Suspect menu/UI resource format. | Reverse structure |
 | **bb.cfg** | Partial (text hints) | Magic: "MLBPA97\0\0\0\0". First 8 bytes = association name. Format TBD. Inventory: 124 bytes, entropy 2.42 (text-like). | UNVERIFIED: likely association config (league, teams?). No parser. | Extract full structure; likely text or fixed records |
 | **Game snapshot files (.apc/.pyc/.pyf/.eos)** | Unknown | Not yet found or inventoried in install. | — | Search /home/will/seasons/s*/ for examples; reverse structure |
 | **game.bki / game.bko** | Unknown | Not found in current install (Assn snapshot may not include them). | Suspect "before" / "after" game state snapshots. | Check /mnt/nvme/bbpro98/work or season snapshots |
@@ -51,7 +51,7 @@
 
 3. **VOL Archives** (SHELL.VOL, SHELL1.VOL, SHELL2.VOL):
    - Format: VOLM magic, directory with name/offset pairs, file offsets at end of directory
-   - Parser exists (volx.py) ✓
+   - Parser exists (volcodec.py) ✓
    - Missing: round-trip rebuild; inner file format parsing (MENU.REQ, DIAL.REQ)
 
 4. **Association File** (MLBPA97.ASN):
