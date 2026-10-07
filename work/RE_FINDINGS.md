@@ -123,3 +123,13 @@ Output looks plausible and cites strings/callees. Needs the audit gate (spot che
 - FUN_6800cccc rule 5 (uninitialized weights): VALID. `int aiStack_24 [8];` (FastSim _all.c:7683) is never memset; the sumA==sumB==0 branch writes only `aiStack_24[local_58] = 1` (7721-7722); the total and RNG-walk loops read all 8 entries (7741, 7749). Claude confirmed the quoted lines.
 - FUN_68054d4a spec: VALID on every rule Haiku checked. Claude confirmed the PB attribution Haiku mislabelled: DAT_68097628/38/48 are filled by a second PB cache-init block, `_DAT_68097628 = FUN_68003170(0x2c4)` .. `_DAT_68097648 = FUN_68003170(0x2cc)` (_all.c:47776-47784), three 4-entry arrays (count/faces/base x swing type). DAT_68185a60 is the FUN_680829dc object, not PB.
 - ASN news pool (lines above): flag byte, related-player id, stable event id and (era<<8)|day date VALID against a 10-day dump (re/audit/news_dump.txt, re/audit/dump_news.py). The "c23=0x0B constant" check found 8% exceptions, but the dumper does not exclude the slot-array tail the finding already calls false positives, so not a contradiction. Reports: re/audit/haiku_spot_*.md.
+
+## Per-game box scores (Stats/MLBPA97.Hxx) decoded (2026-10-07)
+Solved by the GLM-5.3-Flash "data" lane in round 2 (re/hfiles/lanes/data/hdecode.py, format in HFILE_FORMAT.md there).
+The files are NOT encrypted as a whole: they are a chain of tables `02 65 | u16 unk | u16 count | u16 recsize | count*recsize`.
+recsize 40 = batting line, 70 = pitching line, same u16 layout as the season lines in mlbpa97.DAT minus the leading
+[scope, 2] pair; id field has 0x8000 ORed in for the second side; id < 100 = team-total row. Only the first table
+(unk=0xffff, 1 x 2698 bytes) is obfuscated and is not needed for the box score (the 0x31-dominated histogram came from it).
+Verified by Claude: referee 1.0000 bat + pit on days 2-7 (1544 batters, 427 pitchers) and on held-out days 8-10
+(643 / 176) that the lane never saw; Haiku audit CLEAN; decoder is 3.3 KB with no embedded tables.
+Open: the obfuscated 2698-byte first table (likely play-by-play or lineup/game header).
