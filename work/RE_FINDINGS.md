@@ -104,7 +104,7 @@ Output looks plausible and cites strings/callees. Needs the audit gate (spot che
 - Date fields: 13 u16 sites increment by exactly +1 per sim day (12238..12247, i.e. 0x2FCE..0x2FD7: low byte = day counter 0xCE..0xD7, high byte 0x2F constant), and 11 u16 sites hold the same counter shifted (0xCE00, 0xCF00, ..). These are sim-date stamps scattered across record structures. Offsets in re/asnseq/analysis.tsv.
 - Tail history log: last 32KB before EOF (0x298000..0x2A0000) is an append-style results log. Each sim day writes at record starts ending in 0x1a (0x29801a, 0x29821a, 0x29861a, .. advancing by 0x200-sector steps), 66B..1KB+ per day (matches variable game counts), 9.7KB over 10 days, wraps inside the 32KB window.
 - 0x7e00..0x9500: NOT a ring. Fixed-site daily aggregates (0x7e2b, 0x7e46, 0x7e8a, 0x7f63.. change every day; some intermittently). Intermittent sites are player/stat rows that MOVE when stats reorder, which produced the rotation-like signatures in the 3-arm diff. Date field interpretation: value = (era<<8)|day (0x2FCE = era 47, day 206 of era).
-- Names are NOT in the ASN (10/6 probe); team/player ids in these logs must join against PYR.
+- ~~Names are NOT in the ASN (10/6 probe)~~ WRONG, see 2026-10-07 correction below: names are stored, enciphered with the f5dc substitution table.
 
 ## ASN tail region = Association News pool (2026-10-07, box-score-anchored)
 - The 0x27E000..0x29A800 tail (wider than the old 0x298000..0x2A0000 window) is a chain of 512-byte news blocks. Each block: 29-byte header (bytes 2-3 = u16 LE chain pointer to the previous day's block, verified 0x29A200->0x27E600->0x27E400), then 25-byte news records at +0x15+25k (k=0..18; k=0 is a head record: `00 12` + chain ptr), then a slot-array tail that false-positives as records. Full decode: re/tail_log_decode.md (builder: GLM-Flash on Hive, id joins verified by me).
@@ -133,3 +133,12 @@ recsize 40 = batting line, 70 = pitching line, same u16 layout as the season lin
 Verified by Claude: referee 1.0000 bat + pit on days 2-7 (1544 batters, 427 pitchers) and on held-out days 8-10
 (643 / 176) that the lane never saw; Haiku audit CLEAN; decoder is 3.3 KB with no embedded tables.
 Open: the obfuscated 2698-byte first table (likely play-by-play or lineup/game header).
+
+## Correction + new findings (2026-10-07, Claude)
+- ASN names ARE stored. The 10/6 probe only tried shift/XOR. All shipped PYR (3) and ASN (3, seed bytes at 0x310) use seed `f5dc` and one identical 256-byte substitution table (recoverable from PYR player ids). Decoding MLBPA97.ASN with it yields the team record "Houston ... Larry Dierker ... HOU ... The Astrodome" at plain offset ~0x5090.
+- The table is not affine mod 256 (mods used T(x)=(m*x+c)&255) but has XOR-linear blocks (fwd[4..7] = 82 a6 8a ae). MSVC/Borland rand + Fisher-Yates variants tested: no match. Generator search = target `re/targets/cipher`.
+- H-file blob: `02 65 ffff 0100 8a0a` + 2-byte per-file seed + 2696 bytes enciphered with that seed's table (dominant byte = 0x00).
+- c-tree Plus family: SCHEDTMP.DAT, Assn/{MLBPA97,_DEFAULT,MLBPA96E}.ASN, Assn/MLBPA97.eos, Stats/{mlbpa97,mlbpa96e,_DEFAULT}.DAT all share header bytes 0x28-0x2f `81 00 00 02 00 00 00 80` and `FA FA` record headers (u32 total, u32 payload_len, u32, u32; payload at +18). Engine = FPS_CT.dll; wrapper = BBSIM `\Fps_ct\Ctree\Ctree.cpp` (OPNFIL host 0x200 + OPNIFIL members). Codec target `re/targets/ctree`.
+- SOUND.DAT: u16 count (227) + (count+1) u32 offsets (last = file size) + RIFF WAVs, all mono (164 x 16-bit 22050, 62 x 8-bit 11025, 1 x 8-bit 22050). Read/write: `work/sounddat.py`, round-trip verified.
+- volx.py is misaligned (crashes on SHELL2.VOL). Real layout: "VOLM", u32 1, u16 fields, directory name with trailing backslash, u16 count, u32 offset, entries name\0 + u16 + u32; game reader EZShell `Utility\Volume.cpp`. Codec target `re/targets/vol`.
+- SIM.DAT and Stadia/*.DAT/*.DT share a `00 01 06 07` tagged-chunk container (tags 'PB', 'MA', 'AB', 'MI').

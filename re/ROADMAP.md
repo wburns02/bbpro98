@@ -12,7 +12,9 @@ final verification. Fable/Opus only when a lane stalls 2-3 rounds.
 | mlbpa97.DAT season/career stat lines | yes, screen-verified | no | work/lib.py, work/bbstats.py |
 | MLBPA97.H?? per-game box scores | yes, 1.0000 incl. holdout | trivial (plaintext tables) | re/hfiles/lanes/data/hdecode.py |
 | ASN news pool | yes | no | RE_FINDINGS.md |
-| VOL archives (SHELL, SHELL1) | yes | yes (rebuilt + in-game tested) | work/volx.py, work/patches/build_wide_vol.py |
+| SOUND.DAT (227 WAV clips) | yes | yes, byte round-trip + resize | work/sounddat.py |
+| Cipher table for seed f5dc (all shipped PYR + ASN) | yes | yes | research/dump_pyr.py; ASN team names now readable |
+| VOL archives (SHELL, SHELL1) | partial: volx.py misaligned, fails on SHELL2 | yes for SHELL (rebuilt + in-game tested) | work/volx.py; proper codec = target vol, RUNNING |
 | PlayBalance (872 sim knobs) | yes | via PB.INI overlay, effect verified (SB 8.9x) | re/pb_params.tsv |
 | Standard media: BMP, WAV, AVI (Cinepak), TTF, ICO | standard tools | standard tools | none needed |
 
@@ -20,18 +22,19 @@ final verification. Fable/Opus only when a lane stalls 2-3 rounds.
 | # | Item | Gap | Referee (mechanical) | Size |
 |---|---|---|---|---|
 | 1 | DBM sprite/animation archives (ARCDBM x3 LOD, BPIDBM, NUMDBM x3, OVERDBM, NOVDBM, GAMEDBM, DMP) | "crushed" bitmaps, codec unknown | targets/imgref.py: decode, byte round-trip, edit survives, pixel-art stats, Haiku vision | L, RUNNING |
-| 2 | ASN main payload (teams, divisions, standings, schedule, results) | layout unknown | day-to-day snapshot diffs (asnseq) must match the decoded box scores (W/L, runs) + round-trip | M |
-| 3 | mlbpa97.DAT writer | no writer | round-trip + edit a stat, re-read with lib.load | S |
-| 4 | Per-file substitution cipher (PYR, H-file 2698-byte blob) | how the game builds the 256-byte table | reproduce dump_pyr's id-derived table from the file alone | M |
-| 5 | Shell graphics: PCX-in-VOL (not standard PCX), SHELL2.VOL (volx extracts 0 files), BMX, PLX/PAL palettes, FNX fonts | formats unknown, one extractor bug | imgref.py (same contract) + Haiku vision | M |
+| 2 | ASN main payload (teams, divisions, standings, schedule, results) | c-tree superfile, names enciphered (f5dc); member layouts (a, l, d, t, r, s, xs) unknown; needs #2a | day-to-day snapshot diffs (asnseq) must match the decoded box scores (W/L, runs) + round-trip | M |
+| 2a | c-tree Plus codec (ASN, eos, Stats DAT, SCHEDTMP.DAT): records + B-tree indexes, rewrite/add/delete | engine is FPS_CT.dll | targets/ctref.py: literal offsets, index order + coverage, 6 edit cases, holdout saves | L, RUNNING |
+| 3 | mlbpa97.DAT writer | falls out of #2a | round-trip + edit a stat, re-read with lib.load | S |
+| 4 | Seed -> table cipher generator (new PYR/ASN seeds, H-file 2698-byte blob) | f5dc table known; generator unknown | targets/cipherref.py: gen(f5dc) exact + 82 H blobs decode to zero padding + 36 holdout seeds | M, RUNNING |
+| 5 | Shell graphics: PCX-in-VOL (recheck once the vol codec lands; volx was misaligned), BMX, PLX/PAL palettes, FNX fonts | formats unknown, one extractor bug | imgref.py (same contract) + Haiku vision | M |
 | 6 | UI layout: DIAL.REQ, MENU.REQ (screens, gadgets, columns) | format unknown (block 13 = stats-grid rows known) | round-trip + edit (move a gadget) + Wine screenshot diff | L |
-| 7 | SOUND.DAT (17 MB) | container unknown | round-trip + extracted clips are valid PCM with speech/crowd spectra | M |
-| 8 | SCHEDTMP.DAT, SIM.DAT (1.9 MB), Stadia/*.dat, INJURY.DAT, pgen*.dat, HHA.DAT, bb.cfg, .apc/.pyc/.pyf/.eos, ARC, hilights .tap, STS writer | unknown or reader-only | per-format: round-trip + cross-check against decoded ASN/H/DAT truth | S-M each |
+| 7 | `00 01 06 07` tagged-chunk container: SIM.DAT (1.9 MB), Stadia/*.DAT/*.DT | tags PB/MA/AB/MI, layout unknown | arcref-style round-trip + chunk edit | M |
+| 8 | SIM.DAT chunk semantics, INJURY.DAT, pgen*.dat, HHA.DAT, bb.cfg, .apc/.pyc/.pyf, ARC, hilights .tap, STS writer | unknown or reader-only | per-format: round-trip + cross-check against decoded ASN/H/DAT truth | S-M each |
 | 9 | Code hook framework | bbfix.dll injects + logs only; no detours | a hook replaces one known function (e.g. steal chance) and the season stat shifts as predicted vs a null arm | L (Claude/Sonnet design) |
 | 10 | Function labels (M1-M3), sim formulas (M9-M11), RNG + seed (M12) | ~1350/3800 P1 labelled; RNG not located | xref consistency; formula predicts logged pitch outcomes; seeded replay is deterministic | L |
 | 11 | Automated in-game test harness | partial (probe_screen.sh, simdays.py) | itself the referee for 6 and 9 | M |
 
-Order: wave 1 = #1. Wave 2 = #2, #3, #4, #5, #7 (independent, one target each, 1-2 lanes). Wave 3 = #6, #8, #9,
+Order: wave 1 = #1, #2a, #4, VOL (running 2026-10-07). Wave 2 = #2, #3, #5, #7 (independent, one target each, 1-2 lanes). Wave 3 = #6, #8, #9,
 #10, #11 (#9 and #11 unlock arbitrary logic changes; #6 unlocks arbitrary screen changes).
 
 ## Budget per target
