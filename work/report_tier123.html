@@ -1,0 +1,76 @@
+<title>BBPro98 Reverse Engineering Tiers 1 to 3</title>
+<style>
+:root{--bg:#f6f6f3;--fg:#1c1f1d;--mute:#5d645f;--line:#d9dbd5;--accent:#1f6b4a;--bad:#a63a2b;--panel:#ffffff}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#121513;--fg:#e6e9e4;--mute:#9aa39c;--line:#2b312d;--accent:#5cc38f;--bad:#e07a68;--panel:#1a1e1b;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#121513;--fg:#e6e9e4;--mute:#9aa39c;--line:#2b312d;--accent:#5cc38f;--bad:#e07a68;--panel:#1a1e1b;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font:15px/1.55 system-ui,sans-serif;padding-inline:16px;padding-block:24px}
+main{max-width:860px;margin:0 auto;display:flex;flex-direction:column;gap:22px;min-width:0}
+h1{font-size:1.5rem;margin:0;text-wrap:balance}
+h2{font-size:.78rem;letter-spacing:.09em;text-transform:uppercase;color:var(--mute);margin:0 0 6px}
+p,ul{margin:0}ul{padding-left:1.1rem}
+.v{border-left:4px solid var(--accent);padding:8px 12px;background:var(--panel)}
+.wrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;min-width:520px}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+td.n{font-variant-numeric:tabular-nums;text-align:right}
+code{font-family:ui-monospace,monospace;font-size:.9em}
+</style>
+<main>
+<h1>BBPro98 reverse engineering, Tiers 1 to 3</h1>
+<div class="v"><h2>Verdict</h2><p>Tier 1 is done: all 14 binaries are labeled and about 7,500 functions are renamed in Ghidra. Tier 2 is partial: the PYR format round-trips, the ASN container is framed but its fields are not decoded. Tier 3 is a start, not a spec: 74 function drafts exist and only about 5 are audited against the decompile. Tier 4 was not started, as instructed.</p></div>
+
+<section><h2>What was accomplished</h2>
+<ul>
+<li>Tier 1: every binary in the Ghidra project was labeled (deterministic pass, GLM-Flash batches, split-batch escalation, DeepSeek-Flash for the residue). Renames applied only for XREF_CONFIDENT and STRING_XREF labels, with MFC false matches filtered out.</li>
+<li>Tier 3: the PlayBalance table (872 ints from PB.INI) is mapped for BBSIM and FastSim. Structural finding: init loaders copy PB values into globals, other functions read the PB getter at decision time. 74 function drafts and an index live in <code>work/BBSIM_SPEC.md</code> and <code>work/spec/</code>.</li>
+<li>Audited rule: the batter look-type selection (FastSim <code>FUN_6800cccc</code>), a weighted random pick over 8 slots with a closed-form weight formula, recorded in the spec.</li>
+<li>Tier 2: PYR round-trip tests pass 4 of 4. ASN record framing and table record counts verified. The ASN holds no plaintext, shifted or XORed team names, so names are probably joined by id from other files.</li>
+</ul>
+<div class="wrap"><table>
+<tr><th>Binary</th><th>Renames applied</th></tr>
+<tr><td>Baseball.exe</td><td class="n">94</td></tr>
+<tr><td>FastSim.dll</td><td class="n">1,255</td></tr>
+<tr><td>BBSIM.dll</td><td class="n">1,461</td></tr>
+<tr><td>BBShell.dll</td><td class="n">1,703</td></tr>
+<tr><td>EZShell.dll</td><td class="n">924</td></tr>
+<tr><td>Upstats.dll</td><td class="n">817</td></tr>
+<tr><td>LineUp.dll</td><td class="n">761</td></tr>
+<tr><td>FPS_CT.dll</td><td class="n">217</td></tr>
+<tr><td>ODASL.dll</td><td class="n">150</td></tr>
+<tr><td>IC_Cfg.dll</td><td class="n">66</td></tr>
+<tr><td>FPS_Ctrl, FPS_DCL, FPS_Pal, BBCfg</td><td class="n">56, 9, 3, 0</td></tr>
+</table></div></section>
+
+<section><h2>Verified, and by whom</h2>
+<div class="wrap"><table>
+<tr><th>Checked by me</th><th>Not independently checked</th></tr>
+<tr><td>Decompile readback after each rename batch (3 sampled functions per binary for LineUp, Upstats, EZShell, BBShell; one for ODASL). The FUN_6800cccc draft against its decompile. PYR round-trip rerun. ASN framing and counts. PB.INI is read at runtime (profile trace).</td><td>BBCfg, FPS_Pal, FPS_DCL and FPS_Ctrl renames were not read back. About 69 of 74 spec drafts are unaudited. The meaning of the 8 look types is inferred from PB names. Some renames on SEH and destructor thunks are generic guesses. No PB.INI downstream effect was measured.</td></tr>
+</table></div></section>
+
+<section><h2>Outstanding</h2>
+<ul>
+<li>Audit the remaining spec drafts and the consumers of the other init-loaded PB blocks (6800b36e, 6800dcc4, 6800e826, 68053d2e, 68054d4a).</li>
+<li>ASN field decode, and round-trip tests for the other formats (SHELL.VOL, DIAL.REQ, hilights, SIM.DAT, GAMEDBM.DAT, INJURY.DAT).</li>
+<li>Tier 3 validation against game logs has not been run.</li>
+<li>All commits are local only. Nothing was pushed.</li>
+</ul></section>
+
+<section><h2>Plan to resolve</h2>
+<ul>
+<li>Controlled PB.INI experiment: same saved state, many simulated days, change one PB value, compare aggregate rates in <code>prlog.txt</code> and <code>sub.log</code>. This is the gate for calling any rule validated.</li>
+<li>Audit drafts in order of how many PB values each reads, patching the spec as errors turn up.</li>
+<li>ASN: trace callers of <code>FUN_64001d70</code> in FPS_CT to find the field layout, then join names from PYR.</li>
+</ul></section>
+
+<section><h2>Loop stats</h2>
+<p>Labeling ran on GLM-Flash via Hive in 40-function batches with a resumable cache, then 10-function escalation passes on GLM and DeepSeek for failed batches. No Opus was used. One Hive stream hang was killed and routed to the escalation path. Run recorded as <code>tbl-20261007T044551Z-66b366</code> (started and finished late, so it records the run but not its true duration).</p></section>
+
+<section><h2>Landmines learned</h2>
+<ul>
+<li>Many <code>CSplitterWnd::IsTracking</code> and <code>_AFX_*</code> names are Ghidra FID false matches in the statically linked MFC. Never trust them.</li>
+<li>Whole-function drafts fail on very large functions (17 KB). Chunk by about 110 lines.</li>
+<li>A builder's own summary of a decode is not evidence: the Tier 2 agent's "about 9300 records per block" claim was wrong and was corrected.</li>
+<li><code>gh.sh batch</code> must stop the MCP server first (project lock). It does this itself.</li>
+<li>Hive streams can hang. Cap with <code>timeout</code> and keep batches resumable.</li>
+</ul></section>
+</main>
