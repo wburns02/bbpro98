@@ -1,0 +1,5 @@
+VERDICT: PARTIAL
+
+- Rule 4 (argument to FUN_6803e0d5): draft writes `FUN_6803e0d5(&(*(param_1+0x70))+0x29e)`, i.e. address of the pointer field plus 0x29e, but the decompile passes the dereferenced pointer plus the offset: `iVar2 = FUN_6803e0d5(*(int *)(param_1 + 0x70) + 0x29e);` — the argument is `(*(param_1+0x70)) + 0x29e`, not `(param_1+0x70) + 0x29e`. (The draft's INPUTS section states the correct form; the `&` in rule 4 is the error.)
+
+All other claims check out: signature `void __fastcall FUN_6800e5db(int)` matches; getter indices 0x246–0x24a (582–586) and 0x24b–0x24e (587–590) match the table rows for adjustUnitsCHPct/PowerPct/NormalPct/ContactPct/BuntPct and the four *Adjust entries with the draft's selector mapping (0=power, 1=normal, 2=contact, 3=bunt); the else-if chain skips scaling/addition for selectors outside 0–3; the shortfall subtraction `if (iVar2 < iVar1) *(int *)(param_1 + 0x129) -= (iVar1 - iVar2);` sits outside the type chain and matches rule 4's condition and direction; the negative clamp to 0 with no upper clamp matches; only `param_1+0x129` is written and there is no return value.

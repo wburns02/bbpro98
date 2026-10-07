@@ -1,4 +1,4 @@
-# FUN_6800d6be (FastSim_fbattr2d) params=1
+# FUN_6800d6be (void __fastcall FUN_6800d6be(int param_1))
 
 DRAFT (GLM-Flash, unaudited)
 

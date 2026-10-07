@@ -1,4 +1,4 @@
-# FUN_6802baf7 (FastSim_FINJURY) params=19
+# FUN_6802baf7 (/* WARNING: Globals starting with '_' overlap smaller symbols at the same address */ void FUN_6802baf7(void))
 
 DRAFT (GLM-Flash, unaudited)
 

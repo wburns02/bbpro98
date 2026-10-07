@@ -1,0 +1,3 @@
+VERDICT: MATCH
+
+- 6805dc50: caveat — the draft's truncation note covers only `FUN_68003988`'s result, but the decompile also truncates the baseline to short (`sVar2 = FUN_68023268(&DAT_680d26b0,uVar3)`), so both operands of `(int)(short)uVar5 - (int)sVar2 < iVar6` are sign-extended shorts; all other claims (signature, `param_1+0x2ad` ID read, `FUN_6804ec35(&DAT_68143e28,...)` NULL check, `FUN_6804b1b5` gate, `FUN_68003988(local_8+8, FUN_6800a3a6(id))`, low-byte gate on `FUN_68002fb0`, final `FUN_6801e73f(&DAT_680ca168,this,local_8)`, and PB index `0x34a` = 842 = likelyOutFrames/20) are consistent with the decompile.

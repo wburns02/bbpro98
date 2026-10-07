@@ -1,0 +1,3 @@
+VERDICT: MATCH
+
+- 6803a6f0: caveat only — FUN_6803bdf0's return is compared/stored as a full 32-bit value (`CONCAT31(extraout_var,uVar1) == DAT_68096a5c`, `DAT_68096a5c = CONCAT31(extraout_var_01,uVar1)`), so the draft's "byte read" framing is an interpretation; the draft already lists width under UNCERTAIN, and all structural claims (init bit 0/1 ordering, cache-hit triple compare, `FUN_68003170(0x2db)` = PB[731] = ballWindSpeedPct, `FUN_68005b80(rawSpeed, PB)` into `DAT_68096a60`, 8 table entries at 0x681148a8–0x681148fc with 0xc stride and the exact (x,y,0) tuples, `DAT_68096a60 << 6` into `FUN_6803bce0`, two `FUN_6803bd30` calls with `DAT_68096a64` then `10`, both atexit registrations, return `&DAT_68114890`) match the decompile exactly.

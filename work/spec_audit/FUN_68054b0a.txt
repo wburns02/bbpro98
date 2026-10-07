@@ -1,0 +1,2 @@
+VERDICT: MATCH
+- Caveat only: the draft's shorthand `FUN_68038e10(ctx+0x91)` / `(ctx+0x95)` omits the dereference — the decompile passes the value read from the struct (`FUN_68038e10(*(int *)((int)param_1 + 0x91))`), and the byte-valued quantity is FUN_68038e10's return (`bVar1`), not necessarily the field itself; all PB getter indices (0x9d/0x9e/0x9f/0xa0 → 157/158/159/160), branch structure, command codes, and call arguments otherwise match the decompile exactly.

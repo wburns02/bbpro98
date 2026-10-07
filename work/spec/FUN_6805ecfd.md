@@ -1,4 +1,4 @@
-# FUN_6805ecfd (FastSim_FTHROW) params=6
+# FUN_6805ecfd (short __thiscall FUN_6805ecfd(void *this,uint param_1,int *param_2))
 
 DRAFT (GLM-Flash, unaudited)
 

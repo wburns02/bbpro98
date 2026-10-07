@@ -1,6 +1,6 @@
 # BBSIM / FastSim simulation spec (Tier 3)
 
-Status: DRAFT. Evidence grades: tables (addresses, PB indices, defaults) are generated from code facts and spot-checked; narrative rules are GLM-Flash drafts checked against the decompile only where marked.
+Status: DRAFT, audit pass 2 (2026-10-07). 73 function drafts; 70 audited by GLM-Flash against the FastSim decompile with the verified PlayBalance-getter identity (FUN_68003170(idx) = *(u32*)(&DAT_6808fde0+idx*4)) and per-draft pb_table rows injected: 54 MATCH, 16 PARTIAL (each PARTIAL draft carries a CORRECTIONS section quoting the findings; 3 large functions unaudited). Draft headers' params= field (which counted PB-getter calls) was replaced with real decompile signatures. Independent validation: PB.INI stealChance00Count experiment (SB 8.9x, CS 11.5x, outside the arm-pair null spread; RE_FINDINGS.md). Pass 1 (untrained prompt) was discarded: 24/25 PARTIALs were false positives from getter opaqueness; re/spec_audit_v1 keeps them.
 
 ## Architecture (CONFIRMED by reading code)
 - BBSIM.dll (animated) and FastSim.dll (no animation) are twins built from the same C++ modules (assert strings: BBSim_*.cpp / FastSim_F*.cpp). Read FastSim for pure logic, BBSIM as cross-check.
@@ -19,73 +19,48 @@ Weighted random choice of one of 8 "type" indices (what the hitter looks for; ty
 5. total = sum W. If 0, result = cur. Else r = rand(total); subtract W[0..7] in order; first index where r goes negative wins. Result stored at caller+0xe5.
 Caveat: the three calls Ghidra names CSplitterWnd::IsTracking are an FID false match (they supply loop bound, cur, and best). Their real identity is unresolved.
 ### Init loaders (CONFIRMED tables): FUN_6802baf7 (19 injury chances, u16 at 0x68113b88..), FUN_68050eb0 (20 bat zone and hit angle ints at 0x68097608..), FUN_6800a7ad (48 look/discipline/checkChance/swingSpeed ints at 0x6808cef8..).
-### Relief and pinch-hit, FUN_68044cbd (112 params): draft only, part 1 audited (batter slot = (battingIndex + param_2) % 9, on-deck = (slot+1)%9, 10-slot in-game array search). Rest unaudited.
+### Relief and pinch-hit, FUN_68044cbd (this,2 args; the old "112 params" header counted PB-getter calls): draft in 2 chunks, see audit for part 1 (batter slot = (battingIndex + param_2) % 9, on-deck = (slot+1)%9, 10-slot in-game array search). Rest unaudited.
 
 ## Function index (FastSim PB-consuming functions)
 | FastSim addr | module | PB params | audit |
 |---|---|---|---|
 | 68044cbd_part1 | chunked | 112 | CONFIRMED part 1 only |
-| 68044cbd | chunked | 112 | GLM draft, unaudited |
-| 6802fe35 | FastSim_FPLAYRS2 | 72 | GLM draft, unaudited |
-| 6802d9c9 | FastSim_FPLAYRS2 | 72 | GLM draft, unaudited |
-| 68019866 | FastSim_FGAME | 50 | GLM draft, unaudited |
-| 68052bd5 | ? | 49 | GLM draft, unaudited |
-| 6800a7ad | FastSim_FRUNNRS2 | 48 | CONFIRMED |
-| 68023dd3 | FastSim_FGAME | 36 | GLM draft, unaudited |
-| 68053248 | ? | 32 | GLM draft, unaudited |
-| 680460cc | FastSim_FROSTER | 32 | GLM draft, unaudited |
-| 6804684c | ? | 26 | GLM draft, unaudited |
-| 68047511 | ? | 23 | GLM draft, unaudited |
-| 6800da34 | FastSim_fbattr2d | 23 | GLM draft, unaudited |
-| 680371f8 | ? | 22 | GLM draft, unaudited |
-| 68050eb0 | FastSim_FRUNNRS2 | 20 | table CONFIRMED; narrative WRONG (FID noise) |
-| 6802baf7 | FastSim_FINJURY | 19 | CONFIRMED table + flow |
-| 680537ad | ? | 16 | GLM draft, unaudited |
-| 6800b36e | FastSim_fbattr2d | 16 | GLM draft, unaudited |
-| 6804a357 | ? | 13 | GLM draft, unaudited |
-| 68040a7e | FastSim_FGAME | 11 | GLM draft, unaudited |
-| 6803aad7 | ? | 11 | GLM draft, unaudited |
-| 6800dcc4 | FastSim_fbattr2d | 11 | GLM draft, unaudited |
-| 68036e91 | ? | 10 | GLM draft, unaudited |
-| 6803122b | ? | 10 | GLM draft, unaudited |
-| 6803e684 | FastSim_FROSTER | 9 | GLM draft, unaudited |
-| 6800e5db | FastSim_fbattr2d | 9 | GLM draft, unaudited |
-| 68036a52 | ? | 7 | GLM draft, unaudited |
-| 6800e826 | FastSim_fbattr2d | 7 | GLM draft, unaudited |
-| 6805ecfd | FastSim_FTHROW | 6 | GLM draft, unaudited |
-| 6805d960 | ? | 6 | GLM draft, unaudited |
-| 68053b36 | ? | 6 | GLM draft, unaudited |
-| 6803853e | ? | 6 | GLM draft, unaudited |
-| 6801a0ad | ? | 6 | GLM draft, unaudited |
-| 68014f7b | ? | 6 | GLM draft, unaudited |
-| 68001935 | FastSim_FACT | 6 | GLM draft, unaudited |
-| 6805dd30 | FastSim_FTHROW | 5 | GLM draft, unaudited |
-| 680447dc | ? | 5 | GLM draft, unaudited |
-| 680346aa | ? | 5 | GLM draft, unaudited |
-| 68054b0a | ? | 4 | GLM draft, unaudited |
-| 68036d52 | ? | 4 | GLM draft, unaudited |
-| 6800d44f | FastSim_fbattr2d | 4 | GLM draft, unaudited |
-| 6805be15 | ? | 3 | GLM draft, unaudited |
-| 6804a64d | ? | 3 | GLM draft, unaudited |
-| 6803a5ff | ? | 3 | GLM draft, unaudited |
-| 68036c6c | ? | 3 | GLM draft, unaudited |
-| 6802ef90 | ? | 3 | GLM draft, unaudited |
-| 6805e93b | FastSim_FTHROW | 2 | GLM draft, unaudited |
-| 6805db11 | ? | 2 | GLM draft, unaudited |
+| 68044cbd | chunked | 112 | PARTIAL (pass 2, see re/spec_audit/FUN_68044cbd.txt) |
+| 68 MATCH (audit pass 2) RS2 | 72 | GLM draft, unaudited |
+| 68 MATCH (audit pass 2) RS2 | 72 | GLM draft, unaudited |
+| PARTIAL (pass 2, see re/spec_audit/FUN_68019 MATCH (audit pass 2) M draft, unaudited |
+| 68052bd5 | ? |  PARTIAL (pass 2, see re/spec_audit/FUN_6800a7 PARTIAL (pass 2, see re/spec_audit/FUN_68023 PARTIAL (pass 2, see re/spec_audit/FUN_68053248.txt)  | Fa MATCH (audit pass 2) CONFIRMED |
+| 68023dd3 | FastSim_FGAME | 36 | GLM draft, unaudited | MATCH (audit pass 2)  GLM draft, unaudited |
+| 680460cc | F MATCH (audit pass 2) GLM draft, unaudited |
+ PARTIAL (pass 2, see re/spec_audit/FUN_680371f8.txt) GLM dr MATCH (audit pass 2) ft, unaudited |
+| 6800da34 | FastSim_fbattr2d | 23 | GLM draf MATCH (audit pass 2) 8 | ? | 22 | GLM draft, u MATCH (audit pass 2) | FastSim_FRUNNRS2 | 20 | table CONFIR MATCH (audit pass 2) FID noise) |
+| 6802baf7 MATCH (audit pass 2) 9 | CONFIRMED table + flow |
+| 6805 PARTIAL (pass 2, see re/spec_audit/FUN_68040 PARTIAL (pass 2, see re/spec_audit/FUN_6803aad7.txt) d |
+|  MATCH (audit pass 2) ttr2d | 16 | GLM draft, MATCH (audit pass 2) 7 | ? | 13 | GLM draft, MATCH (audit pass 2) e | FastSim_FGAME | 11 | GLM draft,  MATCH (audit pass 2)  | ? | 11 | GLM draft, unaudited |
+|  PARTIAL (pass 2, see re/spec_audit/FUN_6800 MATCH (audit pass 2)  GLM draft, unaudited |
+| 68036e91 |  MATCH (audit pass 2) audited |
+| 6803122b | ? | 10 | GLM MATCH (audit pass 2) 6803e684 | FastSim_FRO MATCH (audit pass 2) unaudited |
+| 6800e5db MATCH (audit pass 2) 9 | GLM draft, unaudit MATCH (audit pass 2) 7 | GLM draft, unaudit MATCH (audit pass 2) Sim_fbattr2d | 7 | GLM MATCH (audit pass 2) 6805ecfd | FastSim_FTHROW | 6 | G MATCH (audit pass 2) | 6805d960 | ? | 6 | GLM draft, una MATCH (audit pass 2) ? | 6 | GLM draft, una MATCH (audit pass 2) ? | 6 | GLM draft, una PARTIAL (pass 2, see re/spec_audit/FUN_6803 MATCH (audit pass 2) draft, unaudited |
+| 6 MATCH (audit pass 2) draft, unaudited |
+| 68001935 | FastS MATCH (audit pass 2) t, unaudited |
+| 6805d MATCH (audit pass 2)  5 | GLM draft, unaudi PARTIAL (pass 2, see re/spec_audit/FUN_6804 MATCH (audit pass 2) ft, unaudited |
+| 6803 MATCH (audit pass 2) ft, unaudited |
+| 6805 MATCH (audit pass 2) ft, unaudited |
+| 68036d52 | ? | 4  MATCH (audit pass 2)  |
+| 6800d44f | FastSi MATCH (audit pass 2) raft, unaudited |
+| 68 MATCH (audit pass 2) raft, unaudited |
+| 68 MATCH (audit pass 2) raft, unaudited |
+| 68 MATCH (audit pass 2) raft, unaudited |
+| 68 PARTIAL (pass 2, see re/spec_audit/FUN_6800 MATCH (audit pass 2) ted |
+| 6802ef90 | ? | MATCH (audit pass 2) ted |
+| 6805e93b | Fas MATCH (audit pass 2) draft, unaudited |
+| 6 MATCH (audit pass 2) draft, unaudited |
 | 68049d61 | ? | 2 | GLM draft, unaudited |
-| 680382d9 | ? | 2 | GLM draft, unaudited |
-| 68030a6f | ? | 2 | GLM draft, unaudited |
-| 68003899 | ? | 2 | GLM draft, unaudited |
-| 6805dc50 | ? | 1 | GLM draft, unaudited |
-| 6805dab6 | ? | 1 | GLM draft, unaudited |
-| 6805da5e | ? | 1 | GLM draft, unaudited |
-| 6805c22c | ? | 1 | GLM draft, unaudited |
-| 68053d2e | ? | 1 | GLM draft, unaudited |
-| 680506fd | ? | 1 | GLM draft, unaudited |
-| 6804d70e | FastSim_FRUNNER | 1 | GLM draft, unaudited |
-| 68043fcf | ? | 1 | GLM draft, unaudited |
-| 6803aa6b | ? | 1 | GLM draft, unaudited |
-| 6803a6f0 | ? | 1 | GLM draft, unaudited |
+| 6 MATCH (audit pass 2) draft, unaudited |
+| 68030a6f | ? |  PARTIAL (pass 2, see re/spec_audit/FUN_6804 MATCH (audit pass 2) 899 | ? | 2 | GLM draf MATCH (audit pass 2) c50 | ? | 1 | GLM draf MATCH (audit pass 2) ab6 | ? | 1 | GLM draft, unaudited MATCH (audit pass 2) | GLM draft, unaudited |
+| 6805c22c MATCH (audit pass 2) unaudited |
+| 68053d2e PARTIAL (pass 2, see re/spec_audit/FUN_6802 MATCH (audit pass 2) | 680506fd | ? | 1 | GLM draft, unau MATCH (audit pass 2) astSim_FRUNNER | 1 | G MATCH (audit pass 2) | 68043fcf | ? | 1 | GLM draft, unaud MATCH (audit pass 2) | 1 | GLM draft, unaudited |
+| 6803a6 MATCH (audit pass 2) , unaudited |
 | 68039750 | FastSim_FBALL | 1 | GLM draft, unaudited |
 | 68023268 | FastSim_FFIELD | 1 | GLM draft, unaudited |
 | 68022316 | ? | 1 | GLM draft, unaudited |

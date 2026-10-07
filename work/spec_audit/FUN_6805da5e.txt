@@ -1,0 +1,2 @@
+VERDICT: MATCH
+- 6805da5e: All structural claims verified — FUN_68002bb0(param_2,param_1) with reversed arg order, FUN_6805d960(this,iVar2) returning short, FUN_68003170(0x34c) = PB[844] = throwTimeSlop (default 6, consistent with table), integer division then slop added, no branches/clamps, callers [68023268, 6805e93b] match. Only caveat: the semantic labels ("distance", "throw speed", "travel time") are interpretive guesses, which the draft itself flags as uncertain; nothing in the decompile contradicts them.

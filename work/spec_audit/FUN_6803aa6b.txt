@@ -1,0 +1,2 @@
+VERDICT: MATCH
+- Caveat only: the copy direction of `FUN_68014b50(&DAT_68114908,param_1)` (dest=DAT_68114908, source=param_1) and the "full copy back" semantics of `FUN_6803bab0` are inferred from argument order; the decompile confirms the calls and argument order exactly (0x2df = 735 = ballAirResistancePct, default 95, per table; literal `100` and no-arg `FUN_6803a5ff()` both match; sole caller `6803aad7` matches header).

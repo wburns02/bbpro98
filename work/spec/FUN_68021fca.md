@@ -1,4 +1,4 @@
-# FUN_68021fca () params=1
+# FUN_68021fca (short __fastcall FUN_68021fca(int param_1))
 
 DRAFT (GLM-Flash, unaudited)
 

@@ -1,0 +1,3 @@
+VERDICT: MATCH
+
+- Caveat: the draft never states the actual getter indices; the decompile shows 72 consecutive verbatim calls FUN_68003170(0x274)…FUN_68003170(0x2bb) (final call written as decimal `699` = 0x2bb) into _DAT_68096690–_DAT_680967ac, so the structure (72 dwords, no scaling) is supported, but the specific PB names (`pitchObj<B><S>Count*Weight`) and the "sum to 100" default examples (25/75, 20/10/20/50) are not among the verified PlayBalance rows and are unverifiable from the decompile; also the UNCERTAIN note's "eight 0x45 defaults" undercounts — nine fields (0x97, 0x9b, 0xa3–0xbb step 4, skipping 0x9f) end at 0x45, though rule 6 itself describes this correctly.

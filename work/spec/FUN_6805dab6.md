@@ -1,4 +1,4 @@
-# FUN_6805dab6 () params=1
+# FUN_6805dab6 (short __thiscall FUN_6805dab6(void *this,short *param_1))
 
 DRAFT (GLM-Flash, unaudited)
 

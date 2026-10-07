@@ -1,4 +1,4 @@
-# FUN_68044cbd params=112 relief/pinch-hit decision (chunked)
+# FUN_68044cbd (void __thiscall FUN_68044cbd(void *this,int param_1,int param_2)) relief/pinch-hit decision (chunked)
 
 DRAFT (GLM-Flash, unaudited, first quarter in 2 parts; remaining quarters above)
 

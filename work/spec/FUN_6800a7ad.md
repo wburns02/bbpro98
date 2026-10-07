@@ -1,4 +1,4 @@
-# FUN_6800a7ad (FastSim_FRUNNRS2) params=48
+# FUN_6800a7ad (/* WARNING: Globals starting with '_' overlap smaller symbols at the same address */ void FUN_6800a7ad(void))
 
 DRAFT (GLM-Flash, unaudited)
 

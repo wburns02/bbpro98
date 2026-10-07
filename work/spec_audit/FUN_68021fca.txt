@@ -1,0 +1,2 @@
+VERDICT: MATCH
+- Caveat only: decompile computes `return (short)iVar1 + (short)uVar2` (sum of two truncated shorts) vs. draft's `(short)(R + S)`; numerically identical after return-type truncation, and `FUN_68003170(0x343)` = PB[835] = generalSlop (default 9) is consistent with the table row.

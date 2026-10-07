@@ -1,0 +1,2 @@
+VERDICT: MATCH
+- FUN_6803122b (rule 13): hex constant 0xfb06 matches the decompile, but its decimal gloss is wrong — 0xfb06 = −1274, not −1258 (all other glosses check out: 0xfc72=−910, 0xf556=−2730, 0xf8e4=−1820, 0xffd3=−45, 0xff92=−110, 0xfff4=−12).

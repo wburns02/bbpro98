@@ -1,0 +1,4 @@
+VERDICT: MATCH
+
+- All structure, gates, PB indices (0x36–0x66/54–102), comparison directions, non-PB constants (0x40, 0x89, 0x6b, 0x7b, 0x68143ee0, 0x68114948, 0x68114ba8, 0x173be, DAT_680a224c, score args 3/4, clamp args 0/100), and the 16-bit-add/no-intermediate-clamp accumulator behavior match the decompile; every cited PB name/default pairs correctly with its FUN_68003170 index (e.g. 0x42=66 VerySlowThresh→0x46=70 VerySlowAdjust in the else-branch; 0x55=85 Back for param_1==2 vs 0x54=84 Face; 0x65=101/0x66=102 way-behind check applied outside the param_1 split).
+- Caveat only: the "returns 0 on failed gate" and "[0,100]" claims rest on the draft's own flagged guess that FUN_68014c70 is a clamp — the decompile shows only the tail call `FUN_68014c70((short)local_8,0,100)`, with `(short)local_8==0` on gate failure due to `local_8 = local_8 & 0xffff0000` at entry (68052bd5).

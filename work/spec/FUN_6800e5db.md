@@ -1,4 +1,4 @@
-# FUN_6800e5db (FastSim_fbattr2d) params=9
+# FUN_6800e5db (void __fastcall FUN_6800e5db(int param_1))
 
 DRAFT (GLM-Flash, unaudited)
 
@@ -40,3 +40,7 @@ Writes `param_1+0x129`. No other fields modified; no return value.
 - The call Ghidra resolved as `CSplitterWnd::IsTracking(DAT_680a224c)` is suspicious in a fast-sim module; its true target and the meaning of its return value (used as a benchmark/cap in rule 4) are unknown.
 - Whether `FUN_6803e0d5` is a pure getter or has side effects.
 - Caller context (`6800b36e`) not examined; purpose of the stored value at `+0x129` unknown.
+
+
+CORRECTIONS (audit pass 2, GLM-Flash vs decompile; findings verified shaped, apply when editing):
+- Rule 4 (argument to FUN_6803e0d5): draft writes `FUN_6803e0d5(&(*(param_1+0x70))+0x29e)`, i.e. address of the pointer field plus 0x29e, but the decompile passes the dereferenced pointer plus the offset: `iVar2 = FUN_6803e0d5(*(int *)(param_1 + 0x70) + 0x29e);` — the argument is `(*(param_1+0x70)) + 0x29e`, not `(param_1+0x70) + 0x29e`. (The draft's INPUTS section states the correct form; the `&` in rule 4 is the error.)

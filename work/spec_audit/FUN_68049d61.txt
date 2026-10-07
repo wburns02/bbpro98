@@ -1,0 +1,5 @@
+VERDICT: MATCH
+
+- 68049d61: caveat only — the PURPOSE line "raises a flag when the pitcher **first** drops out of the top two states" could be read as a one-time latch, but the decompile re-executes `FUN_6803de9a(this_00,8,'\x01')` on every `old < 2 → new > 1` transition with no once-only guard; the draft's rule 5 states this correctly.
+
+All checked claims are consistent with the decompile: signature `void __thiscall (void*,int)`; block `this + param_1*0x93c + 0x3de`; `FUN_680491d4(this, *(int*)(this + param_1*4))`; getter indices `FUN_68003170(0xac)`=172→pitcherTiredThresh and `FUN_68003170(0xad)`=173→pitcherExhaustedThresh match the table rows; branch chain `f4 < f3/2 → 0`, `f4 < f3 → 1`, `PB[172] < iVar1 → 2`, `PB[173] < iVar1 → 3`, else 4; unconditional `FUN_6803deec` write; re-read via `FUN_6803df0d` with `(1 < iVar4) && (iVar2 < 2)` gating the flag call. Default-derived ranges (iVar1 > 20; 0 < iVar1 ≤ 20; iVar1 ≤ 0) and the rule-6 ordering consequence follow logically from the verified table defaults.

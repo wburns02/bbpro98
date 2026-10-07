@@ -1,4 +1,4 @@
-# FUN_6803a5ff () params=3
+# FUN_6803a5ff (int FUN_6803a5ff(void))
 
 DRAFT (GLM-Flash, unaudited)
 

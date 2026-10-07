@@ -1,0 +1,4 @@
+VERDICT: PARTIAL
+
+- FUN_68003170(0x1c) branch (draft §3 rule 5): draft cites `pitchAroundChancePH2BatAdjust` default as (10); verified table row 28 default is 65. Decompile supports the index/name mapping in the dR≥2 else-branch ("else { uVar18 = FUN_68003170(0x1c); local_1c = (short)uVar18 + local_1c; }") but the cited default contradicts the verified row.
+- Draft §3 rule 7 "Net dR contribution (defaults): ≥2 → +20": contradicted by verified defaults

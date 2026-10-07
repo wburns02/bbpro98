@@ -51,3 +51,12 @@ Resolves one batter's swing against the pitched ball: rolls a contact outcome (0
 - Many calls are mislabeled by Ghidra as MFC methods (`CSplitterWnd::IsTracking`, `OnClose`, etc.); real callee identities unknown.
 - Whether `FUN_68082999(&DAT_68185a60, n)` is uniform [0, n) — inferred from `rand(100)` vs. percentage and `rand(201)−100` usage.
 - Physical meaning of the `704/40000` scaling and the 16384 contact threshold.
+
+
+CORRECTIONS (audit pass 2, GLM-Flash vs decompile; findings verified shaped, apply when editing):
+- Rule 3 (view-state-2 gate): comparison inverted. Decompile: `uVar5 = FUN_68082999(&DAT_68185a60,100); iVar4 = FUN_68003170(0x301); if (iVar4 < (int)uVar5) { local_18 = 0; }` — `local_18` is cleared when PB[0x301=769, failedCheckContactChance] < rand(100), not when `rand(100) < PB[failedCheckContactChance]` as drafted.
+- Rule 7 table, row "−3, −4": outcomes inverted. Decompile: `case -4: case -3: uVar5 = FUN_68082999(&DAT_68185a60,100); local_20 = (uint)((int)uVar5 < local_34);` → outcome **1** when rand < local_34, else **0**; draft says `rand < local_34 ? 0 : 1`.
+- Rule 8: unsupported PlayBalance citation. Decompile contains no `FUN_68003170` call with 700/704; the modifier reads static arrays: `uVar5 = FUN_68082999(&DAT_68185a60,*(uint *)(&DAT_68097618 + local_20 * 4)); local_14 = *(int *)(&DAT_68097608 + local_20 * 4) + uVar5;`. The only getter call in the whole function is `FUN_68003170(0x301)` (rule 3), so `PBG[batPowerHandleBase]`/`PBG[batPowerHandleRange]` is not supported by this decompile.
+- Rule 10 (update message): condition inverted. Decompile: `FUN_6804869a(&DAT_68114ba8 + (uint)(*(int *)((int)param_1 + 0x7b) == 0) * 0x173be,4);` — the `+0x173BE` variant is selected when `param_1+0x7b == 0`, not when `!= 0` (INPUTS line "0 selects first of two update targets" is likewise backwards).
+- Rule 10 (FUN_68054d4a call): parameter count/grouping wrong. Draft lists 6 args with `&{local_48, local_44, local_38}` merged; decompile passes 7: `FUN_68054d4a(param_1,local_5c,(short)_local_58,local_10,&local_70,&local_68,&local_7c);` where `&local_70` holds {local_48, local_44} (via local_6c) and `&local_68` holds local_38 as two separate pointer arguments.
+- OUTPUT/SIDE EFFECTS: write range off by one byte. Last store `*(undefined2 *)(local_30 + 0x1d) = local_74;` is a 2-byte write, so DAT_680a58de bytes 0xD–0x1E are written, not 0xD–0x1D.

@@ -1,0 +1,2 @@
+VERDICT: MATCH
+- Caveat: in cases 0/2/3 the running max starts at 0 with strict `>` (`local_28 < local_14[local_24]`, `local_40 < local_14[local_3c]`), so candidate[0] is also kept when all qualifying weights are *negative*, not only zero as the draft phrases it; PB indices check out (0x26c=620 nonEstablishedPitchTypeAdjust, 0x26d=621 primaryPitchTypeAdjust), as do all offsets (0x70/0x7a0/0x29e/0xc3/0xd3/0xd7/0xe3/0xe7), the 16-byte `local_14` buffer, and the &DAT_68113d88 RNG call.

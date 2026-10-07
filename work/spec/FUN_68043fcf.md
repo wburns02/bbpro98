@@ -1,4 +1,4 @@
-# FUN_68043fcf () params=1
+# FUN_68043fcf (void __fastcall FUN_68043fcf(void *param_1))
 
 DRAFT (GLM-Flash, unaudited)
 

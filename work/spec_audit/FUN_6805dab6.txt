@@ -1,0 +1,3 @@
+VERDICT: MATCH
+
+- Caveat only: draft's "flat constant" phrasing is slightly loose — the slop is fetched at runtime via `FUN_68003170(0x34c)` (idx 0x34c = 844 = throwTimeSlop, default 6, consistent with the table), not a hard-coded constant; all other claims (signature, `this+0xc`/`param_1` args to `FUN_68002bb0`, `FUN_6805d960(this,iVar2)` as short, truncating division with no zero-guard, slop added post-division, short return, and the five caller sites) match the decompile exactly.
