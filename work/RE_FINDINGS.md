@@ -77,3 +77,4 @@ Output looks plausible and cites strings/callees. Needs the audit gate (spot che
 - LineUp: 761 renames applied (518 grade + 31 name collisions); sample audit of 3 read against decompile: all consistent (lineup role lookup, click match, scrollbar setup).
 - Upstats: 817 renames applied; 3-function sample read, consistent (ctree close chain, record write, read wrapper).
 - EZShell: 924 renames applied; 3-function sample read, consistent (scalar deleting destructor, child notify loop, SEH cleanup stub).
+- BBShell: 1703 renames applied; 3-function sample read: one clear (simple select dialog setup), two are generic SEH/dtor thunks whose names are guesses (low value).
