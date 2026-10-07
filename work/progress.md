@@ -21,3 +21,11 @@
 - Pending: FPS_CT, LineUp, Upstats, EZShell, BBShell labeling (drive_rest.sh), then rename spec + regen, ASN decode, final Artifact report.
 - 2026-10-06 night: ALL 14 binaries labeled; renames applied + regen (total ~7516). Remaining: Tier 3 audits (about 5 of 74 audited), PB.INI downstream experiment, ASN field decode. Final report published (see below).
 - 2026-10-07: parked at 98% Claude usage. Next, in order: PB.INI controlled experiment, Tier 3 draft audits, ASN fields.
+
+## PB.INI experiment setup (2026-10-07, before compaction)
+- Design: arm A baseline (no PB.INI), arm B [PlayBalance] stealChance00Count=100 (idx 54, default -10, consumer 68065947). Observable: steal attempts in day logs; 3 sim days per arm from work_state_s10.
+- Data reset = cp -a work_state_s10/{Assn,Stats} over work_install. Logs collected to /mnt/nvme/bbpro98/re/pbexp/armX/ (old logs moved to pbexp/old/).
+- Launch: setsid bash /mnt/nvme/bbpro98/re/launch_prof.sh (Xvfb :99, work copy via BBPRO_98_work symlink). Rig: /home/will/xc2.sh (click/shot to $HOME/*.png).
+- State problem: work_state_s10 opens at "Monday, January 1, 2007" needing the Free Agent draft before any sim. Path so far: main menu League Management (495,677; needs 2 clicks) > Association menu > Start/Resume Draft (479,491 worked once) > Free Agent Draft screen (Round 1, Boston).
+- RIG LANDMINES: clicks on Action drop-down items do NOT register (6 attempts, y=405 Skip Draft); menu-title clicks DO work; Alt+A opens Association; F10+Right x3+Return opens Action drop-down; letter "s" in open drop-down EXECUTED Set Criteria (letters execute items); "d" and "k" no visible effect; Escape needs --clearmodifiers to dismiss stuck menus; Set Criteria dialog cancels via Cancel button click (758,635).
+- NEXT: finish getting the draft done (try letters i,f,t on open Action drop-down, or Down-highlight+Enter combos), verify draft completes, then find sim-day path (Action menu Simulate? schedule screen?), sim 3 days, collect logs, repeat for arm B with PB.INI.
