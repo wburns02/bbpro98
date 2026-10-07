@@ -76,3 +76,4 @@ Output looks plausible and cites strings/callees. Needs the audit gate (spot che
 - Renames applied and readback-verified: IC_Cfg (66), FPS_CT (217, c-tree engine: IO_FILE_* / IO_REGISTRY_* names).
 - LineUp: 761 renames applied (518 grade + 31 name collisions); sample audit of 3 read against decompile: all consistent (lineup role lookup, click match, scrollbar setup).
 - Upstats: 817 renames applied; 3-function sample read, consistent (ctree close chain, record write, read wrapper).
+- EZShell: 924 renames applied; 3-function sample read, consistent (scalar deleting destructor, child notify loop, SEH cleanup stub).
