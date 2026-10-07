@@ -1,0 +1,10 @@
+# Applied inside the lane's private network namespace (pasta) before GLM starts. GLM runs as a
+# non-root uid in a nested user namespace and cannot change it. Internet only: no host loopback,
+# LAN, tailnet or link-local, except pasta's DNS forwarder.
+table inet sbx {
+  chain out { type filter hook output priority 0; policy accept;
+    ip daddr 169.254.1.1 udp dport 53 accept
+    ip daddr { 127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16 } reject
+    ip6 daddr { ::1, fc00::/7, fe80::/10, fd7a:115c:a1e0::/48 } reject
+  }
+}

@@ -55,8 +55,8 @@ def hfiles(day):
 def run_jailed(dec, td):
     """Run the decoder with only /usr and td visible, no network, empty env."""
     st = os.lstat(dec)
-    if not __import__('stat').S_ISREG(st.st_mode) or st.st_size > 2_000_000:
-        raise ValueError(f'{dec}: not a regular file under 2 MB')
+    if not __import__('stat').S_ISREG(st.st_mode) or st.st_size > 200_000:
+        raise ValueError(f'{dec}: not a regular file under 200 KB (the audit reads 200 KB)')
     shutil.copyfile(dec, f'{td}/hdecode.py', follow_symlinks=False)
     cmd = ['bwrap', '--ro-bind', '/usr', '/usr', '--symlink', 'usr/lib', '/lib', '--symlink', 'usr/lib64', '/lib64',
            '--symlink', 'usr/bin', '/bin', '--proc', '/proc', '--dev', '/dev', '--bind', td, '/w', '--chdir', '/w',
