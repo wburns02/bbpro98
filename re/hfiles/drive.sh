@@ -43,7 +43,6 @@ glm_sandboxed() {
     --tmpfs "$H"
     --ro-bind "$H/.local" "$H/.local" --ro-bind "$H/GLM.md" "$H/GLM.md" --ro-bind "$H/bin" "$H/bin"
     --ro-bind "$H/.config/zai" "$H/.config/zai" --ro-bind "$H/.config/hivemodels" "$H/.config/hivemodels"
-    --ro-bind "$H/.config/openrouter" "$H/.config/openrouter"
     --ro-bind "$H/bbpro98/re" "$H/bbpro98/re" --ro-bind "$H/bbpro98/work" "$H/bbpro98/work"
     --ro-bind "$H/bbpro98/BBPRO98_package" "$H/bbpro98/BBPRO98_package"
     --bind "$L" "$L" --ro-bind "$R" "$R"

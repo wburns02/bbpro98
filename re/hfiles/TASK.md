@@ -29,7 +29,7 @@ Hard rules for `hdecode.py`: it may read ONLY the file given on its command line
 - The ASN also has 34-byte `fa fa 22` records at 0x30000..0x6D500 that may be lineups; only use them if the H files stall.
 
 ## Tools and budget
-- You are GLM-5.3-Flash. For a hard sub-problem (e.g. "here are 20 aligned byte columns and the truth values, what is the cipher"), you may get a second opinion from DeepSeek: write a self-contained task file and run `cloud-code --file <task.txt> --mode full --model deepseek/deepseek-v4.1-flash`. Paste all data it needs into the task file; it cannot see files.
+- You are GLM-5.3-Flash. For a hard sub-problem (e.g. "here are 20 aligned byte columns and the truth values, what is the cipher"), you may get a second opinion from DeepSeek: write a self-contained task file and run `cloud-code --file <task.txt> --mode full --llm-service hive --model deepseek/deepseek-v4.1-flash`. Paste all data it needs into the task file; it cannot see files.
 - Do not run Wine or the game. Do not touch `/mnt/nvme/bbpro98/work_install` or any live install. Do not git push. Do not edit anything outside `$LANE/`.
 - Write the format as you learn it into `$LANE/HFILE_FORMAT.md` (offsets, field meanings, the encoding, evidence for each claim).
 

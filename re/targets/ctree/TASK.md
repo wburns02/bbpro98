@@ -72,7 +72,7 @@ held-out saves from other sim days that you never see (so parse structures gener
 
 ## Tools and budget
 - You are GLM-5.3-Flash. For a hard sub-problem you may ask DeepSeek: write a self-contained task file (paste all data
-  it needs; it cannot see files) and run `cloud-code --file <task.txt> --mode full --model deepseek/deepseek-v4.1-flash`.
+  it needs; it cannot see files) and run `cloud-code --file <task.txt> --mode full --llm-service hive --model deepseek/deepseek-v4.1-flash`.
 - Do not run Wine or the game. Do not edit anything outside `$LANE/`. Do not git push.
 - Document the format in `$LANE/FORMAT.md` (file header, member directory, record header, free space, index nodes,
   key definitions per member, evidence for each).

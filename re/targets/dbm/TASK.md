@@ -42,7 +42,7 @@ may not be images). Palettes: `BB0.PAL` (RIFF PAL), `*.PLX` (768 bytes, likely 2
 
 ## Tools and budget
 - You are GLM-5.3-Flash. For a hard sub-problem you may ask DeepSeek: write a self-contained task file (paste all data
-  it needs; it cannot see files) and run `cloud-code --file <task.txt> --mode full --model deepseek/deepseek-v4.1-flash`.
+  it needs; it cannot see files) and run `cloud-code --file <task.txt> --mode full --llm-service hive --model deepseek/deepseek-v4.1-flash`.
 - Do not run Wine or the game. Do not edit anything outside `$LANE/`. Do not git push.
 - Document the format in `$LANE/FORMAT.md` (header, offset table, per-bitmap header, compression scheme, evidence).
 
