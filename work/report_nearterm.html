@@ -41,9 +41,9 @@ code{font-family:ui-monospace,monospace;font-size:.9em}
 
 <section><h2>Plan to resolve</h2>
 <ul>
-<li>Post-merge audit the remaining 12 merged drafts on Hive (one sweep, ~20 min, no roadblock). Next session.</li>
-<li>Apply the consumer draft's 2 corrections via the same v2-and-merge pipeline (owner: GLM on Hive, gate: chunked re-audit).</li>
-<li>ASN semantics by box-score anchoring (owner: me plus the rig; a simmed day's UI box score matched against that day's tail-log record).</li>
+<li>DONE same day (follow-up run): post-merge sweep of all 12 remaining merged drafts plus the last 3 PARTIAL corrections applied and merged. Sweep found 5 real defects (two inherited from audit bullets), all fixed by hand after pb-table/decompile verification; merge tool's span off-by-one fixed. See BBSIM_SPEC.md status.</li>
+<li>DONE same day: the consumer draft's corrections applied, merged, and hand-gated (the merge had displaced its rule 10 rewrite onto rule 11's slot; repaired).</li>
+<li>ASN anchoring advanced: the tail region is decoded as the Association News pool (re/tail_log_decode.md; 25-byte records, claim pile-ons confirmed against April 11 ground truth). Box scores are NOT there; the next anchor is the 34-byte <code>fa fa 22</code> lineup records at 0x30000..0x6D500.</li>
 </ul></section>
 
 <section><h2>Loop stats</h2>
