@@ -102,9 +102,13 @@ LEAK GUARD FAILED: hdecode.py references forbidden paths. The decoder may read o
     printf '=== BEGIN output on a day-1 game the referee never scores (MLBPA97.H10) ===\n%s\n=== END output ===\n\n' "$sample"
     printf 'Judge from the text above only. Is the output sane JSON with plausible box-score lines? End your reply with exactly one line: VERDICT: CLEAN or VERDICT: LEAK <reason>.\n'
   } > "$AU/haiku_prompt$r.txt"
-  (cd /tmp && env -u ANTHROPIC_API_KEY timeout 1200 claude -p --model claude-haiku-4-5-20251001 --strict-mcp-config \
+  # cwd = a fresh private dir (never /tmp: a planted .claude/settings.json or CLAUDE.md there would load, hooks included);
+  # --setting-sources user also ignores project/local settings.
+  hd=$(mktemp -d /mnt/nvme/bbpro98/tmp/haiku.XXXXXX) || { echo "mktemp failed" >> "$R/run.log"; continue; }
+  (cd "$hd" && env -u ANTHROPIC_API_KEY timeout 1200 claude -p --model claude-haiku-4-5-20251001 --strict-mcp-config --setting-sources user \
      --permission-mode default --disallowedTools Bash PowerShell Write Edit NotebookEdit Agent Skill WebFetch WebSearch Task Monitor Read Glob Grep LS \
      < "$AU/haiku_prompt$r.txt") > "$AU/haiku_audit$r.log" 2>&1
+  rm -rf -- "$hd"
   v=$(grep -o 'VERDICT: [A-Z]*.*' "$AU/haiku_audit$r.log" | tail -n 1 | cut -c1-200); echo "$v" >> "$R/run.log"
   if [[ "$v" != "VERDICT: CLEAN"* ]]; then last="$out
 Haiku audit: ${v:-no verdict}. Fix it."; continue; fi

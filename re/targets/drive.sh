@@ -59,10 +59,14 @@ except OSError as e:
     print("(unreadable: %s)" % (e.strerror or e))' "$1"; }
 
 haiku() {  # $1 = jsonl message file, $2 = log
-  (cd /tmp && env -u ANTHROPIC_API_KEY timeout 1200 claude -p --model claude-haiku-4-5-20251001 --strict-mcp-config \
+  # cwd = a fresh private dir (never /tmp: a planted .claude/settings.json or CLAUDE.md there would load, hooks included);
+  # --setting-sources user also ignores project/local settings.
+  local hd; hd=$(mktemp -d /mnt/nvme/bbpro98/tmp/haiku.XXXXXX) || return 1
+  (cd "$hd" && env -u ANTHROPIC_API_KEY timeout 1200 claude -p --model claude-haiku-4-5-20251001 --strict-mcp-config --setting-sources user \
      --permission-mode default --input-format stream-json --output-format stream-json --verbose \
      --disallowedTools Bash PowerShell Write Edit NotebookEdit Agent Skill WebFetch WebSearch Task Monitor Read Glob Grep LS \
      < "$1") > "$2" 2>&1
+  rm -rf -- "$hd"
   python3 -I -B -c '
 import json, sys
 for line in open(sys.argv[1], errors="replace"):
