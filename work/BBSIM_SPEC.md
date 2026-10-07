@@ -95,7 +95,7 @@ Caveat: the three calls Ghidra names CSplitterWnd::IsTracking are an FID false m
 | 6800d6be | FastSim_fbattr2d | 1 | GLM draft, unaudited |
 | 6800d51a | FastSim_fbattr2d | 1 | GLM draft, unaudited |
 
-Per-function drafts: work/spec/FUN_<addr>.md (also /mnt/nvme/bbpro98/re/spec/). 7 of 74 audited so far (6802baf7, 68050eb0, 6800a7ad, 6800cccc, 68044cbd part 1, plus table checks).
+Per-function drafts: work/spec/FUN_<addr>.md (also /mnt/nvme/bbpro98/re/spec/). 7 drafts hand-audited by Claude (6802baf7, 68050eb0, 6800a7ad, 6800cccc, 68044cbd part 1, table checks); all 73 drafts machine-audited by GLM-Flash in progress (re/spec_audit/), verdicts PARTIAL-heavy; see RE_FINDINGS for calibration of false positives. FUN_68036e91 draft corrected (pitchOutChance indices 14..23). PB.INI A/B validation: stealChance00Count=100 raised SB 9x over 10 sim days (2026-10-07).
 
 ## Open work
 - Trace data xrefs from the init-loaded globals to their consumers and spec those (the actual formulas).

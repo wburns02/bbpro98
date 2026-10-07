@@ -86,3 +86,8 @@ Output looks plausible and cites strings/callees. Needs the audit gate (spot che
 - Result: SB 240 -> 2148 (8.9x), CS 20 -> 230 (11.5x); AB within 0.7%; R +23%, RBI +21% (second-order), GIDP -34%. Effect size ~50x the observed AB noise, so seed variance cannot explain it. VALIDATED: the PB knob reaches sim behavior end to end.
 - Batting stat columns (from NOTES_stats_format.md): c0 AB, c1-4 H splits, c5 RBI, c6 BB, c7 SO, c8 IBB, c9 HBP, c12 G, c13 R, c14 SB, c15 CS, c16 GIDP.
 - Open: seed differs between arms (no seed control) - fine for large effects; for <20% effects, run a second baseline arm for the null distribution.
+
+## GLM-Flash spec audits (2026-10-07, in progress)
+- re/audit_spec.py sends each of 73 drafts + its decompile slice to GLM-Flash; verdicts in re/spec_audit/*.txt.
+- Calibration: verdict claims of "wrong index/param count/constant" are checkable and the two sampled (FUN_68036e91, FUN_6802baf7 param count) verified TRUE. Claims of "invented PB names/defaults" are FALSE POSITIVES when the names+defaults match pb_table_FastSim.tsv (the audit sees only the decompile, where PB reads are opaque getter calls; e.g. 6802baf7's injuryChance table 0x354-0x366 matches the INI table exactly).
+- FUN_68036e91 draft had real fabrications (index 25 vs real 0xe..0x17, params=10 vs 1); CORRECTION header added, mapping verified: pitchOutChance* indices 14..23.
