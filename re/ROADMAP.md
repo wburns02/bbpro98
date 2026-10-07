@@ -9,7 +9,7 @@ final verification. Fable/Opus only when a lane stalls 2-3 rounds.
 | Item | Read | Write | Where |
 |---|---|---|---|
 | PYR rosters/ratings | yes | yes, byte round-trip | BBPRO98_package/research/pyr_io.py |
-| mlbpa97.DAT season/career stat lines | yes, screen-verified | no | work/lib.py, work/bbstats.py |
+| mlbpa97.DAT stats DB: every stat record (bat 17, pit 32, fielding 9x8, 20 split tables; scopes recent/season/career/last-season/matchup) | yes, box-score deltas days 1-9 + holdout | yes, in-place by field name; scope/pid via work/ctree.py | work/stats.py (GLM data lane, round 1) |
 | MLBPA97.H?? per-game box scores | yes, 1.0000 incl. holdout | trivial (plaintext tables) | re/hfiles/lanes/data/hdecode.py |
 | ASN news pool | yes | no | RE_FINDINGS.md |
 | SOUND.DAT (227 WAV clips) | yes | yes, byte round-trip + resize | work/sounddat.py |
@@ -30,7 +30,6 @@ final verification. Fable/Opus only when a lane stalls 2-3 rounds.
 | # | Item | Gap | Referee (mechanical) | Size |
 |---|---|---|---|---|
 | 1b | DMP.DAT (10 frames, not DBM layout) | unknown | imgref | S |
-| 3 | mlbpa97.DAT writer | falls out of #2a | round-trip + edit a stat, re-read with lib.load | S |
 | 5a | VOL DAT entries (18: AGEPLYR, ASNEW, ASNEWS, ASSERTXT, BOXTEXT, MENU, PGEND, PGENFRST, PGENLAST, ...) | layouts unknown (some plain text) | per-file round-trip + game-visible edit | S-M |
 | 6 | UI layout: DIAL.REQ, MENU.REQ (screens, gadgets, columns) | format unknown (block 13 = stats-grid rows known) | round-trip + edit (move a gadget) + Wine screenshot diff | L |
 | 4 | H-file 2698-byte first table semantics (now plaintext: league, team names, stadium codes, ...) | field layout | diff across sim days vs ASN/box-score truth | S |
@@ -40,7 +39,7 @@ final verification. Fable/Opus only when a lane stalls 2-3 rounds.
 | 10 | Function labels (M1-M3), sim formulas (M9-M11), RNG + seed (M12) | ~1350/3800 P1 labelled; RNG not located | xref consistency; formula predicts logged pitch outcomes; seeded replay is deterministic | L |
 | 11 | Automated in-game test harness | partial (probe_screen.sh, simdays.py) | itself the referee for 6 and 9 | M |
 
-Order: wave 1 done 2026-10-07 (DBM, VOL, cipher, c-tree, shell BMX/FNX, chunk graphics). #2 league done 2026-10-07. Now: #3, #4. Wave 2 = #2, #3, #5, #7 (independent, one target each, 1-2 lanes). Wave 3 = #6, #8, #9,
+Order: wave 1 done 2026-10-07 (DBM, VOL, cipher, c-tree, shell BMX/FNX, chunk graphics). #2 league and #3 stats done 2026-10-07. Now: #4, #1b. Wave 2 = #2, #3, #5, #7 (independent, one target each, 1-2 lanes). Wave 3 = #6, #8, #9,
 #10, #11 (#9 and #11 unlock arbitrary logic changes; #6 unlocks arbitrary screen changes).
 
 ## Budget per target
