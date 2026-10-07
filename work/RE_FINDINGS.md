@@ -98,3 +98,10 @@ Output looks plausible and cites strings/callees. Needs the audit gate (spot che
 - Noise floor for this rig at 10 days: R and HR swing ~20% between identical-config arms, AB/SO/BB ~1-3%. Any future single-knob validation must predict an effect larger than the relevant null spread, or run longer/multi-seed arms. Second-order effects of the steal knob (AB -0.7%, SO -3%) are within noise.
 - Ops: a stale armA "Wine Debugger"/"Program Error" dialog pair left on :99 stole focus and broke a sim day (day-5 done=False while the sim actually completed); kill stale wine dialogs by exact pid before arms, and focus the Baseball window (xdotool windowfocus) before click chains.
 - re/simdays.py: SKIP_MENU=1 env resumes the day loop directly from the schedule screen.
+
+## ASN per-day sequence decode (2026-10-07)
+- Method: 10 sim days from one pristine state, ASN snapshot per day (re/asnseq/day01..10, re/asnseq_drive.sh). Analyzer re/asndiff2.py: churn regions + constant-delta u16 fields.
+- Date fields: 13 u16 sites increment by exactly +1 per sim day (12238..12247, i.e. 0x2FCE..0x2FD7: low byte = day counter 0xCE..0xD7, high byte 0x2F constant), and 11 u16 sites hold the same counter shifted (0xCE00, 0xCF00, ..). These are sim-date stamps scattered across record structures. Offsets in re/asnseq/analysis.tsv.
+- Tail history log: last 32KB before EOF (0x298000..0x2A0000) is an append-style results log. Each sim day writes at record starts ending in 0x1a (0x29801a, 0x29821a, 0x29861a, .. advancing by 0x200-sector steps), 66B..1KB+ per day (matches variable game counts), 9.7KB over 10 days, wraps inside the 32KB window.
+- Small ring: 0x7f00..0x9400 churns daily too (30-66B/day) with byte-rotation signatures (rotating windows visible in 3-arm cluster hexes); likely a recent-events/transaction ring with a head pointer not yet located.
+- Names are NOT in the ASN (10/6 probe); team/player ids in these logs must join against PYR.
