@@ -1,0 +1,59 @@
+{
+ "days": [
+  "/mnt/nvme/bbpro98/targets_data/league/day01",
+  "/mnt/nvme/bbpro98/targets_data/league/day02",
+  "/mnt/nvme/bbpro98/targets_data/league/day03",
+  "/mnt/nvme/bbpro98/targets_data/league/day04",
+  "/mnt/nvme/bbpro98/targets_data/league/day05",
+  "/mnt/nvme/bbpro98/targets_data/league/day06",
+  "/mnt/nvme/bbpro98/targets_data/league/day07",
+  "/mnt/nvme/bbpro98/targets_data/league/day08",
+  "/mnt/nvme/bbpro98/targets_data/league/day09"
+ ],
+ "base_files": [
+  "/mnt/nvme/bbpro98/targets_data/league/base/_DEFAULT.ASN",
+  "/mnt/nvme/bbpro98/targets_data/league/base/MLBPA96E.ASN"
+ ],
+ "holdout_days": [
+  "/mnt/nvme/bbpro98/targets_holdout/league/day10"
+ ],
+ "holdout_prev": "/mnt/nvme/bbpro98/targets_data/league/day09",
+ "holdout_files": [
+  "/mnt/nvme/bbpro98/targets_holdout/league/s10/MLBPA97.ASN"
+ ],
+ "edit": [
+  "day05",
+  "day09",
+  "_DEFAULT.ASN"
+ ],
+ "names": [
+  "Atlanta",
+  "Chicago (N)",
+  "Colorado",
+  "Baltimore",
+  "Chicago (A)",
+  "Anaheim",
+  "Florida",
+  "Cincinnati",
+  "Los Angeles",
+  "Boston",
+  "Cleveland",
+  "Oakland",
+  "Montreal",
+  "Houston",
+  "San Diego",
+  "Detroit",
+  "Kansas City",
+  "Seattle",
+  "New York (N)",
+  "Pittsburgh",
+  "San Francisco",
+  "New York (A)",
+  "Milwaukee",
+  "Texas",
+  "Philadelphia",
+  "St. Louis",
+  "Toronto",
+  "Minnesota"
+ ]
+}
