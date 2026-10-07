@@ -72,5 +72,7 @@ work/*.orig
 
 # third-party / Sierra material, never publish
 BBPRO98_package/research/v11_patch_notes.txt
-re/hfiles/runs/
+re/hfiles/lanes/*/runs/
+re/hfiles/lanes/_round1_aborted/
+re/hfiles/WINNER
 re/hfiles/__pycache__/

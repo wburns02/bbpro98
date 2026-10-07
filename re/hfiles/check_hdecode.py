@@ -54,7 +54,10 @@ def hfiles(day):
 
 def run_jailed(dec, td):
     """Run the decoder with only /usr and td visible, no network, empty env."""
-    shutil.copy(dec, f'{td}/hdecode.py')
+    st = os.lstat(dec)
+    if not __import__('stat').S_ISREG(st.st_mode) or st.st_size > 2_000_000:
+        raise ValueError(f'{dec}: not a regular file under 2 MB')
+    shutil.copyfile(dec, f'{td}/hdecode.py', follow_symlinks=False)
     cmd = ['bwrap', '--ro-bind', '/usr', '/usr', '--symlink', 'usr/lib', '/lib', '--symlink', 'usr/lib64', '/lib64',
            '--symlink', 'usr/bin', '/bin', '--proc', '/proc', '--dev', '/dev', '--bind', td, '/w', '--chdir', '/w',
            '--unshare-all', '--die-with-parent', '--clearenv', '--setenv', 'PATH', '/usr/bin',
@@ -62,8 +65,17 @@ def run_jailed(dec, td):
     return subprocess.run(cmd, capture_output=True, text=True, timeout=60)
 
 
+def sample(dec, path):
+    """--sample <H file>: print the jailed decoder's raw output for one file (used by the audit)."""
+    with tempfile.TemporaryDirectory() as td:
+        shutil.copyfile(path, f'{td}/game.bin'); r = run_jailed(dec, td)
+    print(r.stdout[:3000]); print('STDERR:', r.stderr[-500:])
+
+
 def main():
     dec = sys.argv[1]; verbose = '-v' in sys.argv
+    if '--sample' in sys.argv:
+        return sample(dec, sys.argv[sys.argv.index('--sample') + 1])
     lo, hi = 2, 7
     if '--days' in sys.argv:
         lo, hi = map(int, sys.argv[sys.argv.index('--days') + 1].split('-'))
