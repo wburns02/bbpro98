@@ -91,3 +91,10 @@ Output looks plausible and cites strings/callees. Needs the audit gate (spot che
 - re/audit_spec.py sends each of 73 drafts + its decompile slice to GLM-Flash; verdicts in re/spec_audit/*.txt.
 - Calibration: verdict claims of "wrong index/param count/constant" are checkable and the two sampled (FUN_68036e91, FUN_6802baf7 param count) verified TRUE. Claims of "invented PB names/defaults" are FALSE POSITIVES when the names+defaults match pb_table_FastSim.tsv (the audit sees only the decompile, where PB reads are opaque getter calls; e.g. 6802baf7's injuryChance table 0x354-0x366 matches the INI table exactly).
 - FUN_68036e91 draft had real fabrications (index 25 vs real 0xe..0x17, params=10 vs 1); CORRECTION header added, mapping verified: pitchOutChance* indices 14..23.
+
+## PB.INI null distribution (2026-10-07, armA2)
+- Second baseline arm (armA2, same state, 10 sim days, own seed) vs armA. Null spread (A vs A2): AB 16036/16516 (3.0%), R 1398/1646 (17.7%), SB 240/228 (5%), CS 20/4, SO 3602/3558 (1.2%), BB 1102/1084, HR 424/520 (20%).
+- Treatment armB vs null mean: SB 2148 vs ~234 mean = +1914, about 160x the SB null spread. CS 230 vs ~12. The stealChance00Count validation stands; seed variance cannot touch it.
+- Noise floor for this rig at 10 days: R and HR swing ~20% between identical-config arms, AB/SO/BB ~1-3%. Any future single-knob validation must predict an effect larger than the relevant null spread, or run longer/multi-seed arms. Second-order effects of the steal knob (AB -0.7%, SO -3%) are within noise.
+- Ops: a stale armA "Wine Debugger"/"Program Error" dialog pair left on :99 stole focus and broke a sim day (day-5 done=False while the sim actually completed); kill stale wine dialogs by exact pid before arms, and focus the Baseball window (xdotool windowfocus) before click chains.
+- re/simdays.py: SKIP_MENU=1 env resumes the day loop directly from the schedule screen.
