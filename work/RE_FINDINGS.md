@@ -78,3 +78,11 @@ Output looks plausible and cites strings/callees. Needs the audit gate (spot che
 - Upstats: 817 renames applied; 3-function sample read, consistent (ctree close chain, record write, read wrapper).
 - EZShell: 924 renames applied; 3-function sample read, consistent (scalar deleting destructor, child notify loop, SEH cleanup stub).
 - BBShell: 1703 renames applied; 3-function sample read: one clear (simple select dialog setup), two are generic SEH/dtor thunks whose names are guesses (low value).
+
+## PB.INI controlled experiment (2026-10-07, GLM-Flash session)
+- Rig: work copy configured EXACTLY like live (Fast=1, no [Debug] section, no weather.dat; debug-logged Fast=0 config crashes at BBShell FUN_68054f70 NULL-getter after weather.dat open fail; the sim's paint stalls on "Updating association data" until a click). Sim-day chain: League Mgmt (495,677 x2) > Association (440,329) > Schedule (445,395) > Action (593,330) > Simulate... (616,346) > Today's games only (543,486) > OK (571,565). Driver: re/simdays.py.
+- State: live install's April-2 1997 association copied into work (pristine base; live was left there by the 10/6 regression run). Work Stats had 63 stale MLBPA97.Hxx highlight files that live lacks; they must be deleted to match.
+- Validation: [PlayBalance] stealChance00Count=100 (default -10, idx 54, reader FUN_68065947). 10 sim days per arm from identical state. Trace confirms PB.INI key load; 76k runtime PB reads observed.
+- Result: SB 240 -> 2148 (8.9x), CS 20 -> 230 (11.5x); AB within 0.7%; R +23%, RBI +21% (second-order), GIDP -34%. Effect size ~50x the observed AB noise, so seed variance cannot explain it. VALIDATED: the PB knob reaches sim behavior end to end.
+- Batting stat columns (from NOTES_stats_format.md): c0 AB, c1-4 H splits, c5 RBI, c6 BB, c7 SO, c8 IBB, c9 HBP, c12 G, c13 R, c14 SB, c15 CS, c16 GIDP.
+- Open: seed differs between arms (no seed control) - fine for large effects; for <20% effects, run a second baseline arm for the null distribution.
