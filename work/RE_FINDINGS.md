@@ -315,3 +315,13 @@ list survives past the live one. The misc8 data lane won; its bb.cfg names were 
   everything above the grass) and RC field textures. Filling the PB bodies with index 253 turned that whole band
   magenta (77,775 px); recolouring every shape.tbl polygon of every model left the frame pixel-identical. ingame.py
   has a `pixels` step (count within tol of an rgb, min/max) for edits like this.
+
+## 2026-10-08: game hand-off files (work/gamebk.py, work/spec/GAMEBK_FORMAT.md)
+
+- #8b closed: the GLM code lane won round 3 (visible day1/day2 + holdout day3/day4 PASS). Claude rewrote the codec
+  after reading the lane against BBShell FUN_68016ce0/68016ec0/68017000 and BBSIM FUN_68027ae8.
+- GDI team header bytes 0..3 = team id, league (0 NL, 1 AL), division, slot in division, copied from the league t.dat
+  record. Team block +0x1e3..+0x1e9 are the per-side game-setup options; [2] is 1 for every AL team (DH).
+- GDI +0x3e4 is the sim's RNG seed, written by the shell at save time; editing it reseeds one game.
+- Score lines carry runs per inning as 30 bytes per side; the lane kept them as 15 opaque words.
+- A DIF: chunk (72 bytes, same cipher) is written between GDI and ADI when the shell has non-0xff data for it.

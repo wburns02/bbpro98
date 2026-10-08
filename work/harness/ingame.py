@@ -7,7 +7,7 @@ usage: ingame.py PLAN.json SHOTDIR
 
 PLAN: {"install": {"SHELL.VOL": "/path/to/edited/SHELL.VOL", ...},   keys are paths inside the work copy
        "launch_wait": 20,
-       "steps": [["click", x, y, wait], ["key", "ctrl+w", wait], ["move", x, y], ["wait", s], ["shot", name],
+       "steps": [["click", x, y, wait, button (1 left default, 3 right)], ["key", "ctrl+w", wait], ["move", x, y], ["wait", s], ["shot", name],
                  ["ocr", name, [x, y, w, h] | null, {"expect": [..], "absent": [..], "key": "yellow"}],
                  ["pixels", name, [x, y, w, h], {"rgb": [r, g, b], "tol": 30, "min": n, "max": m}]],
        "keep": false}                                             keep = leave the edit installed and the game up
@@ -102,9 +102,9 @@ def x(*args):
     subprocess.run(['xdotool', *map(str, args)], env=ENV, check=True)
 
 
-def click(px, py):
+def click(px, py, button=1):
     x('mousemove', px, py); time.sleep(0.2); x('mousemove', px + 2, py + 1); time.sleep(0.3)
-    x('mousedown', 1); time.sleep(0.15); x('mouseup', 1)
+    x('mousedown', button); time.sleep(0.15); x('mouseup', button)
 
 
 def shot(path):
@@ -174,7 +174,7 @@ def main():
         for st in plan['steps']:
             op = st[0]
             if op == 'click':
-                click(st[1], st[2]); time.sleep(st[3] if len(st) > 3 else 1)
+                click(st[1], st[2], st[4] if len(st) > 4 else 1); time.sleep(st[3] if len(st) > 3 else 1)
             elif op == 'key':
                 x('key', st[1]); time.sleep(st[2] if len(st) > 2 else 1)
             elif op == 'move':
