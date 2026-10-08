@@ -34,18 +34,23 @@ FUN_68061660 / 68061a20 / 68061a50 / 68061a80 / 68061b20..68061c50. Read by BBSI
 | 0x1d | 17 | alt_name | t.dat +0x23, empty in the data |
 | 0x2e | 17 | manager | t.dat +0x34 |
 | 0x3f | 5 | abbrev | t.dat +0x45 |
-| 0x44 | 9 | at_0x44 | zero |
+| 0x44 | 9 | at_0x44 | t.dat +0x4a, a 9-byte string (team object +0x80 in the shell's team editor, FUN_6804bb30); empty in the data |
 | 0x4d | 33 | stadium | |
 | 0x6e | 9 | city8 | the 8-char DOS stem of the stadium file |
 | 0x77 | 96 | uniform_palette | 32 RGB triples (FUN_68061a20; TAP_FORMAT team record +0x6d) |
-| 0xd7 | 1 | at_0xd7 | 0/1 |
-| 0xd8 | 1 | at_0xd8 | 0 |
+| 0xd7 | 1 | turf | t.dat byte 0xaa = the home stadium's .DT turf byte (FUN_6801b1b0 reads STADIA\<file> info, byte 0x41); 1 for HOUSTON, MINNESOT, PITTSBUR, SEATTLE ... |
+| 0xd8 | 1 | at_0xd8 | t.dat byte 0xab (team object +0x18 in the team editor); 0 in the data |
 | 0xd9 | 50 | roster | 25 x u16 pid; covers every box-score pid |
 | 0x10b | 204 | order_words | 102 x u16: 15 zero words, batting orders split by 0 / 0xffff, staff, then stale words. Kept verbatim |
-| 0x1d7 | 2 | at_0x1d7 | small numbers, unknown |
+| 0x1d7 | 2 | at_0x1d7 | the last 2 bytes of the 40-byte copy at 0x1b1 (see below) |
 | 0x1d9 | 9 | league | "MLBPA97" |
 | 0x1e2 | 1 | control | game setup per side +0x44 (FUN_68061a50) |
 | 0x1e3 | 7 | options | game setup per side +0x4c..+0x52 (FUN_68061a80); options[2] = 1 for every AL team, 0 for NL (DH) |
+
+0x10b..0x1d8 come from the side's lineup objects (FUN_68061660; lineup = team object +0x12c, `L`, and a 0x110-byte
+lineup buffer filled by FUN_6804b470, `B`): 0x10b up to 15 words from L+0x5c (the word of each pair whose flag word is 0
+or 3), 0x129 B+0xc4..0xd5 (18 bytes), 0x13b B+0xe8..0xf9, 0x14d L+0xc4 (72 bytes), 0x195 u16 B+0x10c, 0x197 L+0x10c
+(26 bytes), 0x1b1 L+2 (40 bytes, ending in at_0x1d7). The codec keeps 0x10b..0x1d6 as `order_words`.
 
 Strings keep bytes left after their NUL as `<key>_tail: [offset, text]`.
 
@@ -58,9 +63,9 @@ Strings keep bytes left after their NUL as `<key>_tail: [offset, text]`.
 | 0x3e4 | 2 | sim_seed | DAT_68091608 or FUN_6805c3b0 at write time; the sim's RNG seed (`-ns<N>`) |
 | 0x3e6 | 1 | mode | FUN_68061b20; 0xff = empty slot (set after the write) |
 | 0x3e7 | 1 | game_type | FUN_68061b30; 1..3 = ADI written, 4 forces sim mode 5 |
-| 0x3e8 | 1 | at_0x3e8 | FUN_68061b40 = setup +0x65 |
-| 0x3e9 | 1 | at_0x3e9 | FUN_68061b50 = setup +0x6a |
-| 0x3ea | 1 | at_0x3ea | FUN_68061b60 = setup +0x6d |
+| 0x3e8 | 1 | month | FUN_68061b40: the game month from the date (FUN_68049250), 4..10; picks the weather table row |
+| 0x3e9 | 1 | preset_lineups | FUN_68061b50 = setup +0x6a, Exhibition Play "Use Preset Lineups" (MENU.REQ 3 gadget 71; default 1, FUN_680172d0) |
+| 0x3ea | 1 | one_pitch | FUN_68061b60 = setup +0x6d, Exhibition Play "One Pitch Mode" (gadget 74; default 0) |
 | 0x3eb | 9 | stadium_file | FUN_68061c10; city8 stem, the sim maps "." to ".dat" |
 | 0x3f4 | 12 | box_file | "MLBPA97.HB0": the game's box-score file |
 | 0x400 | 2 | at_0x400 | |

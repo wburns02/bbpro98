@@ -114,7 +114,7 @@ def decode_team(blk):
         _get_str(t, key, blk[off:off + size])
     t['at_0x44'] = blk[0x44:0x4d].hex()
     t['uniform_palette'] = [list(blk[0x77 + 3 * i:0x7a + 3 * i]) for i in range(32)]
-    t['at_0xd7'] = blk[0xd7]
+    t['turf'] = blk[0xd7]
     t['at_0xd8'] = blk[0xd8]
     t['roster'] = list(struct.unpack_from('<25H', blk, 0xd9))
     t['order_words'] = list(struct.unpack_from('<102H', blk, 0x10b))
@@ -139,7 +139,7 @@ def encode_team(t, side):
     if len(pal) != 32 or any(len(c) != 3 for c in pal):
         _fail(f'{w} uniform_palette must be 32 [r, g, b] triples')
     blk[0x77:0xd7] = bytes(_int(v, 0, 255, f'{w} uniform_palette') for c in pal for v in c)
-    blk[0xd7] = _int(t['at_0xd7'], 0, 255, f'{w} at_0xd7')
+    blk[0xd7] = _int(t['turf'], 0, 255, f'{w} turf')
     blk[0xd8] = _int(t['at_0xd8'], 0, 255, f'{w} at_0xd8')
     for key, off, n in (('roster', 0xd9, 25), ('order_words', 0x10b, 102)):
         v = t[key]
@@ -167,9 +167,9 @@ def decode_record(r):
     g['sim_seed'] = struct.unpack_from('<H', r, 0x3e4)[0]
     g['mode'] = r[0x3e6]
     g['game_type'] = r[0x3e7]
-    g['at_0x3e8'] = r[0x3e8]
-    g['at_0x3e9'] = r[0x3e9]
-    g['at_0x3ea'] = r[0x3ea]
+    g['month'] = r[0x3e8]
+    g['preset_lineups'] = r[0x3e9]
+    g['one_pitch'] = r[0x3ea]
     _get_str(g, 'stadium_file', r[0x3eb:0x3f4])
     _get_str(g, 'box_file', r[0x3f4:0x400])
     g['at_0x400'] = [r[0x400], r[0x401]]
@@ -192,8 +192,8 @@ def encode_record(g):
             _fail(f'rain {key} holds exactly 4 entries')
         r[off:off + 4] = bytes(_int(x, 0, 255, f'rain {key}') for x in rain[key])
     struct.pack_into('<H', r, 0x3e4, _int(g['sim_seed'], 0, 0xffff, 'sim_seed'))
-    for key, off in (('mode', 0x3e6), ('game_type', 0x3e7), ('at_0x3e8', 0x3e8), ('at_0x3e9', 0x3e9),
-                     ('at_0x3ea', 0x3ea), ('stadium_flag', 0x402)):
+    for key, off in (('mode', 0x3e6), ('game_type', 0x3e7), ('month', 0x3e8), ('preset_lineups', 0x3e9),
+                     ('one_pitch', 0x3ea), ('stadium_flag', 0x402)):
         r[off] = _int(g[key], 0, 255, key)
     r[0x3eb:0x3f4] = _put_str(g, 'stadium_file', 9)
     r[0x3f4:0x400] = _put_str(g, 'box_file', 12)
