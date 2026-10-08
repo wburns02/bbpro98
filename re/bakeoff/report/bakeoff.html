@@ -1,0 +1,164 @@
+<title>Haiku, GLM, Sonnet Bake-off</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;600&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: a scorer's sheet. One reading column, each tier a box-score table, verdicts as a lineup card. */
+:root {
+  --bg: #f6f7f4; --panel: #ffffff; --fg: #1d2420; --muted: #5d6a63; --rule: #d5dbd6;
+  --accent: #1f6b4f; --accent-soft: #e2efe8; --warn: #9a5a00; --warn-soft: #f8ecd9; --bad: #a3322b; --bad-soft: #f6e1df;
+  --display: "Fraunces", Georgia, serif; --body: "IBM Plex Sans", system-ui, sans-serif; --mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #121614; --panel: #1a201d; --fg: #e3e8e4; --muted: #9aa8a0; --rule: #2e3833;
+  --accent: #6cc39b; --accent-soft: #1e3329; --warn: #e0a54a; --warn-soft: #3a2c16; --bad: #ec8a80; --bad-soft: #3b1f1c; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #121614; --panel: #1a201d; --fg: #e3e8e4; --muted: #9aa8a0; --rule: #2e3833;
+  --accent: #6cc39b; --accent-soft: #1e3329; --warn: #e0a54a; --warn-soft: #3a2c16; --bad: #ec8a80; --bad-soft: #3b1f1c; color-scheme: dark }
+body { background: var(--bg); color: var(--fg); font: 15px/1.55 var(--body); }
+.wrap { max-width: 980px; margin: 0 auto; padding-inline: 16px; padding-block: 32px 64px; display: grid; gap: 36px; }
+h1 { font: 600 2.1rem/1.15 var(--display); margin: 0; text-wrap: balance; }
+h2 { font: 600 1.35rem/1.2 var(--display); margin: 0 0 4px; text-wrap: balance; }
+h3 { font-size: .8rem; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 18px 0 6px; }
+p { margin: 0 0 10px; max-width: 72ch; }
+.sub { color: var(--muted); }
+.eyebrow { font: 600 .75rem var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--accent); }
+section { display: grid; gap: 8px; }
+.tbl { overflow-x: auto; border: 1px solid var(--rule); border-radius: 6px; background: var(--panel); }
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; font-size: .9rem; }
+th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { font: 600 .72rem var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+td.n { font-family: var(--mono); white-space: nowrap; }
+.pill { display: inline-block; font: 600 .72rem var(--mono); padding: 1px 7px; border-radius: 99px; white-space: nowrap; }
+.ok { background: var(--accent-soft); color: var(--accent); }
+.mid { background: var(--warn-soft); color: var(--warn); }
+.no { background: var(--bad-soft); color: var(--bad); }
+.verdict { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.card { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 14px 16px; min-width: 0; }
+.card .role { font: 600 .72rem var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.card .who { font: 600 1.25rem var(--display); margin: 2px 0 6px; }
+.card p { font-size: .9rem; margin: 0; }
+ul { margin: 0; padding-left: 20px; max-width: 75ch; }
+li { margin: 4px 0; }
+pre { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 14px; overflow-x: auto; font: .8rem/1.5 var(--mono); margin: 0; white-space: pre; }
+.del { color: var(--bad); } .add { color: var(--accent); }
+code { font-family: var(--mono); font-size: .88em; }
+.lede { font-size: 1.05rem; max-width: 70ch; }
+</style>
+
+<div class="wrap">
+<header>
+  <div class="eyebrow">bbpro98 · 2026-10-08 · three tiers, same referees</div>
+  <h1>Haiku 5.5 vs GLM-5.3-Flash vs Sonnet 5.5</h1>
+  <p class="lede sub">Each model got the same task text, files, caps and fresh seeds, with no view of the other models' output or the existing winners. Every run was scored by the project's own mechanical referees plus an unseen holdout. All three models passed every tier eventually. What separates them is how many rounds they needed, how well the result generalizes, how good the written spec is, and what each run costs.</p>
+</header>
+
+<section>
+  <h2>Verdict by role</h2>
+  <div class="verdict">
+    <div class="card"><div class="role">Drafter, long agentic lanes</div><div class="who">GLM-5.3-Flash</div>
+      <p>Same final outcome as Haiku on tiers 2 and 3, for $1.25 and $0.23 in real money and no subscription quota. It is 2 to 6 times slower than Sonnet in wall time (level with Haiku on tier 2, 4 times slower on tier 3) and writes the weakest docs.</p></div>
+    <div class="card"><div class="role">Drafter, scoped under 100k</div><div class="who">Haiku 5.5</div>
+      <p>Tier 1 quality equals GLM, at 2.5x the speed. In multi-round lanes its requests sat at 136k to 182k tokens, so long lanes don't fit the 100k cliff.</p></div>
+    <div class="card"><div class="role">Verifier and auditor</div><div class="who">Sonnet 5.5</div>
+      <p>The only model with 0 WRONG labels, the only first draft that passed the unseen holdout, and the only spec that matched the real format field for field. It was also the fastest on every tier.</p></div>
+  </div>
+  <p class="sub">The stop rule did not fire early. Haiku was not within noise of Sonnet on tier 2 (3 rounds vs 1), so tier 3 ran with all three models.</p>
+</section>
+
+<section>
+  <h2>Tier 1: labeling 100 functions</h2>
+  <p class="sub">100 fresh BBSIM and BBShell functions (seed 31), each with the same per-function context <code>label_refine.py</code> builds. All outputs were graded by the unchanged DeepSeek grader in <code>label_spotcheck.py</code>.</p>
+  <div class="tbl"><table>
+    <tr><th>Model</th><th>WRONG</th><th>OK</th><th>UNSURE</th><th>Strong evidence</th><th>Cost</th><th>Tokens in / out</th><th>Label time</th></tr>
+    <tr><td>prod labels (reference)</td><td class="n">1</td><td class="n">98</td><td class="n">1</td><td class="n">96%</td><td class="n">n/a</td><td class="n">n/a</td><td class="n">n/a</td></tr>
+    <tr><td>GLM-Flash</td><td class="n">1</td><td class="n">96</td><td class="n">3</td><td class="n">95%</td><td class="n">$0.007 cash</td><td class="n">40,950 / 31,370</td><td class="n">224 s</td></tr>
+    <tr><td>Haiku 5.5</td><td class="n">1</td><td class="n">96</td><td class="n">3</td><td class="n">88%</td><td class="n">$0.022 list</td><td class="n">58,509 / 21,231</td><td class="n">89 s</td></tr>
+    <tr><td>Sonnet 5.5</td><td class="n">0</td><td class="n">98</td><td class="n">2</td><td class="n">82%</td><td class="n">$0.278 list</td><td class="n">58,509 / 5,947</td><td class="n">67 s</td></tr>
+  </table></div>
+  <ul>
+    <li>GLM and Haiku made the same single error: BBShell <code>68043540</code> labelled UI_RENDER, which should be UI_DIALOG.</li>
+    <li>Agreement with the prod labels: GLM 77, Haiku 77, Sonnet 71. A blind DeepSeek judge settled the 27 three-way disagreements as GLM 14, Sonnet 13, Haiku 12. That judge is weaker than Sonnet, and the spread is within noise.</li>
+    <li>Read: no separation on quality. GLM is cheapest in cash. Haiku and Sonnet are fastest.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Tier 2: blind re-run of the gamebk codec</h2>
+  <p class="sub">The game.bki / game.bko codec, rebuilt through <code>drive.sh</code> with one lane per model and a cap of 4 rounds. Every leak was masked first: the real codec, the spec, the old lanes, WINNER, and the gamebk lines in RE_FINDINGS. PASS means the referee passed on day1 and day2. The holdout is day3 and day4, which no lane can read.</p>
+  <div class="tbl"><table>
+    <tr><th>Model</th><th>Rounds to done</th><th>Holdout by round</th><th>Model time</th><th>Wall time</th><th>Cost</th><th>Tokens in / out</th><th>Median request</th></tr>
+    <tr><td>Sonnet 5.5</td><td class="n">1</td><td><span class="pill ok">r1 pass</span></td><td class="n">24.5 min</td><td class="n">25.7 min</td><td class="n">$4.67 list</td><td class="n">12.2M / 119k</td><td class="n">149k</td></tr>
+    <tr><td>GLM-Flash</td><td class="n">2</td><td><span class="pill no">r1 day3</span> <span class="pill ok">r2 pass</span></td><td class="n">52.9 min</td><td class="n">55.1 min</td><td class="n">$1.25 cash</td><td class="n">114.2M / 311k</td><td class="n">n/a</td></tr>
+    <tr><td>Haiku 5.5</td><td class="n">3</td><td><span class="pill no">r1 day3</span> <span class="pill no">r2 day3</span> <span class="pill ok">r3 pass</span></td><td class="n">53.3 min</td><td class="n">56.4 min</td><td class="n">$3.00 list</td><td class="n">33.9M / 446k</td><td class="n">136k to 182k</td></tr>
+  </table></div>
+  <p class="sub">The original GLM gamebk run, which had no mask and saw other lanes, took 3 rounds and also failed day3 once. GLM cost uses Hive's rates: $0.05/M uncached input, $0.01/M cache reads, $0.17/M output. Claude costs are Claude Code's list figures and are paid from subscription quota, not cash.</p>
+  <h3>Shared failure</h3>
+  <p>Haiku and GLM failed the same holdout game for the same reason. Their replays emit an all-zero batter row (pid 1942, day3 game 2) that the box score omits. Both fitted a narrow drop rule to the two visible days, "players whose only event is caught stealing". The real rule is "drop every all-zero row", and Sonnet wrote it in round 1. The referee and the audit both passed the overfit decoders, and only the unseen day caught it. Each lane saw only "day3 FAIL", the same opaque signal the original run got.</p>
+  <h3>Is it aligned with the real format? (read against work/spec/GAMEBK_FORMAT.md)</h3>
+  <div class="tbl"><table>
+    <tr><th>Model</th><th>Spec quality</th><th>Notable</th></tr>
+    <tr><td>Sonnet</td><td><span class="pill ok">aligned</span></td><td>Team ids, league, division, every string field, roster, weather, sim seed, stadium stem, box file, elevation, all 9 event types, the stat tables and the CL/SP/PLH/BLH flags all match. It goes further than our spec: it decodes the lineup words into batting order, defense, saved lineup cards, rotation and bullpen, and names the control byte and 7 team options with code citations. Misses: it calls the uniform palette "park_geometry" (marked as a guess), and leaves month, preset lineups and one-pitch as spare bytes.</td></tr>
+    <tr><td>Haiku</td><td><span class="pill mid">layout right, names thin</span></td><td>Every boundary and the event table are correct, with stat codes from the BBSIM label tables. About a dozen fields are named "unverified" (team_code, header_tail, tuning_rows, depth_table, team_flags, schedule_params). In exit_game the away innings are "unnamed_words_3_17" and the home innings are filed under team 0. SP is called starter and CL closer (really scoring position and close/late). It correctly fixed the task text: the first batter is 1653, not 965.</td></tr>
+    <tr><td>GLM</td><td><span class="pill no">works, misnamed</span></td><td>The pitching stat codes are read as FastSim pitch kinds, with a "pitch speed" high byte. Really this is the stat table plus the flags. The team header is called statusFlags and colorPrimary. The record tail is 23 unnamed bytes. The stadium stem is called the away city (it is the home team's). The doc has thinking-out-loud text left in it ("hmm", "gibberish? no").</td></tr>
+  </table></div>
+</section>
+
+<section>
+  <h2>Tier 3: novel work, runner AI replay model</h2>
+  <p class="sub">An exact replay of FastSim <code>FUN_6804faa1</code>, the runner AI update. The model must predict every probed getter call, its argument and its order against st8 simtrace records. Dev is the first 2500 records (173 deep, meaning past the two early exits). The holdout is the last 2500 (198 deep). The budget was 1 attempt plus 2 referee-driven fixes.</p>
+  <div class="tbl"><table>
+    <tr><th>Model</th><th>Dev</th><th>Holdout</th><th>Rounds</th><th>Wall time</th><th>Cost</th><th>Tokens in / out</th><th>Requests over 100k</th></tr>
+    <tr><td>Sonnet 5.5</td><td class="n">2500/2500 · deep 173/173</td><td class="n">2500/2500 · deep 198/198</td><td class="n">1</td><td class="n">6.6 min</td><td class="n">$1.08 list</td><td class="n">1.51M / 42k</td><td class="n">3 of 25 (median 62k)</td></tr>
+    <tr><td>Haiku 5.5</td><td class="n">2500/2500 · deep 173/173</td><td class="n">2500/2500 · deep 198/198</td><td class="n">1</td><td class="n">9.8 min</td><td class="n">$0.54 list</td><td class="n">4.19M / 131k</td><td class="n">21 of 33 (median 155k)</td></tr>
+    <tr><td>GLM-Flash</td><td class="n">2500/2500 · deep 173/173</td><td class="n">2500/2500 · deep 198/198</td><td class="n">1</td><td class="n">39.1 min</td><td class="n">$0.23 cash</td><td class="n">16.8M / 291k</td><td class="n">n/a</td></tr>
+  </table></div>
+  <p class="sub">Controls: a toy model that only takes the early exits scores 2327/2500 with 0 deep, and the empty model scores 0.</p>
+  <ul>
+    <li>All three are real models. Each was read for oracle tampering and per-record lookups, and none had any.</li>
+    <li>Haiku's model is the most faithful. It takes each action's real frame count from the game's static HHA.DAT table. Sonnet instead assumes the animation is never on its last frame, and documents that.</li>
+    <li>GLM's draft at the 33-minute mark scored 1435/2500 with 0 deep, below the toy control, because it skipped the animation-tick helper. It fixed this within the same round.</li>
+    <li>Read: this task did not separate the models on outcome. One function of about 200 lines, with a strong referee, is within all three. The differences are speed, and how much context each model carries.</li>
+  </ul>
+  <p class="sub">Deviations from the plan: st7 has no runner_ai, find_fielder or launch records, so the holdout is the second half of st8. find_fielder was rejected because the per-fielder speed divisor is not in the trace and 485 of 604 records overflow the record buffer. Fielder positioning overflows on every record. Ball launch was too small to separate the models.</p>
+</section>
+
+<section>
+  <h2>Containment and harness notes</h2>
+  <ul>
+    <li>The Claude lanes ran through a new <code>GLM_BACKEND=claude</code> path in <code>drive.sh</code>: headless <code>claude -p</code> in the same bwrap and pasta jail with the same egress rules, a tmpfs $HOME, and only the credentials file bound read-only. GLM ran on the usual kimi plus Hive path. No Opus, no OpenRouter, no paid Anthropic API.</li>
+    <li>Shared handicap: the referee's <code>systemd-run</code> jail cannot start inside a lane (no user bus). Haiku and GLM each built a local harness around the unchanged referee code. The original GLM run had the same limit.</li>
+    <li>Fixed during the run: the gamebk mask lacked <code>files.json</code>, so the 08:26 launch was aborted and relaunched at 08:33. kimi rejects a file passed as <code>--add-dir</code>, which killed GLM's first tier 3 launch, so <code>drive.sh</code> now passes only directories.</li>
+    <li>The in-pipeline audit returned CLEAN on all 9 runs, including decoders that later failed the holdout and docs with wrong field names. CLEAN means "not cheating", not "semantically right".</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Proposed edits to ~/.claude/rules/model-budget.md</h2>
+  <p>Proposed, not applied. A parallel Haiku bake-off in the Switchboard CX session may also edit this file, and the Haiku-builder section was added today. Merge with that session's numbers before applying.</p>
+<pre><span class="del">-## Builder default: Haiku 5.5 (Will, 2026-10-08, overrides the GLM-Flash default in step 2 below)
+-
+-- Wherever this file says to draft with GLM-Flash/qwen (`local-code`, `cloud-code`,
+-  `task-master`), draft with Haiku 5.5 instead: ...</span>
+<span class="add">+## Builder routing (bbpro98 bake-off 2026-10-08; replaces "Builder default: Haiku 5.5")
++
++- Scoped drafts, where one fresh request stays under 100k (single file or small diff, spec pasted in):
++  Haiku 5.5 via `haiku-builder` or `claude -p --model claude-haiku-5-5`, effort xhigh. Subscription only,
++  never the paid API, never through glm-build-sandboxed.sh/kimi.
++- Long agentic lanes (multi-round, decompile or repo reading, drive.sh/kimi lanes, task-master sweeps):
++  GLM-5.3-Flash on Hive. In these lanes Haiku ran a median 136-182k tokens per request (60-75% of requests
++  over the 100k cliff) and needed more rounds than GLM for the same holdout pass. GLM cost $1.25 and $0.23
++  cash on the two lane tiers, 2-6x slower than Sonnet in wall time.
++- Sonnet 5.5: verification, audit, and the final naming/spec pass over a GLM or Haiku draft whenever the
++  document is the deliverable (format specs, RE notes). It was the only model whose first draft generalized
++  to an unseen holdout and matched the real spec field for field.
++- Neither Haiku nor GLM gates. A referee PASS plus a CLEAN audit missed both a shared overfit (both failed the
++  same unseen day) and wrong field names. Always keep a holdout the builder cannot read.</span>
+  (keep the 100k-per-request explanation, the `.haiku_ledger.jsonl` rule and the effort note as written)
+
+ ## Capacity pools available, cheapest first
+ 3. Hive Models (thehive.ai) for **glm-5.3-flash specifically** — ... $0.05/$0.17 per 1M in/out
+<span class="add">+   Cache reads bill at $0.01/M. Agentic lanes are ~95% cache reads, so price a lane at the cache rate
++   (bbpro98 gamebk lane: $5.76 at the naive rate, $1.25 real).</span></pre>
+</section>
+</div>

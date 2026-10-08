@@ -18,9 +18,11 @@ H=/home/will; RE=$H/bbpro98/re; T=$RE/targets/$TARGET; L=$T/lanes/$LANE; R=$L/ru
 AU=$H/bbpro98/.audits/$TARGET/$LANE
 [ -f "$T/target.sh" ] || { echo "no target $TARGET" >&2; exit 2; }
 DECODER=; REFEREE=(); AUDIT=text; HOLDOUT=0; EXTRA_RO=(); LEAK_RE='/mnt/nvme|/home/will'; AUDIT_RULES=; declare -A FOCUS=()
+RE_SRC=; WORK_SRC=   # a target may mount a masked snapshot over re/ and work/ (blind re-runs, re/bakeoff/t2_mask.sh)
 # shellcheck source=/dev/null
 source "$T/target.sh"
 [ -n "${FOCUS[$LANE]:-}" ] || { echo "unknown lane $LANE for $TARGET" >&2; exit 2; }
+RE_SRC=${RE_SRC:-$RE}; WORK_SRC=${WORK_SRC:-$H/bbpro98/work}
 mkdir -p "$R" "$AU" /mnt/nvme/bbpro98/tmp; cd /
 export TMPDIR=/mnt/nvme/bbpro98/tmp
 echo "RUNNING $(date -Is)" > "$R/STATUS"
@@ -30,7 +32,11 @@ last=""
 # agent CLI on Hive's GLM-5.3-Flash (pay per token, no plan rate limit). Each hive lane gets a private kimi home whose
 # config holds ONLY the Hive provider and its models (no z.ai/OpenRouter/OAuth keys), so lanes never see other keys
 # and never touch the real ~/.kimi-code session index.
-BACKEND=${GLM_BACKEND:-zai}; HIVE_MODEL=hive/zai-org/glm-5.3-flash
+# GLM_BACKEND=claude (2026-10-08 bake-off): headless Claude Code, CLAUDE_MODEL (claude-haiku-5-5, claude-sonnet-5-5),
+# subscription auth. Same jail and egress filter; $HOME/.claude is empty but for the credentials file bound read-only;
+# no user settings, CLAUDE.md, hooks or MCP; the Hive and z.ai key dirs are masked.
+BACKEND=${GLM_BACKEND:-zai}; HIVE_MODEL=hive/zai-org/glm-5.3-flash; CLAUDE_MODEL=${CLAUDE_MODEL:-}
+[ "$BACKEND" != claude ] || [[ "$CLAUDE_MODEL" =~ ^claude-(haiku|sonnet)-[0-9a-z-]+$ ]] || { echo "bad CLAUDE_MODEL" >&2; exit 2; }
 KH=/mnt/nvme/bbpro98/tmp/kimihome/$TARGET.$LANE   # Claude-only: config.toml; never bound writable
 KS=/mnt/nvme/bbpro98/tmp/kimistate/$TARGET.$LANE  # the lane's writable kimi home, recreated empty every round
 if [ "$BACKEND" = hive ]; then
@@ -55,26 +61,36 @@ glm_sandboxed() {
     --tmpfs "$H"
     --ro-bind "$H/.local" "$H/.local" --ro-bind "$H/GLM.md" "$H/GLM.md" --ro-bind "$H/bin" "$H/bin"
     --ro-bind "$H/.config/zai" "$H/.config/zai" --ro-bind "$H/.config/hivemodels" "$H/.config/hivemodels"
-    --ro-bind "$RE" "$RE" --ro-bind "$H/bbpro98/work" "$H/bbpro98/work"
+    --ro-bind "$RE_SRC" "$RE" --ro-bind "$WORK_SRC" "$H/bbpro98/work"
     --ro-bind "$H/bbpro98/BBPRO98_package" "$H/bbpro98/BBPRO98_package"
     --bind "$L" "$L" --ro-bind "$R" "$R"
   )
   local p; for p in "${EXTRA_RO[@]}"; do b+=(--ro-bind "$p" "$p"); done
   local cmd=(timeout 3600 "$H/.local/bin/glm" --yolo -p "$1")
+  local pin=
   if [ "$BACKEND" = hive ]; then
     [ -e "$KS" ] && rm -r -- "$KS"; mkdir -m 700 -p "$KS"   # rm -r never follows symlinks the lane left behind
     b+=(--bind "$KS" "$H/.kimi-code" --ro-bind "$KH/config.toml" "$H/.kimi-code/config.toml"
         --ro-bind "$H/.kimi-code/bin/kimi" "$H/.kimi-code/bin/kimi" --tmpfs "$H/.config/zai")
     cmd=(timeout 3600 "$H/.kimi-code/bin/kimi" -m "$HIVE_MODEL" --add-dir "$RE" --add-dir "$H/bbpro98/work")
-    for p in "${EXTRA_RO[@]}"; do cmd+=(--add-dir "$p"); done
+    for p in "${EXTRA_RO[@]}"; do if [ -d "$p" ]; then cmd+=(--add-dir "$p"); fi; done   # kimi rejects a file here; the bind still exposes it
     cmd+=(-p "$1")
+  elif [ "$BACKEND" = claude ]; then
+    b+=(--tmpfs "$H/.config/zai" --tmpfs "$H/.config/hivemodels" --dir "$H/.claude"
+        --ro-bind "$H/.claude/.credentials.json" "$H/.claude/.credentials.json")
+    cmd=(timeout 3600 env DISABLE_AUTOUPDATER=1 CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 "$H/.local/bin/claude" -p
+         --model "$CLAUDE_MODEL" --effort high --dangerously-skip-permissions --strict-mcp-config --setting-sources ""
+         --no-session-persistence --output-format stream-json --verbose --add-dir "$RE" --add-dir "$H/bbpro98/work")
+    for p in "${EXTRA_RO[@]}"; do cmd+=(--add-dir "$p"); done
+    pin=$1   # prompt on stdin: --add-dir is variadic and would swallow a trailing prompt argument
   fi
   pasta --config-net --ipv4-only --no-map-gw --dns-forward 169.254.1.1 -t none -u none -T none -U none --quiet -- \
     bash -c 'nft -f "$1" && shift && exec "$@"' _ "$RE/hfiles/sandbox/egress.nft" \
   bwrap "${b[@]}" --chdir "$L" --unshare-user --uid 1000 --gid 1000 --unshare-pid --unshare-ipc --unshare-uts \
     --die-with-parent --new-session --clearenv --setenv HOME "$H" --setenv PATH "$H/.local/bin:$H/bin:/usr/bin" \
     --setenv LANG C.UTF-8 --setenv TERM dumb \
-    "${cmd[@]}"
+    "${cmd[@]}" <<< "$pin" | cat   # a pipe, not the log file: claude reopens /dev/stdout by path, absent in the jail
+  return "${PIPESTATUS[0]}"
 }
 
 # Read a lane file without following symlinks (regular files only, capped), so GLM cannot point it at host data.
@@ -135,7 +151,28 @@ ${last:-<no $DECODER yet>}"
   acquire_slot; t0=$SECONDS
   glm_sandboxed "$prompt" >> "$R/glm_round$r.log" 2>&1; rc=$?
   release_slot; dt=$((SECONDS - t0))
-  echo "glm exit $rc" >> "$R/run.log"
+  echo "glm exit $rc secs $dt" >> "$R/run.log"
+  # token use of a hive round: sum kimi's usage.record events (lane-writable state: no symlinks, numbers only)
+  [ "$BACKEND" = hive ] && python3 -I -B - "$KS" >> "$R/run.log" <<'PY'
+import json, os, stat, sys
+tot = {}
+for d, _, fs in os.walk(sys.argv[1]):
+    if 'wire.jsonl' not in fs: continue
+    try:
+        fd = os.open(os.path.join(d, 'wire.jsonl'), os.O_RDONLY | os.O_NOFOLLOW)
+        if not stat.S_ISREG(os.fstat(fd).st_mode): continue
+        data = os.read(fd, 1 << 28).decode('utf-8', 'replace')
+    except OSError:
+        continue
+    for l in data.splitlines():
+        if '"usage.record"' not in l: continue
+        try: u = json.loads(l)
+        except ValueError: continue
+        u = next((v for v in (u.get('usage'), u.get('payload', {}).get('usage') if isinstance(u.get('payload'), dict) else None) if isinstance(v, dict)), None) or {}
+        for k, v in u.items():
+            if isinstance(v, int): tot[k] = tot.get(k, 0) + v
+print('usage', ' '.join('%s=%d' % kv for kv in sorted(tot.items())))
+PY
   # A real 429 rejection is a tiny log written within seconds; anything longer is a real session (whose output could
   # merely mention 429) and counts as a round. Total uncounted retries per lane are capped too.
   added=$(( $(stat -c %s "$R/glm_round$r.log" 2>/dev/null || echo 0) - sz ))

@@ -1,0 +1,4 @@
+{
+ "days": ["/mnt/nvme/bbpro98/targets_data/gamebk/day1", "/mnt/nvme/bbpro98/targets_data/gamebk/day2"],
+ "holdout_days": ["/mnt/nvme/bbpro98/targets_holdout/gamebk/day3", "/mnt/nvme/bbpro98/targets_holdout/gamebk/day4"]
+}
