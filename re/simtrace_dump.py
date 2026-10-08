@@ -1,25 +1,45 @@
 #!/usr/bin/env python3
 """Dump simtrace.bin records (src-latest/mods/simtrace.c). usage: simtrace_dump.py FILE [FN] [N] [SKIP]"""
-import mmap, os, struct, sys
+import ast, mmap, os, struct, sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from simtrace_probes import PROBES
 
 NAMES = ['steal', 'pickoff', 'pitchout', 'offman', 'catch', 'catch_adj', 'fatigue', 'stamina', 'inj_check',
-         'inj_type', 'pitch', 'hit_run', 'sacrifice', 'squeeze']
+         'inj_type', 'pitch', 'hit_run', 'sacrifice', 'squeeze', 'def_mgr', 'def_strategy', 'def_ratings', 'positioning',
+         'replace_p', 'relief_chk', 'relief_pick', 'throw_speed', 'launch', 'lead', 'runner_ai', 'find_fielder', 'throw']
+
+
+def probe_map(path):
+    """Probe ids are list indices of the simtrace_probes.py the trace was built with: when a copy of it sits next to the
+    trace, map its ids onto the current PROBES (appending any getter the current list lacks), else ids pass through."""
+    side = os.path.join(os.path.dirname(os.path.abspath(path)), 'simtrace_probes.py')
+    if not os.path.exists(side): return None
+    ns = {l.split('=', 1)[0].strip(): ast.literal_eval(l.split('=', 1)[1]) for l in open(side) if l[:1].isalpha()}
+    cur = {p[0]: i for i, p in enumerate(PROBES)}
+    m = []
+    for p in ns['PROBES']:
+        if p[0] not in cur: cur[p[0]] = len(PROBES); PROBES.append(tuple(p))
+        m.append(cur[p[0]])
+    return m
 
 
 def records(path):
+    pm = probe_map(path)
     f = open(path, 'rb')
     m = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
-    R = 412 + 16 * 255
+    X = 16 if len(m) % 4504 == 0 and len(m) % 4492 else 4   # v2 records carry 4 extra fields (4504 bytes), v1 one
+    H = 376 + X + 32
+    R = H + 16 * 255
     for i in range(len(m) // R):
         b = m[i * R:(i + 1) * R]
         fn, dep, n, over = b[0], b[1], b[2], b[3]
         self_, arg, ret, rm0, rm1, ri0, ri1 = struct.unpack_from('<7I', b, 4)
-        ev = [struct.unpack_from('<BBHiii', b, 412 + 16 * j) for j in range(n)]
+        ev = [struct.unpack_from('<BBHiii', b, H + 16 * j) for j in range(n)]
+        if pm: ev = [(e[0], pm[e[1]]) + e[2:] if e[0] in (88, 89) else e for e in ev]   # X / Y events
         yield dict(i=i, fn=fn, depth=dep, over=over, self=self_, arg=arg, ret=ret, rm0=rm0, rm1=rm1, ri0=ri0, ri1=ri1,
-                   game=b[32:112], mflags=b[112:120], obj=b[120:376], xf=b[376:380], post=b[380:412], ev=ev)
+                   game=b[32:112], mflags=b[112:120], obj=b[120:376], xf=b[376:376 + X].ljust(16, b'\0'),
+                   post=b[376 + X:H], ev=ev)
 
 
 def fmt_ev(e):

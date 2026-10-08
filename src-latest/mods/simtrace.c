@@ -1,5 +1,5 @@
 /* simtrace.c: roadmap #10 M10/M11 referee mod. Wraps a set of FastSim decision functions (steal, pickoff, pitchout,
-   catch, fatigue, injury) and records, for every call, what happened inside it: each PlayBalance read
+   catch, fatigue, injury, pitch execution, defensive manager, pitching changes, fielding, runner leads) and records, for every call, what happened inside it: each PlayBalance read
    (FUN_68003170), each RNG call (FUN_68082999 mod, FUN_680829dc range, FUN_68082a2d chance, with which generator),
    each runner-speed read (FUN_68038e10) and each player stat read or write (FUN_6803e1b2 / FUN_6803da2b /
    FUN_6803e2e1 getters returning int *, FUN_6803df0d fatigue state, FUN_6803deec fatigue state set), in order, plus the call's this pointer, stack argument, return value,
@@ -7,12 +7,13 @@
    re/sim_model.py replays the documented formulas (work/SIM_LOGIC_MODEL.md) against these records.
    bbfix.ini:  [mods] load=mods\simtrace.dll    [simtrace] mode=on  file=simtrace.bin  max=400000  cap=20000
    (cap = records per target function, cap<N> overrides it for target N)
-   Record, 4492 bytes little-endian:
+   Record, 4504 bytes little-endian:
      u8 fn (index into T below), u8 depth (nesting, 0 = outermost), u8 nev, u8 overflow (events dropped),
      u32 this, u32 arg (0 for one-register functions), u32 eax on return,
      u32 main RNG (DAT_68185a60) before, after; u32 injury RNG (DAT_68113af0) before, after,
      u8[0x50] game state object 0x68143ee0 before, u8[8] manager flags 0x68114948, u8[0x100] *this before (zero when
-     this is not readable), u8[4] the target's extra field (T[].xoff) or 0, u8[0x20] *this after the call, Ev[255] events:
+     this is not readable), i32[4] the target's extra fields (T[].xoff, 0 when unused), u8[0x20] *(this + T[].poff)
+     after the call, Ev[255] events:
        u8 type ('P' PB read, 'M' mod, 'R' range, 'C' chance, 'S' runner speed, 'G' FUN_6803e1b2, 'H' FUN_6803da2b,
        'K' FUN_6803e2e1, 'F' fatigue state read, 'W' fatigue state set, 'X' getter return, 'Y' getter entry, 'Z' call of another target, gen = its index),
        u8 generator (1 main, 2 injury, 3 batter, 0 other; X/Y: the probe id, re/simtrace_probes.py), u16 PB / stat
@@ -34,17 +35,17 @@ typedef struct Ev { uint8_t t, gen; uint16_t idx; int32_t a, b, r; } Ev;
 typedef struct Rec {
     uint8_t fn, depth, nev, over;
     uint32_t self, arg, ret, rm0, rm1, ri0, ri1;
-    uint8_t game[0x50], mflags[8], obj[0x100], pad[4], post[0x20];
+    uint8_t game[0x50], mflags[8], obj[0x100], xf[16], post[0x20];
     Ev ev[NEV];
 } Rec;
 #pragma pack(pop)
 _Static_assert(sizeof(Ev) == 16, "event size");
-_Static_assert(sizeof(Rec) == 4492, "record size");
+_Static_assert(sizeof(Rec) == 4504, "record size");
 
 static const BBModAPI *api;
 static HANDLE out = INVALID_HANDLE_VALUE;
-static long recs, maxrecs, per[16], cap[16];
-static uint32_t xoff[16];   /* T[].xoff, copied at init */
+static long recs, maxrecs, per[32], cap[32];
+static uint32_t xoff[32][4], poff[32];   /* T[].xoff / poff, copied at init */
 static Rec *stack[16];
 static int depth;
 
@@ -78,7 +79,9 @@ static Rec *enter(int fn, void *self, uint32_t arg) {
     CopyMemory(r->game, A(0x68143ee0), sizeof r->game);
     CopyMemory(r->mflags, A(0x68114948), sizeof r->mflags);
     if (self && !IsBadReadPtr(self, sizeof r->obj)) CopyMemory(r->obj, self, sizeof r->obj);
-    if (xoff[fn] && self && !IsBadReadPtr((uint8_t *)self + xoff[fn], 4)) CopyMemory(r->pad, (uint8_t *)self + xoff[fn], 4);
+    for (int k = 0; k < 4; k++)
+        if (xoff[fn][k] && self && !IsBadReadPtr((uint8_t *)self + xoff[fn][k], 4))
+            CopyMemory(r->xf + 4 * k, (uint8_t *)self + xoff[fn][k], 4);
     stack[depth++] = r;
     return r;
 }
@@ -88,7 +91,8 @@ static void leave(Rec *r, uint32_t ret) {
     depth--;
     r->ret = ret;
     r->rm1 = *(uint32_t *)A(0x68185a60); r->ri1 = *(uint32_t *)A(0x68113af0);
-    if (r->self && !IsBadReadPtr((void *)r->self, sizeof r->post)) CopyMemory(r->post, (void *)r->self, sizeof r->post);
+    uint8_t *ps = (uint8_t *)r->self + poff[r->fn];
+    if (r->self && !IsBadReadPtr(ps, sizeof r->post)) CopyMemory(r->post, ps, sizeof r->post);
     DWORD n;
     if (recs < maxrecs) { WriteFile(out, r, sizeof *r, &n, NULL); recs++; }
     HeapFree(GetProcessHeap(), 0, r);
@@ -102,22 +106,42 @@ static void leave(Rec *r, uint32_t ret) {
     static uint32_t BB_THISCALL h##N(void *t, uint32_t a) { Rec *r = enter(N, t, a); uint32_t v = o##N(t, a); \
                                                             leave(r, v); return v; }
 T1(0) T0(1) T0(2) T0(3) T0(4) T0(5) T1(6) T1(7) T1(8) T1(9) T0(10) T0(11) T0(12) T0(13)
-/* xoff: a field of *this outside the 0x100-byte snapshot that the function reads directly, copied to Rec.pad */
-static const struct { uint32_t va; int args, n; uint32_t xoff; void *h; void **o; const char *what; } T[] = {
-    {0x68052bd5, 1, 6, 0, (void *)h0, (void **)&o0, "steal chance (this runner object, base 2/3)"},
-    {0x68036d52, 0, 6, 0x34ce, (void *)h1, (void **)&o1, "pickoff chance"},
-    {0x68036e91, 0, 6, 0x348e, (void *)h2, (void **)&o2, "pitchout chance"},
-    {0x68054b0a, 0, 6, 0, (void *)h3, (void **)&o3, "offensive manager steal / hit and run / bunt / squeeze"},
-    {0x68014f7b, 0, 6, 0, (void *)h4, (void **)&o4, "catch attempt"},
-    {0x68023dd3, 0, 5, 0, (void *)h5, (void **)&o5, "catch chance position adjust"},
-    {0x68049d61, 1, 6, 0, (void *)h6, (void **)&o6, "pitcher fatigue level"},
-    {0x680491d4, 1, 6, 0, (void *)h7, (void **)&o7, "pitcher stamina left"},
-    {0x6802bde7, 1, 6, 0, (void *)h8, (void **)&o8, "injury check"},
-    {0x6802be53, 1, 5, 0, (void *)h9, (void **)&o9, "injury type"},
-    {0x6803122b, 0, 9, 0, (void *)h10, (void **)&o10, "pitch execution (location, speed, movement)"},
-    {0x68053248, 0, 6, 0, (void *)h11, (void **)&o11, "hit and run chance"},
-    {0x680537ad, 0, 6, 0, (void *)h12, (void **)&o12, "sacrifice bunt chance"},
-    {0x68053b36, 0, 6, 0, (void *)h13, (void **)&o13, "squeeze chance"},
+T0(14) T1(15) T0(16) T0(17) T0(18) T0(19) T0(20) T1(21) T0(22) T0(23) T0(24) T0(25)
+/* two stack arguments: the first is recorded as arg, the second is not */
+#define T2(N) static uint32_t (BB_THISCALL *o##N)(void *, uint32_t, uint32_t); \
+    static uint32_t BB_THISCALL h##N(void *t, uint32_t a, uint32_t b) { Rec *r = enter(N, t, a); \
+                                                                        uint32_t v = o##N(t, a, b); leave(r, v); return v; }
+T2(26)
+/* xoff: up to 4 int fields of *this outside the 0x100-byte snapshot that the function reads directly, copied to Rec.xf;
+   poff: offset of the 0x20 bytes of *this copied to Rec.post after the call (the function's outputs) */
+static const struct { uint32_t va; int args, n; uint32_t xoff[4], poff; void *h; void **o; const char *what; } T[] = {
+    {0x68052bd5, 1, 6, {0}, 0, (void *)h0, (void **)&o0, "steal chance (this runner object, base 2/3)"},
+    {0x68036d52, 0, 6, {0x34ce}, 0, (void *)h1, (void **)&o1, "pickoff chance"},
+    {0x68036e91, 0, 6, {0x348e}, 0, (void *)h2, (void **)&o2, "pitchout chance"},
+    {0x68054b0a, 0, 6, {0}, 0, (void *)h3, (void **)&o3, "offensive manager steal / hit and run / bunt / squeeze"},
+    {0x68014f7b, 0, 6, {0}, 0, (void *)h4, (void **)&o4, "catch attempt"},
+    {0x68023dd3, 0, 5, {0}, 0, (void *)h5, (void **)&o5, "catch chance position adjust"},
+    {0x68049d61, 1, 6, {0}, 0, (void *)h6, (void **)&o6, "pitcher fatigue level"},
+    {0x680491d4, 1, 6, {0}, 0, (void *)h7, (void **)&o7, "pitcher stamina left"},
+    {0x6802bde7, 1, 6, {0}, 0, (void *)h8, (void **)&o8, "injury check"},
+    {0x6802be53, 1, 5, {0}, 0, (void *)h9, (void **)&o9, "injury type"},
+    {0x6803122b, 0, 9, {0}, 0, (void *)h10, (void **)&o10, "pitch execution (location, speed, movement)"},
+    {0x68053248, 0, 6, {0}, 0, (void *)h11, (void **)&o11, "hit and run chance"},
+    {0x680537ad, 0, 6, {0}, 0, (void *)h12, (void **)&o12, "sacrifice bunt chance"},
+    {0x68053b36, 0, 6, {0}, 0, (void *)h13, (void **)&o13, "squeeze chance"},
+    {0x680382d9, 0, 6, {0x3496}, 0x3496, (void *)h14, (void **)&o14, "defensive manager situation rolls"},
+    {0x68036a52, 1, 6, {0x348e, 0x349e, 0x34a6}, 0, (void *)h15, (void **)&o15, "defensive strategy rating"},
+    {0x680371f8, 0, 6, {0}, 0, (void *)h16, (void **)&o16, "defensive situation ratings"},
+    {0x6803853e, 0, 6, {0}, 0, (void *)h17, (void **)&o17, "fielder positioning"},
+    {0x6804a357, 0, 6, {0x17330, 0x1738e, 0x172f0}, 0, (void *)h18, (void **)&o18, "replace pitcher check"},
+    {0x6804a64d, 0, 6, {0x17330}, 0, (void *)h19, (void **)&o19, "relief pitcher check"},
+    {0x68043d91, 0, 6, {0x17328, 0x1732c, 0x17330}, 0, (void *)h20, (void **)&o20, "relief pitcher selection"},
+    {0x6805d960, 1, 6, {0}, 0, (void *)h21, (void **)&o21, "throw speed"},
+    {0x6803b82c, 0, 6, {0}, 0, (void *)h22, (void **)&o22, "ball launch velocity"},
+    {0x680508a4, 0, 6, {0}, 0x70, (void *)h23, (void **)&o23, "runner lead off"},
+    {0x6804faa1, 0, 6, {0}, 0, (void *)h24, (void **)&o24, "runner AI update"},
+    {0x68022ea4, 0, 9, {0}, 0, (void *)h25, (void **)&o25, "fielder for the ball"},
+    {0x6805dd30, 2, 6, {0}, 0x90, (void *)h26, (void **)&o26, "throw (wild-throw roll)"},
 };
 
 /* probes, recorded only inside a target */
@@ -172,7 +196,7 @@ BB_EXPORT int bbmod_init(const BBModAPI *a) {
     a->ini_str("simtrace", "file", "simtrace.bin", f, sizeof f);
     maxrecs = a->ini_int("simtrace", "max", 400000);
     int c0 = a->ini_int("simtrace", "cap", 20000);
-    for (int i = 0; i < 16; i++) { char k[8]; wsprintfA(k, "cap%d", i); cap[i] = a->ini_int("simtrace", k, c0); }
+    for (int i = 0; i < 32; i++) { char k[8]; wsprintfA(k, "cap%d", i); cap[i] = a->ini_int("simtrace", k, c0); }
     out = CreateFileA(f, FILE_APPEND_DATA, FILE_SHARE_READ, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (out == INVALID_HANDLE_VALUE) { a->log("simtrace: cannot open %s", f); return 3; }
     /* each target's prologue is checked against the work copy's bytes before patching */
@@ -181,8 +205,16 @@ BB_EXPORT int bbmod_init(const BBModAPI *a) {
         {0x55, 0x8b, 0xec, 0x83, 0xec, 0x10}, {0x55, 0x8b, 0xec, 0x83, 0xec, 0x24}, {0x55, 0x8b, 0xec, 0x53, 0x56},
         {0x55, 0x8b, 0xec, 0x83, 0xec, 0x18}, {0x55, 0x8b, 0xec, 0x83, 0xec, 0x20}, {0x55, 0x8b, 0xec, 0x83, 0xec, 0x0c},
         {0x55, 0x8b, 0xec, 0x6a, 0xff}, {0x55, 0x8b, 0xec, 0x81, 0xec, 0xa0, 0x00, 0x00, 0x00},
-        {0x55, 0x8b, 0xec, 0x83, 0xec, 0x2c}, {0x55, 0x8b, 0xec, 0x83, 0xec, 0x18}, {0x55, 0x8b, 0xec, 0x83, 0xec, 0x14}};
-    for (unsigned i = 0; i < sizeof T / sizeof *T; i++) xoff[i] = T[i].xoff;
+        {0x55, 0x8b, 0xec, 0x83, 0xec, 0x2c}, {0x55, 0x8b, 0xec, 0x83, 0xec, 0x18}, {0x55, 0x8b, 0xec, 0x83, 0xec, 0x14},
+        {0x55, 0x8b, 0xec, 0x83, 0xec, 0x10}, {0x55, 0x8b, 0xec, 0x83, 0xec, 0x24}, {0x55, 0x8b, 0xec, 0x83, 0xec, 0x44},
+        {0x55, 0x8b, 0xec, 0x83, 0xec, 0x34}, {0x55, 0x8b, 0xec, 0x83, 0xec, 0x3c}, {0x55, 0x8b, 0xec, 0x83, 0xec, 0x24},
+        {0x55, 0x8b, 0xec, 0x83, 0xec, 0x24}, {0x55, 0x8b, 0xec, 0x83, 0xec, 0x08}, {0x55, 0x8b, 0xec, 0x83, 0xec, 0x18},
+        {0x55, 0x8b, 0xec, 0x83, 0xec, 0x0c}, {0x55, 0x8b, 0xec, 0x83, 0xec, 0x60},
+        {0x55, 0x8b, 0xec, 0x81, 0xec, 0xb0, 0x0e, 0x00, 0x00}, {0x55, 0x8b, 0xec, 0x83, 0xec, 0x24}};
+    for (unsigned i = 0; i < sizeof T / sizeof *T; i++) {
+        for (int k = 0; k < 4; k++) xoff[i][k] = T[i].xoff[k];
+        poff[i] = T[i].poff;
+    }
     for (unsigned i = 0; i < sizeof T / sizeof *T; i++)
         if (a->detour("FastSim.dll", T[i].va, pro[i], T[i].n, T[i].h, T[i].o) < 0) {
             a->log("simtrace: detour %08x (%s) failed", T[i].va, T[i].what);

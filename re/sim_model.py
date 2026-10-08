@@ -129,6 +129,20 @@ class Tape:
     def speed(self):
         return self._next('S', 'runner speed')[5]
 
+    def stat(self, t, idx):
+        """the next player stat read: t 'G' FUN_6803e1b2, 'H' FUN_6803da2b, 'K' FUN_6803e2e1; returns the int read"""
+        e = self._next(t, f'stat {t}[{idx}]')
+        if e[2] != idx: raise Mismatch(f'model wants stat {t}[{idx}], record has {fmt_ev(e)} (event {self.i - 1})')
+        return e[5]
+
+    def peek(self):
+        """the type letter of the next event, or None at the end (does not consume)"""
+        return chr(self.ev[self.i][0]) if self.i < len(self.ev) else None
+
+    def fat(self):
+        """the next fatigue state read (FUN_6803df0d)"""
+        return self._next('F', 'fatigue state')[5]
+
     def done(self):
         if self.i != len(self.ev): raise Mismatch(f'{len(self.ev) - self.i} events left: {fmt_ev(self.ev[self.i])} ...')
 
@@ -337,7 +351,7 @@ def model_pitchout(r):
                 local_2c = s16v(t.pb(0x15) + local_2c)
             elif inning > 8:
                 local_2c = s16v(t.pb(0x16) + local_2c)
-            if int.from_bytes(r['xf'], 'little', signed=True) == 1:
+            if int.from_bytes(r['xf'][:4], 'little', signed=True) == 1:
                 local_2c = s16v(t.pb(0x17) + local_2c)
     t.done()
     want = s16v(local_2c) & 0xffff
@@ -592,6 +606,46 @@ def s32(v):
     return v - (1 << 32) if v >= 1 << 31 else v
 
 
+def dll_data(va, n, dll=os.path.join(WORK, 'FastSim.dll')):
+    """n bytes of FastSim.dll's .data section (VMA 0x6808c000, file offset 0x8aa00) at va, as shipped"""
+    with open(dll, 'rb') as f:
+        f.seek(0x8aa00 + va - 0x6808c000)
+        return f.read(n)
+
+
+LEAD_TAB = dll_data(0x68097570, 32)   # [row 0..3][mod 8] lead size; FastSim always uses row 0
+HOLD_TAB = dll_data(0x68097590, 25)   # [runner byte 0x7d / 20][pitcher rating / 20] max lead without the sign
+
+
+def model_lead(r):
+    """FUN_680508a4(runner): the lead roll. lead = LEAD_TAB[0][mod 8]; without the manager's go sign (flag 0x40 at
+    runner+0x74 clear) the runner keeps it only while lead < HOLD_TAB[..]; otherwise the manager flag 0x40 decides.
+    No lead: byte 0x86 = -1. A lead sets state 0x82 = 3, 0x7e = 4 and the jump timer 0x87 = 4 - (rating >> 4) - lead
+    + 400 / runner 0x105."""
+    t, o = Tape(r), r['obj']
+    lead = s8(LEAD_TAB[t.mod(8)])
+    keep = True
+    if t.x(0x680098e0, 0x40) & 0xff:
+        rating = s32(t.x(0x68050ae0))
+        if lead >= s8(HOLD_TAB[o[0x7d] // 20 * 5 + cdiv(rating, 20)]): keep = False
+    if keep:
+        t.x(0x68009610)
+        keep = t.x(0x6800f270) & 0xff != 0
+    if not keep: lead = -1
+    timer = 0
+    if lead > 0:
+        t.x(0x68050b90)
+        timer = 4 - (s32(t.x(0x68050ae0)) >> 4) - lead
+        timer = s16v(s16v(timer) + s16v(cdiv(400, s32(t.x(0x6800f780)))))
+    t.done()
+    p = r['post']   # *(runner + 0x70) after the call
+    if s8(p[0x16]) != lead: return f'lead {s8(p[0x16])}, model {lead}'
+    if lead > 0 and (s16(p, 0x17) != timer or i32(p, 0x12) != 3 or i32(p, 0x0e) != 4):
+        return f'jump timer {s16(p, 0x17)} state {i32(p, 0x12)}/{i32(p, 0x0e)}, model {timer} 3/4'
+    if lead <= 0 and s16(p, 0x17) != 0: return f'jump timer {s16(p, 0x17)} without a lead'
+    return None
+
+
 def check_rng(r):
     """main and injury RNG calls replay from the recorded state before the call"""
     for gen, s0, s1 in ((1, r['rm0'], r['rm1']), (2, r['ri0'], r['ri1'])):
@@ -752,6 +806,7 @@ def main():
             if f == 'pitch' and not r['over']: note(f, guard(model_pitch, r), r)
             if f in ('catch', 'catch_adj'): note(f, guard(globals()['model_' + f], r), r)
             if f == 'steal' and not r['over']: note('steal', guard(model_steal, r), r)
+            if f == 'lead' and not r['over']: note('lead', guard(model_lead, r), r)
             if f == 'inj_check': note('inj_check', model_inj_check(r), r)
             elif f == 'inj_type': note('inj_type', model_inj_type(r), r)
             elif f == 'stamina': note('stamina', model_stamina(r), r)

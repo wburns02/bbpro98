@@ -35,7 +35,9 @@ def wait_done(timeout=int(os.environ.get('SIM_TIMEOUT', '240'))):
         click(645, 535)   # repaint nudge
         time.sleep(3)
         st, du, ds = state()
-        if st == 'schedule' and ds < 30.0:
+        # the schedule body changes with the day's games (an empty league panel reads ~34 from the reference shot), so
+        # also accept a screen clearly farther from the updating dialog than from the schedule
+        if st == 'schedule' and (ds < 30.0 or du - ds > 12.0):
             return True
     return False
 
