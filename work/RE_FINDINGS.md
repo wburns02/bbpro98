@@ -325,3 +325,11 @@ list survives past the live one. The misc8 data lane won; its bb.cfg names were 
 - GDI +0x3e4 is the sim's RNG seed, written by the shell at save time; editing it reseeds one game.
 - Score lines carry runs per inning as 30 bytes per side; the lane kept them as 15 opaque words.
 - A DIF: chunk (72 bytes, same cipher) is written between GDI and ADI when the shell has non-0xff data for it.
+
+## 2026-10-08: HMI music (work/hmp.py, work/spec/HMP_FORMAT.md)
+
+- The 13 HMIMIDIP chunks of SIM.DAT are dead data in the Win95 build: BBSIM FUN_6806ed8b, the only call that would
+  play one (charge cues 3+ in FUN_6803924e), compiles to an empty function. Cues 0-2 play WAVs.
+- HMP header 0x38 is a tick rate (120/s), not BPM: with 192 ticks per quarter a quarter is 1.6 s, and the 0x3c
+  seconds field is floor(ticks / 120) on all 13 songs.
+- HMP deltas are LSB-first 7-bit groups with bit 7 set on the LAST byte; events carry explicit status bytes.
