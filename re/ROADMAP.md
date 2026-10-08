@@ -25,17 +25,17 @@ final verification. Fable/Opus only when a lane stalls 2-3 rounds.
 | Shell PCX (59, inside the VOLs) + PLX palettes | yes: standard 8-bit PCX, no embedded palette (BB0.PAL); MU0/MU1.PLX = raw 768-byte RGB | standard tools | none needed |
 | PlayBalance (872 sim knobs) | yes | via PB.INI overlay, effect verified (SB 8.9x) | re/pb_params.tsv |
 | Standard media: BMP, WAV, AVI (Cinepak), TTF, ICO | standard tools | standard tools | none needed |
+| Code hook framework (mods): detour, register-level midhook, call-site redirect, verified patch; per-module, relocation-safe, all-or-nothing | n/a | yes: a mod DLL listed in bbfix.ini [mods] hooks any BBShell/BBSIM/FastSim/... function; A/B on 8 sim days: steal mod zero SB 2 vs 89 off, max 523 (5.9x), pass 71 | src-latest/bbmod.h (SDK), src-latest/bbfix.c, src-latest/mods/steal.c, src-latest/test/hktest.py, re/hookab.sh + re/hookab_score.py |
 
 ## Open, by wave
 | # | Item | Gap | Referee (mechanical) | Size |
 |---|---|---|---|---|
 | 1b | DMP.DAT (10 frames, not DBM layout) | unknown | imgref | S |
 | 5a | VOL DAT entries (18: AGEPLYR, ASNEW, ASNEWS, ASSERTXT, BOXTEXT, MENU, PGEND, PGENFRST, PGENLAST, ...) | layouts unknown (some plain text) | per-file round-trip + game-visible edit | S-M |
-| 6 | UI layout: DIAL.REQ, MENU.REQ (screens, gadgets, columns) | format unknown (block 13 = stats-grid rows known) | round-trip + edit (move a gadget) + Wine screenshot diff | L |
+| 6 | UI layout: DIAL.REQ, MENU.REQ (screens, gadgets, columns) | container + gadget record sizes known (Claude, 114/114); field meanings open. Lanes running: re/targets/req | round-trip + edit (move a gadget) + Wine screenshot diff | L |
 | 4 | H-file 2698-byte first table semantics (now plaintext: league, team names, stadium codes, ...) | field layout | diff across sim days vs ASN/box-score truth | S |
-| 7a | Chunk semantics: HS ('DAT:' tables, 28 stadia), MI/STA: stadium info, GID:, @C, UN, MS; HMI MIDI music (HMIMIDIP, 13 chunks: standard HMP, convert with hmp2mid) | layouts unknown | per-chunk round-trip + game-visible edit | S-M |
+| 7a | Chunk semantics (lanes running: re/targets/chunks, 126 chunks + 8 held-out stadiums): HS ('DAT:' tables, 28 stadia), MI/STA: stadium info, GID: fence geometry, WT, XT; SIM.DAT @C cameras, MI injuries, PB strings, UN, MS, OL; HMI MIDI music (HMIMIDIP, 13 chunks: standard HMP, convert with hmp2mid) | layouts unknown | per-chunk round-trip + game-visible edit | S-M |
 | 8 | SIM.DAT chunk semantics, INJURY.DAT, pgen*.dat, HHA.DAT, bb.cfg, .apc/.pyc/.pyf, ARC, hilights .tap, STS writer | unknown or reader-only | per-format: round-trip + cross-check against decoded ASN/H/DAT truth | S-M each |
-| 9 | Code hook framework | bbfix.dll injects + logs only; no detours | a hook replaces one known function (e.g. steal chance) and the season stat shifts as predicted vs a null arm | L (Claude/Sonnet design) |
 | 10 | Function labels (M1-M3), sim formulas (M9-M11), RNG + seed (M12) | ~1350/3800 P1 labelled; RNG not located | xref consistency; formula predicts logged pitch outcomes; seeded replay is deterministic | L |
 | 11 | Automated in-game test harness | partial (probe_screen.sh, simdays.py) | itself the referee for 6 and 9 | M |
 

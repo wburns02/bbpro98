@@ -343,6 +343,104 @@ static int widen_apply(HMODULE m){
     T("WIDEN applied %d hooks to BBShell.dll; bat=%u,%u,%u,%u pit=%u,%u,%u,%u",NSITE,ext_tab[0][0],ext_tab[0][1],ext_tab[0][2],ext_tab[0][3],ext_tab[1][0],ext_tab[1][1],ext_tab[1][2],ext_tab[1][3]);
     return 1; }
 
+/* ---- mod hook engine (roadmap #9): mods are DLLs listed in bbfix.ini [mods] load=a.dll,b.dll; SDK + contract in
+   bbmod.h. Hooks are registered once (bbmod_init) and applied on every mapping of their module, rebased from the
+   preferred ImageBase, all-or-nothing per (mod, module): expected bytes, inside the image, no base-relocation overlap. */
+#include "bbmod.h"
+enum { HK_DETOUR, HK_MID, HK_PATCH, HK_CALL };
+typedef struct { int owner, kind, n, built; char module[64]; uint32_t va; uint8_t expect[16], repl[16], inst[16]; void *handler; void **orig; } ModHook;
+#define MAXMH 512
+static ModHook mh[MAXMH]; static int nmh, cur_owner=-1; static char mod_names[32][64]; static int nmods;
+static uint8_t *pool; static unsigned pool_used;
+static uint8_t *pool_get(unsigned n){ n=(n+15)&~15u; if(!pool||pool_used+n>65536){ pool=VirtualAlloc(0,65536,MEM_COMMIT|MEM_RESERVE,PAGE_EXECUTE_READWRITE); pool_used=0; if(!pool) return 0; }
+    uint8_t *p=pool+pool_used; pool_used+=n; return p; }
+static void m_log(const char *f,...){ char b[600]; va_list a; va_start(a,f); vsnprintf(b,sizeof b,f,a); va_end(a); T("MOD    %s",b); }
+static int m_ini_int(const char *s,const char *k,int d){ return GetPrivateProfileIntA(s,k,d,ini_path); }
+static int m_ini_str(const char *s,const char *k,const char *d,char *o,int n){ return GetPrivateProfileStringA(s,k,d,o,n,ini_path); }
+/* preferred ImageBase from the file on disk: the loader rewrites the mapped header's ImageBase to the actual base */
+static uint32_t pref_base(HMODULE m){ static struct { HMODULE m; uint32_t pref; char path[MAX_PATH]; } c[16]; static int nc;
+    char p[MAX_PATH]; if(!GetModuleFileNameA(m,p,MAX_PATH)) return 0;
+    for(int i=0;i<nc;i++) if(c[i].m==m&&!strcmp(c[i].path,p)) return c[i].pref;
+    uint8_t b[1024]; DWORD got=0; HANDLE f=CreateFileA(p,GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE,0,OPEN_EXISTING,0,0); if(f==INVALID_HANDLE_VALUE) return 0;
+    ReadFile(f,b,sizeof b,&got,0); CloseHandle(f); uint32_t e=got>=0x40?*(uint32_t*)(b+0x3c):0; if(e+0x38>got) return 0;
+    uint32_t pref=*(uint32_t*)(b+e+0x34); int i=nc<16?nc++:15; c[i].m=m; c[i].pref=pref; strcpy(c[i].path,p); return pref; }
+static void *m_addr(const char *module,uint32_t va){ HMODULE m=GetModuleHandleA(module); if(!m) return 0;
+    IMAGE_NT_HEADERS *nt=(IMAGE_NT_HEADERS*)((char*)m+((IMAGE_DOS_HEADER*)m)->e_lfanew); uint32_t rva=va-pref_base(m);
+    return rva<nt->OptionalHeader.SizeOfImage?(char*)m+rva:0; }
+static int m_add(int kind,const char *module,uint32_t va,const uint8_t *expect,const uint8_t *repl,int n,void *handler,void **orig){
+    const char *why=0; if(cur_owner<0) why="registration outside bbmod_init"; else if(nmh>=MAXMH) why="too many hooks";
+    else if(!module||strlen(module)>=64) why="bad module name"; else if(!expect||n<1||n>16) why="n must be 1..16";
+    else if(kind!=HK_PATCH&&n<5) why="detour/midhook/call need n >= 5"; else if(kind==HK_PATCH&&!repl) why="patch needs repl";
+    else if(kind!=HK_PATCH&&!handler) why="no handler";
+    if(why){ T("MOD    %s: rejected hook %s!%08x: %s",cur_owner<0?"?":mod_names[cur_owner],module?module:"?",va,why); return -1; }
+    ModHook *h=&mh[nmh]; memset(h,0,sizeof *h); h->owner=cur_owner; h->kind=kind; h->n=n; strcpy(h->module,module); h->va=va;
+    memcpy(h->expect,expect,n); if(repl) memcpy(h->repl,repl,n); h->handler=handler; h->orig=orig; if(orig) *orig=0; return nmh++; }
+static int m_detour(const char *mo,uint32_t va,const uint8_t *e,int n,void *h,void **orig){ return m_add(HK_DETOUR,mo,va,e,0,n,h,orig); }
+static int m_midhook(const char *mo,uint32_t va,const uint8_t *e,int n,bb_mid_fn h){ return m_add(HK_MID,mo,va,e,0,n,(void*)h,0); }
+static int m_patch(const char *mo,uint32_t va,const uint8_t *e,const uint8_t *r,int n){ return m_add(HK_PATCH,mo,va,e,r,n,0,0); }
+/* call site: e8 rel32 to target_va; rel32 is base independent (site and target move together), so expect is fixed */
+static int m_redirect_call(const char *mo,uint32_t va,uint32_t target_va,void *h,void **orig){ uint8_t e[5]; uint32_t rel=target_va-(va+5); e[0]=0xe8; memcpy(e+1,&rel,4); return m_add(HK_CALL,mo,va,e,0,5,h,orig); }
+static const BBModAPI mod_api={BBMOD_API_VERSION,m_log,m_ini_int,m_ini_str,m_detour,m_midhook,m_patch,m_addr,m_redirect_call};
+static int reloc_overlap(HMODULE m,uint32_t rva,int n){
+    IMAGE_NT_HEADERS *nt=(IMAGE_NT_HEADERS*)((char*)m+((IMAGE_DOS_HEADER*)m)->e_lfanew);
+    IMAGE_DATA_DIRECTORY dd=nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC];
+    for(uint32_t off=0;off+8<=dd.Size;){ IMAGE_BASE_RELOCATION *b=(IMAGE_BASE_RELOCATION*)((char*)m+dd.VirtualAddress+off);
+        if(b->SizeOfBlock<8) break; uint16_t *e=(uint16_t*)(b+1); int cnt=(b->SizeOfBlock-8)/2;
+        for(int i=0;i<cnt;i++) if((e[i]>>12)==IMAGE_REL_BASED_HIGHLOW){ uint32_t r=b->VirtualAddress+(e[i]&0xfff); if(r<rva+n&&r+4>rva) return 1; }
+        off+=b->SizeOfBlock; }
+    return 0; }
+/* displaced bytes into code at q: verbatim, or a lone call/jmp rel32 retargeted; then jmp back to site+n. Returns the end. */
+static uint8_t *emit_displaced(uint8_t *q,const uint8_t *site,const uint8_t *orig,int n){
+    if(n==5&&(orig[0]==0xe8||orig[0]==0xe9)){ uint32_t tgt=(uint32_t)(uintptr_t)site+5+*(uint32_t*)(orig+1),rel=tgt-((uint32_t)(uintptr_t)q+5); q[0]=orig[0]; memcpy(q+1,&rel,4); q+=5; }
+    else { memcpy(q,orig,n); q+=n; }
+    uint32_t rel=(uint32_t)(uintptr_t)site+n-((uint32_t)(uintptr_t)q+5); q[0]=0xe9; memcpy(q+1,&rel,4); return q+5; }
+static void mods_apply(HMODULE m,const char *bn){
+    IMAGE_NT_HEADERS *nt=(IMAGE_NT_HEADERS*)((char*)m+((IMAGE_DOS_HEADER*)m)->e_lfanew); uint32_t pref=pref_base(m),size=nt->OptionalHeader.SizeOfImage;
+    if(!pref){ T("MOD    cannot read the preferred base of %s, no mod hooks applied to it",bn); return; }
+    for(int o=0;o<nmods;o++){
+        int cnt=0,done=0; const char *why=0; int bad=-1;
+        for(int i=0;i<nmh;i++){ ModHook *h=&mh[i]; if(h->owner!=o||_stricmp(h->module,bn)) continue; cnt++; if(why) continue;
+            uint32_t rva=h->va-pref; uint8_t *p=(uint8_t*)m+rva;
+            if(rva>=size||rva+h->n>size) why="outside the module image";
+            else if(IsBadReadPtr(p,h->n)) why="unreadable";
+            else if(reloc_overlap(m,rva,h->n)) why="overlaps a base relocation";
+            else if(h->built&&!memcmp(p,h->inst,h->n)) done++;          /* this mapping already hooked */
+            else if(memcmp(p,h->expect,h->n)) why="bytes differ from expect";
+            if(why) bad=i; }
+        if(!cnt) continue;
+        if(why){ ModHook *h=&mh[bad]; char x[40]="",w[40]=""; uint8_t *p=(uint8_t*)m+(h->va-pref);
+            if(!IsBadReadPtr(p,h->n)) for(int k=0;k<h->n;k++){ sprintf(x+2*k,"%02x",p[k]); sprintf(w+2*k,"%02x",h->expect[k]); }
+            T("MOD    %s: NOT applied to %s (%d hooks): hook %d at %08x %s (have %s expect %s)",mod_names[o],bn,cnt,bad,h->va,why,x,w); continue; }
+        if(done==cnt) continue;
+        if(done){ T("MOD    %s: NOT applied to %s: %d of %d sites already hooked (inconsistent)",mod_names[o],bn,done,cnt); continue; }
+        /* build trampolines/stubs first; write sites only if all succeed */
+        int ok=1;
+        for(int i=0;i<nmh&&ok;i++){ ModHook *h=&mh[i]; if(h->owner!=o||_stricmp(h->module,bn)) continue; uint8_t *p=(uint8_t*)m+(h->va-pref);
+            if(h->kind==HK_PATCH){ memcpy(h->inst,h->repl,h->n); h->built=1; continue; }
+            if(h->kind==HK_CALL){ uint32_t r=(uint32_t)(uintptr_t)h->handler-((uint32_t)(uintptr_t)p+5); if(h->orig) *h->orig=p+5+*(int32_t*)(h->expect+1);
+                h->inst[0]=0xe8; memcpy(h->inst+1,&r,4); h->built=1; continue; }
+            uint8_t *t=pool_get(64); if(!t){ ok=0; break; } uint32_t entry=(uint32_t)(uintptr_t)t;
+            if(h->kind==HK_DETOUR){ emit_displaced(t,p,h->expect,h->n); if(h->orig) *h->orig=t; entry=(uint32_t)(uintptr_t)h->handler; }
+            else { uint8_t *q=t; uint32_t cont=(uint32_t)(uintptr_t)t+27;         /* push cont/pushfd/pushad/push esp/call h/add esp,4/test/jz/mov [esp+36],eax/popad/popfd/ret */
+                q[0]=0x68; memcpy(q+1,&cont,4); q[5]=0x9c; q[6]=0x60; q[7]=0x54; q[8]=0xe8; uint32_t rel=(uint32_t)(uintptr_t)h->handler-((uint32_t)(uintptr_t)t+13); memcpy(q+9,&rel,4);
+                static const uint8_t tail[]={0x83,0xc4,0x04,0x85,0xc0,0x74,0x04,0x89,0x44,0x24,0x24,0x61,0x9d,0xc3}; memcpy(q+13,tail,sizeof tail);
+                emit_displaced(t+27,p,h->expect,h->n); }
+            uint32_t rel=entry-((uint32_t)(uintptr_t)p+5); h->inst[0]=0xe9; memcpy(h->inst+1,&rel,4); for(int k=5;k<h->n;k++) h->inst[k]=0x90; h->built=1; }
+        if(!ok){ T("MOD    %s: NOT applied to %s: out of trampoline memory",mod_names[o],bn); continue; }
+        for(int i=0;i<nmh;i++){ ModHook *h=&mh[i]; if(h->owner!=o||_stricmp(h->module,bn)) continue; uint8_t *p=(uint8_t*)m+(h->va-pref); DWORD old,o2;
+            VirtualProtect(p,h->n,PAGE_EXECUTE_READWRITE,&old); memcpy(p,h->inst,h->n); VirtualProtect(p,h->n,old,&o2); FlushInstructionCache(GetCurrentProcess(),p,h->n); }
+        T("MOD    %s: applied %d hooks to %s at %p (pref %08x)",mod_names[o],cnt,bn,m,pref); } }
+static void mods_load(void){
+    char list[512],dir[MAX_PATH]; GetPrivateProfileStringA("mods","load","",list,sizeof list,ini_path); if(!list[0]) return;
+    strcpy(dir,ini_path); *strrchr(dir,'\\')=0;
+    for(char *s=strtok(list,", ");s&&nmods<32;s=strtok(0,", ")){ char p[MAX_PATH]; snprintf(p,sizeof p,"%s\\%s",dir,s);
+        HMODULE dl=LoadLibraryA(p); bbmod_init_fn init=dl?(bbmod_init_fn)GetProcAddress(dl,"bbmod_init"):0;
+        if(!init){ T("MOD    %s: load failed (%s, err=%lu)",s,dl?"no bbmod_init export":"LoadLibrary",GetLastError()); continue; }
+        snprintf(mod_names[nmods],64,"%s",s); cur_owner=nmods++; int first=nmh, r=init(&mod_api); cur_owner=-1;
+        if(r){ T("MOD    %s: bbmod_init returned %d, its %d hooks dropped",s,r,nmh-first); nmh=first; nmods--; continue; }
+        T("MOD    %s: loaded, %d hooks registered",s,nmh-first); }
+    for(int i=0;i<nmh;i++){ HMODULE m=GetModuleHandleA(mh[i].module); if(m) mods_apply(m,mh[i].module); } }
+
 static LONG CALLBACK VEH(EXCEPTION_POINTERS *ep){ static int n; static void *last; DWORD c=ep->ExceptionRecord->ExceptionCode;
     if(c==0xC0000005 || c==0xC000001D || c==0xC0000094 || c==0xC00000FD){ void*a=ep->ExceptionRecord->ExceptionAddress; if(a!=last && n<400){ char b[96]; last=a; n++; T("CRASH  exception %08lx at %s  (fault addr %p)",c,modname(a,b,96),c==0xC0000005&&ep->ExceptionRecord->NumberParameters>1?(void*)ep->ExceptionRecord->ExceptionInformation[1]:0);} }
     return EXCEPTION_CONTINUE_SEARCH; }
@@ -381,7 +479,8 @@ static void patch_all(void) {
 }
 typedef struct { ULONG Flags; void *FullDllName; void *BaseDllName; PVOID DllBase; ULONG SizeOfImage; } LDR_NOTE;
 typedef VOID (CALLBACK *LDR_CB)(ULONG reason, LDR_NOTE *data, PVOID ctx);
-static VOID CALLBACK on_load(ULONG reason, LDR_NOTE *d, PVOID ctx) { if(reason==1 && d){ char p[MAX_PATH]; GetModuleFileNameA((HMODULE)d->DllBase,p,MAX_PATH); if(!_strnicmp(p,"C:\\Sierra",9)){ const char *bn=strrchr(p,'\\')+1; T("DLL    loaded %s at %p",bn,d->DllBase); if(!_stricmp(bn,"BBShell.dll")) { widen_apply((HMODULE)d->DllBase); dt_apply((HMODULE)d->DllBase); } } patch_iat((HMODULE)d->DllBase);} }
+static VOID CALLBACK on_load(ULONG reason, LDR_NOTE *d, PVOID ctx) { if(reason==1 && d){ char p[MAX_PATH]; GetModuleFileNameA((HMODULE)d->DllBase,p,MAX_PATH); if(!_strnicmp(p,"C:\\Sierra",9)){ const char *bn=strrchr(p,'\\')+1; T("DLL    loaded %s at %p",bn,d->DllBase); if(!_stricmp(bn,"BBShell.dll")) { widen_apply((HMODULE)d->DllBase); dt_apply((HMODULE)d->DllBase); } }
+    if(nmh){ const char *bn=strrchr(p,'\\'); mods_apply((HMODULE)d->DllBase,bn?bn+1:p); } patch_iat((HMODULE)d->DllBase);} }
 
 BOOL WINAPI DllMain(HINSTANCE h, DWORD why, LPVOID r) {
     if(why==DLL_PROCESS_ATTACH) {
@@ -389,7 +488,7 @@ BOOL WINAPI DllMain(HINSTANCE h, DWORD why, LPVOID r) {
         lg=fopen(p,"w"); L("bbfix loaded");
         strcpy(s+1,"bbfix.ini"); strcpy(ini_path,p); InitializeCriticalSection(&trcs); strcpy(s+1,"bbtrace.log"); tr=CreateFileA(p,GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,0,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,0);
         trace_cfg(); T("=== BBPRO98 action trace started (pid %lu) ===",GetCurrentProcessId()); AddVectoredExceptionHandler(1,VEH); CreateThread(0,0,HandleWatch,0,0,0);
-        patch_all();
+        patch_all(); mods_load();
         typedef LONG (NTAPI *Reg_t)(ULONG,LDR_CB,PVOID,PVOID*);
         Reg_t reg=(Reg_t)GetProcAddress(GetModuleHandleA("ntdll.dll"),"LdrRegisterDllNotification");
         PVOID cookie; if(reg) L("LdrRegisterDllNotification -> %ld", reg(0,on_load,0,&cookie)); else L("no LdrRegisterDllNotification");

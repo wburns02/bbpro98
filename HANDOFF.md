@@ -46,3 +46,11 @@ bblaunch.exe starts Baseball.exe suspended and injects bbfix.dll. Official v1.1 
 - Always-on logging: ~/play_bbpro98.sh now execs ~/bbpro98/bin/play_logged.sh. Per run dir /mnt/nvme/bbpro98/logs/<ts>/ : wine.log (err+process+loaddll), windows.log (500 ms window state poll), env.txt, exit.txt, bbtrace.log copy. Keeps last 30 runs. Original launcher: bin/play_bbpro98.orig.sh.
 - Gotcha (killed the GNOME session 2026-10-06 and 10-07): every Wine run leaves winedevice.exe on the SYSTEM D-Bus; orphans from crashed/abandoned runs stop reading it, fill UID 1000's dbus-broker quota, and the broker then disconnects gnome-shell. For ANY wine/xvfb run: `export DBUS_SYSTEM_BUS_ADDRESS=unix:path=/nonexistent` and finish with `wineserver -k` (if the wineserver is already dead, kill the leftover .exe PIDs). Both launchers now do this; a root timer (dbus-stuck-peer-guard) is the backstop.
 - Gotcha: pgrep -f patterns that contain the text of your own command kill your own shell (exit 144); use the [x] trick. A stale winedbg crash dialog on :99 covers the game and breaks click scripts.
+
+## 2026-10-07: code hook framework (mods) done
+- `bbfix.dll` now loads mod DLLs listed in `bbfix.ini` `[mods] load=mods\x.dll` (relative to the install dir) and
+  applies their hooks every time the target module maps. SDK: `src-latest/bbmod.h`; example `src-latest/mods/steal.c`
+  (FastSim steal chance, `[steal] mode=pass|zero|max|scale pct=`). Build lines are in the header comments.
+- Verified: unit test `src-latest/test/hktest.py` (own Wine prefix) and in-game A/B `re/hookab.sh ARM MODE DAYS` +
+  `re/hookab_score.py` (zero SB 2 vs 89, max 523). The work copy runs the new bbfix.dll with no mods enabled; the live
+  install still has the previous bbfix.dll (no behavior difference without a [mods] section).
