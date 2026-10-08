@@ -183,5 +183,6 @@
 "e6e7_*",
 "e1a4_*",
 "5200_*"
-]
+],
+"holdout_dir": "/mnt/nvme/bbpro98/targets_holdout/chunks"
 }

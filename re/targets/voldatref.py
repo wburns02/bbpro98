@@ -14,7 +14,8 @@ Contract for <lane>/voldat.py (runs in a bwrap jail: no network, no files but it
       CONTENT and must be editable.
       encode: rebuild the file from edited.json (in.bin may be read for nothing but preserving "_" data the JSON
       carries anyway); encode(x, decode(x)) == x byte for byte.
-files.json: {"dir", "files", optional "holdout" (unseen files for --holdout), optional "coverage" (fnmatch patterns of
+files.json: {"dir", "files", optional "holdout" + "holdout_dir" (unseen files for --holdout, in a directory the lane
+cannot read), optional "coverage" (fnmatch patterns of
 the files the coverage check applies to; default all)}.
 Checks per file:
   - coverage: every run of >= 4 printable characters ending at a NUL in the file appears inside some decoded string
@@ -38,6 +39,7 @@ HEXLIKE = re.compile(r'^[0-9a-fA-F]{33,}$|^[A-Za-z0-9+/=]{48,}$')
 CTRL = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]')
 PRINT = re.compile(rb'[\x20-\x7e]{4,}\x00')
 isint = lambda v: isinstance(v, int) and not isinstance(v, bool)
+HSEED = random.SystemRandom().randrange(1 << 30)   # holdout edits are unpredictable even though this file is readable
 
 
 def run(codec, args, files, out, limit):
@@ -161,12 +163,12 @@ def main():
     ok_all, results = True, []
     for i, name in enumerate(cfg.get('holdout', cfg['files']) if hold else cfg['files']):
         try:
-            blob = safe_read(f'{cfg["dir"]}/{name}', 4 << 20)
+            blob = safe_read(f'{cfg.get("holdout_dir", cfg["dir"]) if hold else cfg["dir"]}/{name}', 4 << 20)
             doc = decode(codec, name, blob)
             validate(name, blob, doc, any(fnmatch.fnmatch(name, p) for p in cfg.get('coverage', ['*'])))
             if encode(codec, name, blob, doc) != blob: fail(f'{name}: encode(decode(x)) != x')
             for r in range(3 if hold else 1):
-                edit_test(codec, name, blob, doc, (9000 if hold else 100) + 31 * i + r, 6 if hold else 3)
+                edit_test(codec, name, blob, doc, (HSEED if hold else 100) + 31 * i + r, 6 if hold else 3)
             results.append(dict(file=name, ok=True))
         except Exception as e:
             ok_all = False

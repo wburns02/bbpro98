@@ -191,7 +191,8 @@ def main():
         return
     hold = '--holdout' in sys.argv
     ok_all, results = True, []
-    cases = [(f'synth{s}', synth(blob, 1000 + s), 1000 + s) for s in range(4)] if hold else [('DMP.DAT', blob, 7)]
+    base = random.SystemRandom().randrange(1 << 30)   # unpredictable: this file is readable by the lanes
+    cases = [(f'synth{s}', synth(blob, base + s), base + s) for s in range(4)] if hold else [('DMP.DAT', blob, 7)]
     for name, data, seed in cases:
         try:
             n = check_file(codec, data, True, seed)

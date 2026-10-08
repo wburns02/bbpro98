@@ -303,7 +303,8 @@ def main():
     hold = '--holdout' in sys.argv
     if hold:
         pool = [r for b in blobs.values() for r in parse(b)[0]]
-        cases = [(f'synth{s}', synth(pool, 5000 + s), 5000 + s) for s in range(4)]
+        base = random.SystemRandom().randrange(1 << 30)   # unpredictable: this file is readable by the lanes
+        cases = [(f'synth{s}', synth(pool, base + s), base + s) for s in range(4)]
     else:
         cases = [(n, b, 17 + i) for i, (n, b) in enumerate(blobs.items())]
     ok_all, results = True, []
