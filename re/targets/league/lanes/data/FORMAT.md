@@ -229,3 +229,5 @@ innings/aux).  All writes go back through `T[.]` for the enciphered members.  Si
 key byte (raw byte 0, or s.dat bytes 0..3) and no record length ever changes, the c-tree
 indexes stay valid without a rebuild, and a contract edit (rename, +3 wins, +1 run)
 changes exactly 3 records.
+
+> Superseded (2026-10-07, league.py writers): manager is char[17] at 0x34 and the a.dat trophy is char[33] at 0x33 in every file; see work/RE_FINDINGS.md "league.py writes every member".

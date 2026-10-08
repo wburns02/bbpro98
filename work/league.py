@@ -9,10 +9,15 @@ field-by-field layout and the evidence.
 decode: python3 league.py decode in.bin out.json
 encode: python3 league.py encode in.bin edited.json out.bin
 
-encode copies in.bin and rewrites only the bytes that differ from edited.json, so
-encode(x, decode(x)) == x byte for byte and an edit touches exactly the records that
-carry the edited fields (indexes stay valid because no key byte and no record length
-changes).
+encode copies in.bin and rewrites only the records whose fields differ in edited.json, so
+encode(x, decode(x)) == x byte for byte and an edit touches exactly the records that carry the
+edited fields (indexes stay valid because no key byte and no record length changes).
+Writable: teams name/manager/abbrev/stadium/city8/field_ac/w/l/roster, games and specials, association
+name/trophy/day1/day2, leagues idx/name/abbrev/divisions, divisions league_idx/div_idx/name/teams,
+transactions, playoff, sp, draft.  Strings are written strcpy style (string + NUL, stale tail kept)
+and must fit their field.  Every edit is read back after the rewrite: an edit to a field encode
+cannot write (stored_name, roster_window, keys, derived team league_idx/division) or to
+the record count fails with an error instead of being dropped.
 """
 import json
 import struct
@@ -56,6 +61,12 @@ def _enc(buf):
 
 NAME_FIELD = 32                # team name field at payload 0x12..0x31 (31 chars + NUL); manager follows at 0x32
 
+# string fields: (offset, bytes incl. the NUL).  A shorter string is written strcpy style: string + NUL, the stale
+# tail after it is kept (the game leaves the same garbage there).
+ASN_NAME, ASN_TROPHY, ASN_STR = 0x12, 0x33, 33     # a.dat: association name, trophy (edit gadgets 16 / 65, maxLength 32)
+T_MANAGER, T_ABBREV, T_STADIUM, T_CITY8 = (0x34, 17), (0x45, 4), (0x53, 30), (0x74, 9)   # t.dat (stadium NUL can land at 0x70; 0x71 = data)
+L_NAME, L_ABBREV = (4, 33), (0x25, 3)              # l.dat; divisions list at 0x2a..0x2c
+D_NAME = (3, 17)                                   # d.dat; team ids at 0x14..0x1d
 TEMPLATE_KEY = 100             # raw key byte of unused template records (T[deciphered 0x51])
 
 # ---------------------------------------------------------------- container walk
@@ -91,21 +102,6 @@ def _cstr(p, at, cap):
     if end < 0 or end > at + cap:
         end = min(at + cap, len(p))
     return p[at:end].decode('latin-1', 'replace')
-
-
-def _runs(p, lo, hi, minlen):
-    """Printable ascii runs of at least minlen bytes in p[lo:hi], in file order."""
-    out, cur = [], bytearray()
-    for b in p[lo:hi]:
-        if 32 <= b < 127:
-            cur.append(b)
-        else:
-            if len(cur) >= minlen:
-                out.append(cur.decode('latin-1'))
-            cur = bytearray()
-    if len(cur) >= minlen:
-        out.append(cur.decode('latin-1'))
-    return out
 
 
 # ---------------------------------------------------------------- decode helpers
@@ -165,9 +161,11 @@ def parse_container(d):
     # --- transactions (tr.dat, plain) feed extra roster ids
     tr_pids = {}
     transactions = []
+    tr_recs = []
     for off, p in _live(d, by_mem, 16):
         if len(p) < 21:
             continue
+        tr_recs.append((off, p))
         rec = {'day': _u32(p, 2), 'kind': p[20]}
         for k, base in ((1, 6), (2, 13)):
             pid = _u16(p, base)
@@ -195,12 +193,9 @@ def parse_container(d):
         t['abbrev'] = _cstr(t['p'], 0x45, 3)
         t['stadium'] = _cstr(t['p'], 0x53, 30)
         t['city8'] = _cstr(t['p'], 0x74, 8)
-        mgr = _runs(t['p'], 0x30, 0x45, 4)
-        mgr = mgr[-1].strip() if mgr else ''
-        # day-file team records carry a stray template byte before the manager name
-        if len(mgr) > 2 and mgr[0].islower() and mgr[1].isupper():
-            mgr = mgr[1:]
-        t['manager'] = mgr
+        # manager: char[17] at 0x34 (16 chars, 'Marcel Lachemann'); the bytes before it are stale in day files and
+        # the tail after the NUL keeps old names ('Art Howe\0lins'), so no printable-run scan
+        t['manager'] = _cstr(t['p'], T_MANAGER[0], T_MANAGER[1] - 1)
         t['field_ac'] = _u32(t['p'], 0xac) if len(t['p']) >= 0xb0 else 0
 
     # --- schedule (s.dat, plain).  Regular-season games: two real team ids and no
@@ -217,21 +212,23 @@ def parse_container(d):
             specials.append({'off': off, 'p': p, 'rec': rec})
 
     # --- leagues / divisions
-    divisions = []
+    divisions, recs = [], {'d': [], 'l': [], 'a': []}
     for off, raw in _live(d, by_mem, 6):
         if raw[0] == TEMPLATE_KEY:
             continue
         p = _dec(raw)
+        recs['d'].append((off, p))
         divisions.append({
             'key': raw[0], 'league_idx': p[1], 'div_idx': p[2],
             'name': _cstr(p, 3, 16),
-            'teams': [x for x in p[20:25] if 1 <= x <= 28],
+            'teams': [x for x in p[20:30] if 1 <= x <= 28],
         })
     leagues = []
     for off, raw in _live(d, by_mem, 4):
         if raw[0] == TEMPLATE_KEY:
             continue
         p = _dec(raw)
+        recs['l'].append((off, p))
         leagues.append({
             'key': raw[0], 'idx': p[1],
             'name': _cstr(p, 4, 22), 'abbrev': _cstr(p, 0x25, 2),
@@ -244,12 +241,21 @@ def parse_container(d):
     doc['divisions'] = divisions
     doc['leagues'] = leagues
     doc['transactions'] = transactions
-    doc['association'] = [
-        {'key': raw[0], 'day1': _u32(_dec(raw), 10) if len(raw) >= 18 else 0,
-         'day2': _u32(_dec(raw), 14) if len(raw) >= 18 else 0,
-         'strings': _runs(_dec(raw), 0, len(raw), 4)}
-        for off, raw in _live(d, by_mem, 2) if raw[0] != TEMPLATE_KEY]
+    doc['association'] = []
+    for off, raw in _live(d, by_mem, 2):
+        if raw[0] == TEMPLATE_KEY or len(raw) < ASN_TROPHY + ASN_STR:
+            continue
+        p = _dec(raw)
+        recs['a'].append((off, p))
+        doc['association'].append({'key': raw[0], 'day1': _u32(p, 10), 'day2': _u32(p, 14),
+                                   'name': _cstr(p, ASN_NAME, ASN_STR - 1),
+                                   'trophy': _cstr(p, ASN_TROPHY, ASN_STR - 1)})
+    doc['_recs'] = recs
+    doc['_tr'] = tr_recs
     df = _live(d, by_mem, 18)
+    doc['_df'] = df[0] if df else None
+    doc['_po'] = _live(d, by_mem, 20)
+    doc['_sp'] = _live(d, by_mem, 22)
     if df:
         dp = df[0][1]
         doc['draft'] = {'values': [struct.unpack_from('<H', dp, i)[0] for i in range(0, len(dp) - 1, 2)]}
@@ -305,30 +311,140 @@ def cmd_decode(inp, outp):
 # ---------------------------------------------------------------- encode
 
 
+class EditError(ValueError):
+    pass
+
+
+def _put_str(p, field, val, what):
+    """strcpy val into p at field = (offset, size incl. NUL); the tail after the NUL is left as it was."""
+    at, size = field
+    if not isinstance(val, str):
+        raise EditError(f'{what}: not a string')
+    vb = val.encode('latin-1')
+    if len(vb) >= size or 0 in vb:
+        raise EditError(f'{what}: {val!r} longer than {size - 1} bytes (or holds a NUL)')
+    if _cstr(p, at, size - 1) != val:
+        p[at:at + len(vb) + 1] = vb + b'\0'
+
+
+def _int(v, lo, hi, what):
+    if not isinstance(v, int) or isinstance(v, bool) or not lo <= v <= hi:
+        raise EditError(f'{what}: {v!r} not an int in {lo}..{hi}')
+    return v
+
+
+def _put_enc(buf, off, old, p):
+    if bytes(p) != old:
+        buf[off:off + len(p)] = _enc(bytes(p))
+
+
 def _patch_team(buf, t, js):
     p = bytearray(t['p'])
     off = t['off']
     name = js.get('name')
     if isinstance(name, str) and name != t['name']:
-        nb = name.encode('latin-1', 'replace')[:NAME_FIELD - 1]
+        nb = name.encode('latin-1')
+        if len(nb) >= NAME_FIELD:
+            raise EditError(f'team {t["tid"]} name: longer than {NAME_FIELD - 1} bytes')
         p[0x12:0x12 + NAME_FIELD] = nb + bytes(NAME_FIELD - len(nb))
+    if 'manager' in js and js['manager'] != t['manager']:
+        _put_str(p, T_MANAGER, js['manager'], f'team {t["tid"]} manager')
+    for key, field in (('abbrev', T_ABBREV), ('stadium', T_STADIUM), ('city8', T_CITY8)):
+        if key in js:
+            _put_str(p, field, js[key], f'team {t["tid"]} {key}')
+    if 'field_ac' in js and js['field_ac'] != t['field_ac']:
+        struct.pack_into('<I', p, 0xac, _int(js['field_ac'], 0, 0xffffffff, f'team {t["tid"]} field_ac'))
     if 'w' in js or 'l' in js:
-        w = int(js.get('w', t['w'])); l = int(js.get('l', t['l']))
-        if t['xs_off'] is not None and (w != t['w'] or l != t['l']):
+        w = _int(js.get('w', t['w']), 0, 255, 'w'); l = _int(js.get('l', t['l']), 0, 255, 'l')
+        if (w != t['w'] or l != t['l']):
+            if t['xs_off'] is None:
+                raise EditError(f'team {t["tid"]}: no xs.dat record for w/l')
             xs = bytearray(t['xs_raw'])
-            xs[1] = w & 0xff
-            xs[2] = l & 0xff
+            xs[1] = w
+            xs[2] = l
             buf[t['xs_off']:t['xs_off'] + 16] = _enc(xs)
     ros = js.get('roster')
     if (isinstance(ros, list) and t['r_off'] is not None
             and sorted({int(x) for x in ros}) != sorted(t['roster'])):
         rp = bytearray(t['r_p'])
-        ids = sorted({int(x) for x in ros})[:126]
+        ids = sorted({_int(x, 100, 9999, 'roster id') for x in ros})
+        if len(ids) > 126:
+            raise EditError(f'team {t["tid"]} roster: {len(ids)} ids, the r.dat window holds 126')
         ids += [0] * (126 - len(ids))
-        struct.pack_into('<126H', rp, 42, *[i & 0xffff for i in ids])
+        struct.pack_into('<126H', rp, 42, *ids)
         buf[t['r_off']:t['r_off'] + len(rp)] = _enc(rp)
-    if bytes(p) != t['p']:
-        buf[off:off + len(p)] = _enc(p)
+    _put_enc(buf, off, t['p'], p)
+
+
+def _patch_assn(buf, rec, js):
+    off, old = rec
+    p = bytearray(old)
+    _put_str(p, (ASN_NAME, ASN_STR), js.get('name'), 'association name')
+    _put_str(p, (ASN_TROPHY, ASN_STR), js.get('trophy'), 'association trophy')
+    for o, k in ((10, 'day1'), (14, 'day2')):
+        struct.pack_into('<I', p, o, _int(js.get(k), 0, 0xffffffff, f'association {k}'))
+    _put_enc(buf, off, old, p)
+
+
+def _patch_league(buf, rec, js):
+    off, old = rec
+    p = bytearray(old)
+    p[1] = _int(js.get('idx'), 0, 255, 'league idx')
+    _put_str(p, L_NAME, js.get('name'), 'league name')
+    _put_str(p, L_ABBREV, js.get('abbrev'), 'league abbrev')
+    dv = js.get('divisions')
+    if not isinstance(dv, list) or len(dv) > 3:
+        raise EditError('league divisions: list of at most 3 division keys')
+    p[0x2a:0x2d] = bytes([_int(x, 1, 255, 'league division') for x in dv] + [0] * (3 - len(dv)))
+    _put_enc(buf, off, old, p)
+
+
+def _patch_division(buf, rec, js):
+    off, old = rec
+    p = bytearray(old)
+    p[1] = _int(js.get('league_idx'), 0, 255, 'division league_idx')
+    p[2] = _int(js.get('div_idx'), 0, 255, 'division div_idx')
+    _put_str(p, D_NAME, js.get('name'), 'division name')
+    tm = js.get('teams')
+    if not isinstance(tm, list) or len(tm) > 10:
+        raise EditError('division teams: list of at most 10 team ids')
+    p[0x14:0x1e] = bytes([_int(x, 1, 28, 'division team') for x in tm] + [0] * (10 - len(tm)))
+    _put_enc(buf, off, old, p)
+
+
+def _patch_tr(buf, rec, js):
+    off, old = rec
+    p = bytearray(old)
+    struct.pack_into('<I', p, 2, _int(js.get('day'), 0, 0xffffffff, 'transaction day'))
+    p[20] = _int(js.get('kind'), 0, 255, 'transaction kind')
+    for k, base in ((1, 6), (2, 13)):
+        for o, f in ((0, 'pid'), (2, 'f'), (4, 'g')):
+            struct.pack_into('<H', p, base + o, _int(js.get(f'{f}{k}'), 0, 0xffff, f'transaction {f}{k}'))
+        p[base + 6] = _int(js.get(f'team{k}'), 0, 255, f'transaction team{k}')
+    buf[off:off + len(p)] = p
+
+
+def _hexbytes(h, n, what):
+    try:
+        b = bytes.fromhex(h)
+    except (TypeError, ValueError):
+        raise EditError(f'{what}: not hex')
+    if len(b) != n:
+        raise EditError(f'{what}: {len(b)} bytes, the record holds {n}')
+    return b
+
+
+def _patch_playoff(buf, rec, js):
+    off, old = rec
+    p = bytearray(old)
+    hd = js.get('head')
+    if not isinstance(hd, list) or len(hd) != 4:
+        raise EditError('playoff head: list of 4 bytes')
+    p[0:4] = bytes(_int(x, 0, 255, 'playoff head') for x in hd)
+    struct.pack_into('<H', p, 4, _int(js.get('f4'), 0, 0xffff, 'playoff f4'))
+    struct.pack_into('<I', p, 6, _int(js.get('day'), 0, 0xffffffff, 'playoff day'))
+    p[10:] = _hexbytes(js.get('hex'), len(old) - 10, 'playoff hex')
+    buf[off:off + len(p)] = p
 
 
 def _patch_game(buf, g, js):
@@ -351,25 +467,119 @@ def _patch_game(buf, g, js):
         buf[off:off + len(p)] = p
 
 
-def cmd_encode(inp, jsonp, outp):
-    with open(inp, 'rb') as fh:
-        buf = bytearray(fh.read())
-    with open(jsonp, 'r') as fh:
-        js = json.load(fh)
-    doc = parse_container(bytes(buf))
+def _diff(a, b, path=''):
+    """Paths where two decoded json values differ."""
+    if isinstance(a, dict) and isinstance(b, dict):
+        out = []
+        for k in sorted(set(a) | set(b), key=str):
+            if k not in a or k not in b:
+                out.append(f'{path}.{k}')
+            else:
+                out += _diff(a[k], b[k], f'{path}.{k}')
+        return out
+    if isinstance(a, list) and isinstance(b, list):
+        if len(a) != len(b):
+            return [f'{path} (length {len(a)} -> {len(b)}: records cannot be added or removed)']
+        out = []
+        for i, (x, y) in enumerate(zip(a, b)):
+            out += _diff(x, y, f'{path}[{i}]')
+        return out
+    return [] if a == b else [path]
+
+
+def _norm(js):
+    """Order-free fields compared as sets."""
+    js = json.loads(json.dumps(js))
+    for t in js.get('teams', []):
+        if isinstance(t.get('roster'), list):
+            t['roster'] = sorted(set(t['roster']))
+    return js
+
+
+def encode_bytes(d, js):
+    """Apply every edit in js (a decode() document) to the file bytes d.  Raises EditError on an edit this codec
+    cannot write, or one that does not read back: the output is decoded again and every path that differs between
+    the original decode and js must equal js there."""
+    buf = bytearray(d)
+    doc = parse_container(d)
+    base = build_json(doc)
+    want = _norm(js)
+    edits = _diff(_norm(base), want)
+    if not edits:
+        return bytes(buf)
+
+    def pairs(key, recs):
+        got = js.get(key, [])
+        if len(got) != len(recs):
+            raise EditError(f'{key}: {len(got)} records, the file has {len(recs)} (records cannot be added or removed)')
+        return [(r, g) for r, g, b in zip(recs, got, base[key]) if g != b]
 
     by_tid = {t['tid']: t for t in doc['teams']}
-    for jt in js.get('teams', []):
-        t = by_tid.get(int(jt.get('tid', 0)))
-        if t is not None:
+    for jt, bt in zip(js.get('teams', []), base['teams']):
+        if jt != bt:
+            t = by_tid.get(jt.get('tid'))
+            if t is None or jt.get('tid') != bt['tid']:
+                raise EditError('teams: tid changed or reordered')
             _patch_team(buf, t, jt)
-    for jg, g in zip(js.get('games', []), doc['games']):
-        _patch_game(buf, g, jg)
-    for jg, g in zip(js.get('specials', []), doc['specials']):
-        _patch_game(buf, g, jg)
+    for key, recs in (('games', doc['games']), ('specials', doc['specials'])):
+        for g, jg in pairs(key, recs):
+            _patch_game(buf, g, jg)
+    for key, recs, fn in (('association', doc['_recs']['a'], _patch_assn), ('leagues', doc['_recs']['l'], _patch_league),
+                          ('divisions', doc['_recs']['d'], _patch_division), ('transactions', doc['_tr'], _patch_tr),
+                          ('playoff', doc['_po'], _patch_playoff)):
+        for rec, jr in pairs(key, recs):
+            if jr.get('key', None) is not None and key in ('association', 'leagues', 'divisions'):
+                if jr['key'] != base[key][recs.index(rec)]['key']:
+                    raise EditError(f'{key}: key is the index key and cannot change')
+            fn(buf, rec, jr)
+    for (off, old), jr in pairs('sp', doc['_sp']):
+        buf[off:off + len(old)] = _hexbytes(jr.get('hex'), len(old), 'sp hex')
+    if base.get('draft') != js.get('draft'):
+        if doc['_df'] is None or not isinstance(js.get('draft', {}).get('values'), list):
+            raise EditError('draft: no df.dat record / values not a list')
+        off, old = doc['_df']
+        vals = js['draft']['values']
+        if len(vals) != len(base['draft']['values']):
+            raise EditError('draft values: length is fixed')
+        p = bytearray(old)
+        for i, v in enumerate(vals):
+            struct.pack_into('<H', p, 2 * i, _int(v, 0, 0xffff, 'draft value'))
+        buf[off:off + len(p)] = p
 
+    got = _norm(build_json(parse_container(bytes(buf))))
+    bad = []
+    for path in edits:
+        if _diff(_pick(got, path), _pick(want, path)):
+            bad.append(path)
+    if bad:
+        raise EditError('edits this codec cannot write (or that do not read back): ' + ', '.join(bad[:20])
+                        + (f' (+{len(bad) - 20} more)' if len(bad) > 20 else ''))
+    return bytes(buf)
+
+
+def _pick(js, path):
+    import re
+    cur = js
+    for name, idx in re.findall(r'\.([^.\[ ]+)|\[(\d+)\]', path.split(' (')[0]):
+        try:
+            cur = cur[int(idx)] if idx else cur[name]
+        except (KeyError, IndexError, TypeError):
+            return KeyError
+    return cur
+
+
+def cmd_encode(inp, jsonp, outp):
+    with open(inp, 'rb') as fh:
+        d = fh.read()
+    with open(jsonp, 'r') as fh:
+        js = json.load(fh)
+    try:
+        out = encode_bytes(d, js)
+    except EditError as e:
+        sys.stderr.write(f'league.py encode: {e}\n')
+        return 1
     with open(outp, 'wb') as fh:
-        fh.write(bytes(buf))
+        fh.write(out)
     return 0
 
 

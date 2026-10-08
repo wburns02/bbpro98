@@ -279,3 +279,22 @@ list survives past the live one. The misc8 data lane won; its bb.cfg names were 
 - sndvol.cfg is dead: nothing references the name; volumes are [Sounds] settings.
 - The chunks GLM data lane won round 3 on the referee but misread several layouts (packed u16 textures, ce8c,
   7709/cb7c alignment, raw 947d runs); simchunks.py replaces it.
+
+## 2026-10-07: league.py writes every member, in-game shell edit test (work/harness/t_shell_edits.py)
+
+- league.py encode used to patch only team name, w/l, roster and games; edits to the association, leagues,
+  divisions, transactions, playoff, sp, draft and most team fields were dropped silently (the output was
+  byte-identical). Now every decoded field is written except derived ones, and encode decodes its own output and
+  fails if any edited path does not read back (unwritable field, string too long, record added or removed).
+- a.dat association record (deciphered): day1 u32 at 0x0a, day2 u32 at 0x0e, name char[33] at 0x12, trophy
+  char[33] at 0x33 (both edit gadgets have maxLength 32), stale pointers 0x68081c68 / 0x68090698 at 0x4c / 0x50,
+  flags from 0x54. Same offsets in every file on disk (fresh, day files, s10); the data lane's "0x3a in simmed
+  files" was a misread.
+- t.dat manager is char[17] at 0x34 in every file ("Marcel Lachemann" is 16 chars). The old printable-run scan of
+  0x30..0x44 read stale tails as the name ("lins" for Art Howe, "ngton" for Bob Boone). Stadium char[30] at 0x53,
+  city8 char[9] at 0x74, abbrev char[4] at 0x45.
+- l.dat: name char[33] at 4, abbrev char[3] at 0x25, division keys at 0x2a..0x2c. d.dat: name char[17] at 3, team
+  ids at 0x14..0x1d (10 slots).
+- Strings are written strcpy style (string + NUL, stale tail kept), like the game.
+- In game: the Association Data requester's label gadget is 149 px wide (a longer label is clipped) and its caption's
+  right neighbour is the name gadget at x=228 (a longer caption is overdrawn). Same-width text draws cleanly.
