@@ -367,3 +367,10 @@ list survives past the live one. The misc8 data lane won; its bb.cfg names were 
   are very low and strikeouts high next to MLB (a modding target, not a decoder error).
 - The association stops at the mid-June amateur draft until the draft is run; re/simdays.py now runs it (Draft Delay
   Time 0, Start/Continue Draft) and continues.
+
+## 2026-10-08: ASN "news pool" = c-tree members sp and tr
+- ctree.py's member map of MLBPA97.ASN puts the 0x27E000..0x29A800 "news block" tail inside sp.dat (1398 records of
+  25 bytes, 0x53e12..0x296c12) and sp.idx, and the "Pool-B 39-byte `fa fa 27` records" inside tr.dat (749 records of
+  21 bytes plus the 18-byte c-tree variable-length header, 0x32612..0x6d4ae; 0xFAFA is the c-tree record mark). The
+  2026-10-07 section above decoded raw pages before the c-tree layer existed. league.py reads and writes both members
+  (`sp`, `transactions`), so the news pool is writable.

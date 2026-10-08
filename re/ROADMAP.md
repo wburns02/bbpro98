@@ -11,7 +11,7 @@ final verification. Fable/Opus only when a lane stalls 2-3 rounds.
 | PYR rosters/ratings | yes | yes, byte round-trip | BBPRO98_package/research/pyr_io.py |
 | mlbpa97.DAT stats DB: every stat record (bat 17, pit 32, fielding 9x8, 20 split tables; scopes recent/season/career/last-season/matchup) | yes, box-score deltas days 1-9 + holdout | yes, in-place by field name; scope/pid via work/ctree.py | work/stats.py (GLM data lane, round 1) |
 | MLBPA97.H?? per-game box scores | yes, 1.0000 incl. holdout | trivial (plaintext tables) | re/hfiles/lanes/data/hdecode.py |
-| ASN news pool | yes | no | RE_FINDINGS.md |
+| ASN news pool | yes | yes: it is two c-tree members, sp.dat (1398 x 25-byte records, the 0x27E000 tail) and tr.dat (749 transactions, the 39-byte `fa fa 27` variable-length records at 0x30000..0x6D500); league.py writes both (`sp`, `transactions`). News text = ASNEWS/TMNEWS strings (strtable.py) | work/league.py; ctree.py member map 2026-10-08 |
 | SOUND.DAT (227 WAV clips) | yes | yes, byte round-trip + resize | work/sounddat.py |
 | `00 01 06 07` chunk container: SIM.DAT, Stadia/*.DAT/*.DT (57 files) | yes | yes, 57/57 byte round-trip + resize/delete | work/chunkdat.py |
 | Raw chunk images (340 chunks, 25.8 MB: stadium stands PB/RC, field AF/GF) + PAL: palettes | yes, rendered | yes (38-byte header + w*h indices) | RE_FINDINGS 2026-10-07 |
