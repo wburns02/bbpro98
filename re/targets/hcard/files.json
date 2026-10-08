@@ -1,0 +1,21 @@
+{
+ "days": [
+  "/mnt/nvme/bbpro98/targets_data/stats/day01",
+  "/mnt/nvme/bbpro98/targets_data/stats/day02",
+  "/mnt/nvme/bbpro98/targets_data/stats/day03",
+  "/mnt/nvme/bbpro98/targets_data/stats/day04",
+  "/mnt/nvme/bbpro98/targets_data/stats/day05",
+  "/mnt/nvme/bbpro98/targets_data/stats/day06",
+  "/mnt/nvme/bbpro98/targets_data/stats/day07",
+  "/mnt/nvme/bbpro98/targets_data/stats/day08",
+  "/mnt/nvme/bbpro98/targets_data/stats/day09"
+ ],
+ "holdout_days": [
+  "/mnt/nvme/bbpro98/targets_holdout/stats/day10"
+ ],
+ "holdout_prev": "/mnt/nvme/bbpro98/targets_data/stats/day09",
+ "edit": [
+  "day05",
+  "day09"
+ ]
+}
