@@ -68,9 +68,9 @@ Strings keep bytes left after their NUL as `<key>_tail: [offset, text]`.
 | 0x3ea | 1 | one_pitch | FUN_68061b60 = setup +0x6d, Exhibition Play "One Pitch Mode" (gadget 74; default 0) |
 | 0x3eb | 9 | stadium_file | FUN_68061c10; city8 stem, the sim maps "." to ".dat" |
 | 0x3f4 | 12 | box_file | "MLBPA97.HB0": the game's box-score file |
-| 0x400 | 2 | at_0x400 | |
+| 0x400 | 2 | at_0x400 | no shell setter writes it (FUN_68061b20..68061c40 cover the rest of the tail); 0 in all data |
 | 0x402 | 1 | stadium_flag | FUN_68061c40; stadium record +0x43 |
-| 0x403 | 2 | at_0x403 | FUN_68061bf0; a word from the weather roll (FUN_68065410) |
+| 0x403 | 2 | elevation_ft | FUN_68061bf0 from the weather roll (FUN_68065410 out +2 = weather object +2, read from the home city's WEATHER.DAT record +40); Miami 10, Houston 40 in the data |
 
 ### ADI (12 bytes)
 

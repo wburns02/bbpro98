@@ -174,7 +174,7 @@ def decode_record(r):
     _get_str(g, 'box_file', r[0x3f4:0x400])
     g['at_0x400'] = [r[0x400], r[0x401]]
     g['stadium_flag'] = r[0x402]
-    g['at_0x403'] = struct.unpack_from('<H', r, 0x403)[0]
+    g['elevation_ft'] = struct.unpack_from('<H', r, 0x403)[0]
     return g
 
 
@@ -200,7 +200,7 @@ def encode_record(g):
     if len(g['at_0x400']) != 2:
         _fail('at_0x400 holds 2 bytes')
     r[0x400:0x402] = bytes(_int(x, 0, 255, 'at_0x400') for x in g['at_0x400'])
-    struct.pack_into('<H', r, 0x403, _int(g['at_0x403'], 0, 0xffff, 'at_0x403'))
+    struct.pack_into('<H', r, 0x403, _int(g['elevation_ft'], 0, 0xffff, 'elevation_ft'))
     return bytes(r)
 
 
