@@ -196,3 +196,13 @@ src-latest/mods/seed.c `shell=N` redirects the seeding time() call in each DLL (
 LineUp 0x6b011dec, Upstats 0x6c018c0c) to return N; `trace=1` logs the seeds. Two runs with
 `MODKV="value=12345 shell=4321"` (game mode, 2 days, snapshot per day) give byte-identical game.bki and game.bko on both
 days.
+
+## 2026-10-07: shell string tables (work/strtable.py, work/spec/STRTABLE_FORMAT.md)
+
+Nine SHELL.VOL DATs share one two-level string table: u16 total, a u16 word array W where W[s] is the word index of
+section s's first string entry (W[0] doubles as the section count), then string offsets, then the strings back to back.
+BBShell FUN_68051ac0(alloc, file, section, count, dest) reads `count` strings bounded by the next entry, so each section
+ends with an empty end marker. FUN_68051c50 turns `\` into a newline at load. ROSTEXT sections 2/3 are the parallel
+483-entry stat abbreviation / description arrays. The voltext code lane won with a byte-exact codec that read the index
+wrong and glued index bytes to the first string to satisfy coverage; voldatref.py coverage now accepts a run whose
+tail is a whole decoded string.

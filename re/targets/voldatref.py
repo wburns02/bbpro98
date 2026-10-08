@@ -19,6 +19,7 @@ cannot read), optional "coverage" (fnmatch patterns of
 the files the coverage check applies to; default all)}.
 Checks per file:
   - coverage: every run of >= 4 printable characters ending at a NUL in the file appears inside some decoded string
+    (or ends with one whole decoded string of >= 4 characters: the run started inside binary data)
   - no byte dumps: int lists of > 8 items all within 0..255, hex/base64-like strings > 32 chars and control
     characters inside strings (derived "_" data included) count against a budget of 25% of the file size
   - at most 25% of the distinct keys are generic (f12, field3, unk7, ...)
@@ -112,10 +113,15 @@ def validate(name, blob, doc, coverage=True):
     if not isinstance(doc, dict) or not doc: fail(f'{name}: decode output must be a non-empty JSON object')
     strs = [v for _, v in content(doc) if isinstance(v, str)]
     allstr = '\x00'.join(strs)
+    tails = {}
+    for t in strs:
+        if len(t) >= 4: tails.setdefault(t[-4:], []).append(t)
     missing = []
     for m in (PRINT.finditer(blob) if coverage else ()):
         s = m.group()[:-1].decode('latin1')
-        if s not in allstr: missing.append(s)
+        # a run may start inside the binary index (ROSTEXT: offset words print as 'AJA' before 'Historical data'):
+        # accept it when its tail is exactly one decoded string of >= 4 characters
+        if s not in allstr and not any(s.endswith(t) for t in tails.get(s[-4:], ())): missing.append(s)
     if missing: fail(f'{name}: {len(missing)} strings of the file are not in the decoded content, e.g. {missing[:3]}')
     d = dumps_budget(doc)
     if d > 0.25 * len(blob): fail(f'{name}: {d} bytes are kept as raw byte lists/hex strings (budget {len(blob) // 4})')
