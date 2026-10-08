@@ -248,7 +248,7 @@ def enc_shape(doc):
 # info.dat (Stadia/<park>.DAT, the sim's copy) and the shell's <park>.DT (74 bytes). Both "STA:" u32 size.
 # .DAT: name[63] (8), dome (71), short_name[30] (72); BBSIM FUN_6806f2eb / FastSim read these 0x5e bytes into the
 # stadium object (+0x12). Then BBSIM FUN_6806c898 (Smodel.cpp, seek 0x66) = FastSim 52208: s16 version (must be 6),
-# sky color (0 = default 0x47/0x4f; DAT_681ec12c), at_0x6a (stored +1 at stadium +0x82), at_0x6c (stadium +0x20),
+# sky color (0 = default 0x47/0x4f; DAT_681ec12c), field_pattern (stored +1 at stadium +0x82: 1 turf, 2 mow lines, 3 checkered, 4 circles), at_0x6c (stadium +0x20),
 # color-cycle frames (FUN_68074849, one step per 1000 ticks), crowd colors (FUN_6807491f paints polygon color 0xf4
 # with pair 1 and 0xf5 with pair 2), 4 palette cycles (start, count, step; FUN_6806d066 rotates them), the foul poles
 # (+8, +0x18), two side pairs read by FUN_68019330 (dugouts) and FUN_68061c40 (on-deck circles), then the fence
@@ -280,7 +280,7 @@ def dec_info(d):
     if 170 + 6 * n != len(d):
         _fail('stadium info: bytes after the fence outline')
     doc = {'_kind': 'sim info', 'name': name, 'dome': d[71], 'short_name': short, 'sky_color': sky,
-           'at_0x6a': a6a, 'at_0x6c': a6c, 'color_cycle_frames': ncyc,
+           'field_pattern': a6a, 'at_0x6c': a6c, 'color_cycle_frames': ncyc,
            'crowd_colors': [[c[0], c[1]], [c[2], c[3]]],
            'palette_cycles': [dict(zip(('start', 'count', 'step'), _u('<3h', d, 120 + 6 * i))) for i in range(4)],
            'left_field_pole': _xy(d, 144), 'right_field_pole': _xy(d, 148),
@@ -298,7 +298,7 @@ def enc_info(doc):
     else:
         P = _efix(doc['name'], doc.get('_name_tail'), 63) + bytes([doc['dome']])
         P += _efix(doc['short_name'], doc.get('_short_name_tail'), 30)
-        P += struct.pack('<5h', 6, doc['sky_color'], doc['at_0x6a'], doc['at_0x6c'], doc['color_cycle_frames'])
+        P += struct.pack('<5h', 6, doc['sky_color'], doc['field_pattern'], doc['at_0x6c'], doc['color_cycle_frames'])
         P += struct.pack('<4h', *doc['crowd_colors'][0], *doc['crowd_colors'][1])
         if len(doc['palette_cycles']) != 4:
             _fail('stadium info: 4 palette cycles')

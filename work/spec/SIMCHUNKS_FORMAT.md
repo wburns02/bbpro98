@@ -94,7 +94,7 @@ FastSim 52208 seek 0x66 for the rest):
 | 72 | short_name[30] |
 | 102 | s16 version, must be 6 |
 | 104 | s16 sky_color: 0 = the default 0x47 / 0x4f, else DAT_681ec12c (HOUSTON 66) |
-| 106 | s16 at_0x6a: stored + 1 at stadium +0x82 (read again by BBSIM 44458, FastSim 36261) |
+| 106 | s16 field_pattern: stored + 1 at stadium +0x82, the field palette load_game_palettes (BBSIM FUN_680303dd) picks: 0 fatrf.pal artificial turf (CINCINNA, MINNESOT, MONTREAL, PHILADEL, STLOUIS), 1 fglin.pal mow lines, 2 fgchx.pal checkered, 3 fgcrc.pal circles (BALTIMOR); +0x7e is the options override (0 = this default); FUN_68038070 = turf test for the field markings |
 | 108 | s16 at_0x6c: stadium +0x20 |
 | 110 | s16 color_cycle_frames (DAT_681cc090; FUN_68074849 steps every 1000 ticks) |
 | 112 | 2 x 2 s16 crowd_colors (FUN_6807491f: polygon color 0xf4 -> pair 1, 0xf5 -> pair 2) |
@@ -178,6 +178,6 @@ from the [Sounds] settings keys (SoundsOn, ActionVol, ...). Kept as `unused_valu
 
 ## Open
 
-- info.dat at_0x6a / at_0x6c meaning, the fence flag, cams at_0xc, the injury after-roll value, numbers.inf side.
+- info.dat at_0x6c meaning, the fence flag, cams at_0xc, the injury after-roll value, numbers.inf side.
 - Game-visible edit tests (#11): shape.tbl (t_shape_edit.py), logic.dat (t_logic_edit.py), injury names
   (t_injury_edit.py) done.
