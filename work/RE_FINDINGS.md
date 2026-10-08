@@ -232,3 +232,16 @@ placements (shape, frame, x, y, width, height, a runtime rect, a flag) on a fram
 table's u32s are stale heap pointers. .STS holds 10 batting and 10 pitching stat ids (the leading 3, 0 are real
 columns, hidden when the grid flag at +0xf4 is set). .pyc/.pyf are rewritten in place without truncation, so an older
 list survives past the live one. The misc8 data lane won; its bb.cfg names were invented and its encoder read in.bin.
+
+## 2026-10-07: shell menus, weather, new-association layouts (work/volmisc.py, work/spec/VOLMISC_FORMAT.md)
+
+- MENU.DAT: IDX index + 29 MUB bars. Bar = x, y, width, popups; popup = class (0/1), hotkey mods/scancode, mnemonic,
+  title, typed entries (0 command, 1 separator, 2 runtime text slot). Hotkey match FUN_68076cb0 (scan code + modifier
+  bit), mnemonic FUN_68076cf0 (underlined letter index). Commands dispatch by position, so captions are free to edit.
+- WEATHER.DAT: the city record tail is rain table id, wind dice, wind offset, calm-wind table id, u16 elevation in feet
+  (Denver 5280). Daily roll FUN_680653a0: temperature = monthly mean +/- 15 clamped 35..105, rain if roll <= monthly
+  precip %, wind = 4d(wind_dice) - wind_offset capped 40, calm-wind band table when negative.
+- ASNEW.DAT: name refs are offsets into a pool that starts with a NUL (ref 0 = empty). The 52-byte records are the
+  default team ids per league for 8..16-team leagues (plus the 14-team 5-5-4 option).
+- The old /mnt/nvme/bbpro98/vol/SHELL/ extraction has wrong entry names (its MENU.DAT is 250 KB of image data); use
+  volcodec unpack of the pristine SHELL.VOL (e0001 ASNEW, e0006 MENU.DAT, e0018 WEATHER, e0020 MENU.REQ).
