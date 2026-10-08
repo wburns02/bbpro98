@@ -261,3 +261,21 @@ list survives past the live one. The misc8 data lane won; its bb.cfg names were 
   volcodec, nothing moves, and the result is verified in game (work/harness/ingame.py).
 - work/harness/ingame.py is the #11 in-game check: install files into the work copy, launch on :99, click/key steps,
   OCR asserts (tesseract on a grayscale x3 crop, both polarities), restore with sha256 check.
+
+## 2026-10-07: stadium and sim data chunks (work/simchunks.py, work/spec/SIMCHUNKS_FORMAT.md)
+
+- The 00 01 06 07 container key is a u32 hash of the chunk's file name (FUN_680b0665), not "u16 id + 2-byte tag": the
+  high bytes read as letters only because they are the name's first two characters. chunkdat.py name_key + NAMES
+  name 46 chunks (shape.tbl, wall.tbl, info.dat, txfill.dbm, txmap.dbm, cams.cfg, injury.dat, logic.dat, numbers.inf,
+  bpi.str, sndvol.cfg, the .hmi music, palettes, fonts, sky and loading screens).
+- shape.tbl: per-level byte order (parts, first-use vertex lists, variants, polygons + index lists, states last);
+  polygon bytes 3-4 are zeroed by the loader and hold leftovers in the files. wall.tbl stores outward normals.
+- info.dat: the stadium .DAT tail after the names is read by BBSIM FUN_6806c898 and FastSim identically (sky color,
+  crowd colors for polygon colors 0xf4/0xf5, palette cycles, foul poles, dugouts, on-deck circles); the fence outline
+  at the end is never read. The .DT is the shell's copy: name, dome, turf.
+- logic.dat is the fielding playbook: one job (COVER_*, BACKUP_*, CUTOFF, RELAY, DO_LOGIC) per fielder for every
+  runner state x ball type x direction, bunts, and 9 special events. Editing it changes who covers and backs up.
+- injury.dat odds in the file are defaults; the settings array (0x354 + i) overrides them at load.
+- sndvol.cfg is dead: nothing references the name; volumes are [Sounds] settings.
+- The chunks GLM data lane won round 3 on the referee but misread several layouts (packed u16 textures, ce8c,
+  7709/cb7c alignment, raw 947d runs); simchunks.py replaces it.

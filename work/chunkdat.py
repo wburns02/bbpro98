@@ -1,11 +1,14 @@
 """Tagged-chunk container read/write: SIM.DAT, Stadia/*.DAT, Stadia/*.DT (magic 00 01 06 07). Verified 2026-10-07.
 
-Layout: magic `00 01 06 07`, u16 count, then count+1 directory entries of 8 bytes: u16 id, 2-byte tag (ASCII except
-SIM.DAT entry 0), u32 absolute offset. The extra entry is a sentinel (id 0, tag 0, offset = file size, or 0 in the
-.DT files). Chunks are back to back from the end of the directory, in directory order; the last runs to EOF.
-The id is stable per chunk role across files (e.g. 'MI' e957 in every stadium .DAT and .DT).
+Layout: magic `00 01 06 07`, u16 count, then count+1 directory entries of 8 bytes: u32 key, u32 absolute offset. The
+key is a hash of the chunk's file name (name_key, BBSIM FUN_680b0665: the name upper-cased, bytes 0, 1, 6, 7 as a
+big-endian u32 plus (xor of the bytes) * (sum of the bytes), signed 16-bit); the loader looks a chunk up by it.
+The manifest splits the key into `id` (low u16) and `tag` (high 2 bytes, which read as letters because they are the
+name's first two characters: 'MI' e1a4 = injury.dat). The extra entry is a sentinel (key 0, offset = file size, or
+0 in the .DT files). Chunks are back to back from the end of the directory, in directory order; the last runs to EOF.
+Layouts of the data chunks: work/simchunks.py; bitmaps: work/chunkgfx.py.
 
-usage: chunkdat.py list FILE
+usage: chunkdat.py list FILE                (names the chunks whose name is known, NAMES)
        chunkdat.py unpack FILE outdir/     -> outdir/manifest.json + NN_TAG_ID.bin per chunk
        chunkdat.py pack outdir/ FILE       -> rebuilds from the manifest (any chunk sizes)
        chunkdat.py verify FILE...          -> unpack + pack in memory, byte compare
@@ -13,6 +16,32 @@ usage: chunkdat.py list FILE
 import json, os, struct, sys
 
 MAGIC = b'\x00\x01\x06\x07'
+# chunk names found among the strings of the game binaries whose hash matches a key (SIM.DAT and the stadium files)
+NAMES = ('4x5.fon', 'bigfont.fon', 'bpi.str', 'bpi.fon', 'cams.cfg', 'chgorg1.hmi', 'chgorg2.hmi', 'chgorg3.hmi',
+         'chgtpt1.hmi', 'chgtpt2.hmi', 'chgtpt3.hmi', 'chgtpt4.hmi', 'fatrf.dbm', 'fatrf.pal', 'fgcrc.pal', 'fgchx.pal',
+         'fglin.dbm', 'fgcrc.dbm', 'fgchx.dbm', 'fglin.pal', 'game.pal', 'gadget.fon', 'grndfill.dbm', 'injury.dat',
+         'loadleag.scx', 'loadhigh.scx', 'logic.dat', 'loadarc.scx', 'loading.pal', 'loadbat.scx', 'loadexb.scx',
+         'numbers.inf', 'org1.hmi', 'org2.hmi', 'sky_oc.pal', 'sky_pc.dbm', 'sky_cs.dbm', 'sky_oc.dbm', 'sky_cs.pal',
+         'sky_pc.pal', 'sndvol.cfg', 'shape.tbl', 'wall.tbl', 'info.dat', 'txfill.dbm', 'txmap.dbm')
+
+
+def name_key(name):
+    """Directory key of a chunk name (FUN_680b0665)."""
+    sc = lambda b: b - 256 if b > 127 else b
+    s = [c & 0x5f for c in name.encode('latin1')[:12]]
+    xs = sm = 0
+    for c in s:
+        sm = (sm + sc(c)) & 0xffff
+        xs ^= sc(c) & 0xffff
+    buf = s + [0] * (13 - len(s))
+    k = 0
+    for i in (0, 1, 6, 7):
+        k = (sc(buf[i]) + k * 256) & 0xffffffff
+    p = (xs * (sm - 65536 if sm >= 32768 else sm)) & 0xffff
+    return (k + (p - 65536 if p >= 32768 else p)) & 0xffffffff
+
+
+KNOWN = {name_key(n): n for n in NAMES}
 
 
 def split(d):
@@ -52,7 +81,9 @@ def main():
     if cmd == 'list':
         chunks, meta = split(open(sys.argv[2], 'rb').read())
         for i, (cid, tag, data) in enumerate(chunks):
-            print('%2d %04x %-4s %9d  %s' % (i, cid, tag.decode('latin-1').encode('unicode_escape').decode(), len(data), data[:16].hex()))
+            key = struct.unpack('<I', struct.pack('<H2s', cid, tag))[0]
+            print('%2d %04x %-4s %9d  %-13s %s' % (i, cid, tag.decode('latin-1').encode('unicode_escape').decode(),
+                                                 len(data), KNOWN.get(key, ''), data[:16].hex()))
         print('sentinel', meta)
     elif cmd == 'unpack':
         chunks, meta = split(open(sys.argv[2], 'rb').read()); out = sys.argv[3]; os.makedirs(out, exist_ok=True)
