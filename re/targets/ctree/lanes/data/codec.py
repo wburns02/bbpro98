@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Read/write codec for FPS Baseball Pro '98 c-tree Plus superfiles
+"""SUPERSEDED by work/ctree.py (its header, delete-chain and B-tree writes are wrong; see FORMAT.md).
+
+Read/write codec for FPS Baseball Pro '98 c-tree Plus superfiles
 (MLBPA97.eos, *.ASN, SCHEDTMP.DAT, Stats/*.DAT).
 
 Layout (see FORMAT.md): a flat stream of blocks after a 512-byte file header:

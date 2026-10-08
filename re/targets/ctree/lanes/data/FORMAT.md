@@ -9,10 +9,12 @@ custom on-disk layout (the game talks to it only through FPS_CT.dll).
 ## File header (512 bytes, offset 0)
 
 ```
-+0x00  u16  0xffff or 0x7fff          magic (observed both)
-+0x02  u32  superfile size in 64K units, minus 1: ceil(len/65536)-1
-       (eos 65536B -> 0; 224K ASN -> 3; mlbpa97.DAT 5275648B -> 80=0x50)
-+0x08  u32  high-water mark (end of used data; eos 0x983d < file size)
++0x00  u32  physical file size - 1; the physical size is a multiple of 0x8000 and
+            everything past the last used byte is 0xff. (Read as u16@0 = ffff/7fff
+            plus u32@2 = size in 64K units this looked like a magic and a chunk
+            count; it is one u32. Writing a chunk count at +2 makes the engine see
+            EOF early and overwrite appended nodes.)
++0x08  u32  last used byte (eos 0x983d < file size); the engine appends at +1
 +0x0c  u32  512 (sector/block size)
 +0x10  u32  0x0b/0x0f/0x31 = highest member number (eos 11, ASN 15, DAT 49)
 +0x14  u32  member count + 1 (12 / 17 / 50)
@@ -61,8 +63,10 @@ the name is the base member name padded to 0x40 with spaces (`ft.dat`, `ft.idx`,
 live + 708 tombstone records):
 ```
 +0x40 u32 reclen-1 (repeated at +0x48)
++0x44 u32 delete-chain head: hdr of the most recently tombstoned record (0 = none);
+          links continue through the tombstone at hdr+19 (payload[1:5])
 +0x4c u32 offset of this member's kind-1 FE FE block
-+0x50 u32 free-chain head: hdr of the most recently tombstoned record (0 = none)
++0x50 u32 hdr of the member's last record
 +0x54 u32 records added so far (cumulative; 27382 for ft.dat >> current 4721)
 +0x58 u32 live (non-tombstone) record count  == 4013 for ft.dat
 +0x68 81 00 00 00
@@ -78,11 +82,13 @@ live + 708 tombstone records):
 +0x4c u32 offset of this member's kind-1 FE FE block
 +0x58 u32 entry count (live records of the data member)
 +0x5c u32 root node PAYLOAD offset (0 only if the tree is empty)
-+0x68 81 00 ee 01, +0x70 u32 3
++0x68 81 00 ee 01, +0x70 u32 3 on every multi-level tree (def+0x30)
++0x74 u16 leaf high-key offset hk (def+0x34): a leaf holds hk // (4 + klen) entries
+          and keeps its high key at entry offset hk (all-FF on the rightmost leaf)
 +0x7c u16 0x0220, +0x7e u16 4
 +0x80 u16 1, +0x82 u16 key length in bytes
 +0x84 u32 0
-+0x88 u32 root again, +0x8c u32 index member number
++0x88 u32 leftmost leaf (def+0x48; equals the root only for a one-node tree), +0x8c u32 index member number
 +0x90 u32 self / second def starts here for 320-byte (2-tree) descriptors
 ```
 Cross-checks that hold on every member of all eight files: descriptor entry count ==
@@ -99,7 +105,8 @@ walked tree entries == live (payload[0]!=0xff) record count of the data member.
 ```
 * Leaf: `ptr` = record **header** offset (payload = ptr + 18), key = key bytes for that record.
 * Branch: `ptr` = child node **payload** offset; entry key = separator (last key of that
-  child's subtree). Discriminate: child iff `d[ptr-18:ptr-16] == fa fa` and that record's
+  child's subtree), all-FF on the rightmost path. Branch nodes chain `next` within their
+  level with prev 0. Every index node record the game writes has prev_hdr = 0. Discriminate: child iff `d[ptr-18:ptr-16] == fa fa` and that record's
   member == this index member (data records carry the even member number, so no collision).
 * In-order traversal yields keys in ascending order (verified 4013/4013 on mlbpa97.DAT
   member 5).
@@ -116,7 +123,9 @@ walked tree entries == live (payload[0]!=0xff) record count of the data member.
 * All counts cross-check: descriptors' entry counts == walked tree entries == live record
   counts on every member of all eight files.
 * FE FE block lengths confirmed by next-block positions; FD FD gap ends == next block start.
-* Free chain: descriptor +0x50 head links through tombstone payload[1:5] u32s; verified on
-  all 23 data members of mlbpa97.DAT.
+* Delete chain: descriptor +0x44 head links through tombstone payload[1:5] u32s. (An earlier
+  draft put the head at +0x50, which is the member's last record.)
 * Tombstones: never referenced by a live tree entry, never with a stale index entry.
-* File header +2: ceil(len/64K)-1 on all eight files (three independent sizes check out).
+* File header: u32@0 + 1 == file length and u32@8 == last used byte on every game-written file;
+  corrected 2026-10-08 against mlbpa96e.dat, mlbpa97.DAT, _DEFAULT.DAT and FPS_CT.dll's search path.
+  work/ctree.py is the maintained codec; codec.py here is the superseded lane draft.

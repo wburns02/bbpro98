@@ -2,7 +2,8 @@
 """Read/write codec for FPS Baseball Pro '98 c-tree Plus superfiles
 (MLBPA97.eos, *.ASN, SCHEDTMP.DAT, Stats/*.DAT).
 
-Layout (see FORMAT.md): a flat stream of blocks after a 512-byte file header:
+Layout (see FORMAT.md): a flat stream of blocks after a 512-byte file header
+(u32@0 = physical file size - 1, u32@8 = last used byte; FF fill after it):
   FE FE kind-1 segment (length = u32@+2; holds one descriptor record at +length)
   FE FE kind-2 member definition (length 2048, carries "FC!DEF" + serialized IFIL/DODA)
   FA FA record (u32 total, u32 payload_len, u32 member, u32 prev_hdr; total = len+18)
@@ -10,7 +11,11 @@ Layout (see FORMAT.md): a flat stream of blocks after a 512-byte file header:
 Data members carry even member numbers, their B-tree index members the odd ones.
 A deleted record keeps its FA FA header with payload[0] set to 0xff and a u32
 free-chain link at payload+1; the member's descriptor keeps the chain head at
-descriptor+0x50 and the live record count at descriptor+0x58.
+descriptor+0x44, its last record at +0x50 and the live record count at +0x58.
+Index defs: root at def+0x1c, leftmost leaf at def+0x48, leaf high-key offset at
+def+0x34. A leaf stores its high key there (all-FF on the rightmost leaf); internal
+nodes key the rightmost path with all-FF and chain `next` per level; index node
+records carry prev = 0.
 
 `del` in dump output marks records that are NOT live application data: real
 tombstones (payload[0] == 0xff, unless a tree entry still points there) and
@@ -88,7 +93,7 @@ def name_of(d, pay):
 
 class Tree:
     __slots__ = ('root', 'count', 'klen', 'defbase', 'desc', 'entries', 'nodes',
-                 'keymap', 'new_root', 'new_count')
+                 'keymap', 'new_root', 'new_count', 'new_leaf', 'new_height')
 
     def __init__(self, root, count, klen, defbase, desc):
         self.root = root          # payload offset of root node (0 = empty tree)
@@ -101,6 +106,8 @@ class Tree:
         self.keymap = None        # per key position ('off', o) / ('const', v)
         self.new_root = root
         self.new_count = count
+        self.new_leaf = None      # leftmost leaf of a rebuilt tree
+        self.new_height = 0       # levels of a rebuilt tree
 
 
 def parse(d):
@@ -241,12 +248,16 @@ def key_of(km, payload):
     return bytes((payload[v] if kind == 'off' else v) for kind, v in km)
 
 
-def pack_tree(items, klen, base_off):
+def pack_tree(items, klen, base_off, hk):
     """Serialize sorted [(key, rec_hdr)] into B-tree node payloads placed starting
     at payload offset base_off (nodes are 512-byte records, so payload stride is
-    NODE_TOTAL). Returns (payloads, root payload offset)."""
+    NODE_TOTAL). hk is the index def's u16 at +0x34: a leaf keeps its high key at
+    entry offset hk (the game searches right when a key is above it), so a leaf
+    holds hk // esz entries. Returns (payloads, root, leftmost leaf, levels)."""
     esz = 4 + klen
-    cap = max(1, (NODE_PAY - 0x12) // esz)
+    if not esz <= hk <= NODE_PAY - 0x12 - klen:
+        raise ValueError('index def high-key offset %d does not fit key length %d' % (hk, klen))
+    cap = max(2, hk // esz)
     levels = [[{'entries': items[i:i + cap], 'children': None}
                for i in range(0, len(items), cap)]]
     while len(levels[-1]) > 1:
@@ -263,7 +274,11 @@ def pack_tree(items, klen, base_off):
             off += NODE_TOTAL
         rows.append(row)
 
-    def last_key(nd):
+    def last_key(nd, rightmost):
+        # The game keys the rightmost path of internal nodes with all-FF (high values), so later inserts past
+        # the current last key still route right.
+        if rightmost:
+            return b'\xff' * klen
         while nd['children'] is not None:
             nd = nd['children'][-1]
         return nd['entries'][-1][0] if nd['entries'] else bytes(klen)
@@ -283,15 +298,17 @@ def pack_tree(items, klen, base_off):
                     o = 0x12 + k * esz
                     struct.pack_into('<I', buf, o, hdr)
                     buf[o + 4:o + esz] = key
+                buf[0x12 + hk:0x12 + hk + klen] = ent[-1][0] if nxt else b'\xff' * klen
             else:
-                struct.pack_into('<IIHHIH', buf, 0, 0, 0, len(kids),
+                nxt = rows[li][ni + 1] if ni + 1 < len(rows[li]) else 0
+                struct.pack_into('<IIHHIH', buf, 0, nxt, 0, len(kids),
                                  len(kids) * esz, 0, 0)
                 for k, ch in enumerate(kids):
                     o = 0x12 + k * esz
                     struct.pack_into('<I', buf, o, offmap[id(ch)])
-                    buf[o + 4:o + esz] = last_key(ch)
+                    buf[o + 4:o + esz] = last_key(ch, ni == len(lvl) - 1 and k == len(kids) - 1)
             payloads.append(bytes(buf))
-    return payloads, rows[-1][0]
+    return payloads, rows[-1][0], rows[0][0], len(levels)
 
 
 def gap_bytes(total):
@@ -362,9 +379,9 @@ def do_dump(d):
         'del': 'true for tombstones (payload[0]=0xff, no live tree entry) and for '
                'structural records (member-0 descriptors, member-1 directory, index '
                'node records); those are engine bookkeeping that apply() rewrites',
-        'descriptor': 'data member: +0x40 reclen-1, +0x4c FE FE block, +0x50 free-chain '
-                      'head, +0x54 adds so far, +0x58 live records; index member: one '
-                      '0x80 def per tree, root at def+0x1c, count at def+0x18',
+        'descriptor': 'data member: +0x40 reclen-1, +0x44 free-chain head, +0x4c FE FE '
+                      'block, +0x50 last record, +0x54 adds so far, +0x58 live records; index member: one '
+                      '0x80 def per tree, root at def+0x1c, count at def+0x18, leftmost leaf at def+0x48',
     }
     return {'members': [{'name': mm['name'], 'kind': mm['kind'],
                          **({'data': mm['data']} if mm['kind'] == 'index' else {})}
@@ -383,7 +400,9 @@ def do_apply(src, edits):
     rec_by_off = {r.off: r for r in recs}
     orig_rec = {r.hdr: r for r in recs}
     rec_at = {r.hdr: r for r in recs}
-    end = len(src)
+    # Header word 8 is the last used byte; the game fills the rest of the file with FF and appends after it.
+    last = u32(src, 8)
+    end = last + 1 if last + 1 <= len(src) and src[last + 1:].count(0xFF) == len(src) - last - 1 else len(src)
     appends = []
     touched = set()
     dead_ok = set(tomb)      # hdrs known to be tombstones (never trust a link into a live record)
@@ -411,6 +430,9 @@ def do_apply(src, edits):
         hdr = end + sum(len(a) for a in appends)
         appends.append(rec_bytes(mem, payload, prev))
         register(Rec(hdr, len(payload), mem, prev, payload))
+        rec = datadesc.get(mem)
+        if rec is not None:
+            dset(rec, 0x50, hdr)        # descriptor +0x50: the member's last record
         return hdr
 
     def chain_remove(mem, hdr):
@@ -418,7 +440,7 @@ def do_apply(src, edits):
         rec = datadesc.get(mem)
         if rec is None:
             return
-        head = dfield(rec, 0x50)
+        head = dfield(rec, 0x44)
         prevh = None
         for _ in range(CHAIN_WALK):
             if not head or head >= end or head == hdr:
@@ -430,18 +452,18 @@ def do_apply(src, edits):
             return
         link = struct.unpack_from('<I', buf, hdr + 19)[0]
         if prevh is None:
-            dset(rec, 0x50, link)
+            dset(rec, 0x44, link)
         else:
             struct.pack_into('<I', buf, prevh + 19, link)
 
     def tombstone(r):
         rec = datadesc.get(r.mem)
-        head = dfield(rec, 0x50) if rec else 0
+        head = dfield(rec, 0x44) if rec else 0       # descriptor +0x44: delete chain head
         buf[r.off] = 0xFF
         struct.pack_into('<I', buf, r.off + 1, head)
         dead_ok.add(r.hdr)
         if rec is not None:
-            dset(rec, 0x50, r.hdr)
+            dset(rec, 0x44, r.hdr)
             dset(rec, 0x58, max(0, dfield(rec, 0x58) - 1))
 
     def place(mem, payload):
@@ -449,7 +471,7 @@ def do_apply(src, edits):
         into a gap) or extend the file."""
         need = REC_HDR + len(payload)
         rec = datadesc.get(mem)
-        h = dfield(rec, 0x50) if rec else 0
+        h = dfield(rec, 0x44) if rec else 0
         placed = False
         for _ in range(CHAIN_WALK):
             if (not h or h >= end or h not in dead_ok or
@@ -551,18 +573,15 @@ def do_apply(src, edits):
                     buf[h:h + NODE_TOTAL] = gap_bytes(NODE_TOTAL)
             its = new_its[id(tr)]
             if its:
-                pls, root = pack_tree(its, tr.klen, first_off + shift)
+                hk = u16(src, tr.desc.off + tr.defbase + 0x34)
+                pls, root, leaf, height = pack_tree(its, tr.klen, first_off + shift, hk)
                 shift += NODE_TOTAL * len(pls)
                 pending.extend(pls)
-                tr.new_root, tr.new_count = root, len(its)
+                tr.new_root, tr.new_count, tr.new_leaf, tr.new_height = root, len(its), leaf, height
             else:
-                tr.new_root, tr.new_count = 0, 0
-        prev = member_last_hdr(idxmem)
-        for p in pending:
-            hdr = end + sum(len(a) for a in appends)
-            appends.append(FAFA + struct.pack('<IIII', NODE_TOTAL, NODE_PAY,
-                                              idxmem, prev) + p)
-            prev = hdr
+                tr.new_root, tr.new_count, tr.new_leaf, tr.new_height = 0, 0, 0, 0
+        for p in pending:       # index node records carry prev = 0 in every file the game wrote
+            appends.append(FAFA + struct.pack('<IIII', NODE_TOTAL, NODE_PAY, idxmem, 0) + p)
         idrec = idxdesc.get(idxmem)
         if idrec is not None:
             tot = 0
@@ -572,13 +591,20 @@ def do_apply(src, edits):
                 db = idrec.off + tr.defbase
                 struct.pack_into('<I', buf, db + 0x18, tr.new_count)
                 struct.pack_into('<I', buf, db + 0x1C, tr.new_root)
-                struct.pack_into('<I', buf, db + 0x48, tr.new_root)
+                struct.pack_into('<I', buf, db + 0x48, tr.new_leaf)
+                if tr.new_height > 1:       # every multi-level tree the game wrote carries 3 here
+                    struct.pack_into('<I', buf, db + 0x30, max(3, u32(buf, db + 0x30)))
                 tot += tr.new_count
             dset(idrec, 0x58, tot)
 
-    out = buf + b''.join(appends)
-    struct.pack_into('<I', out, 8, max(u32(src, 8), len(out)))
-    struct.pack_into('<I', out, 2, max(0, (len(out) + 65535) // 65536 - 1))
+    if not appends:
+        return bytes(buf)
+    out = buf[:end] + b''.join(appends)
+    # Word 8 = last used byte, word 0 = physical size - 1; the physical size is a multiple of 0x8000, FF filled.
+    struct.pack_into('<I', out, 8, len(out) - 1)
+    phys = -(-len(out) // 0x8000) * 0x8000
+    out += b'\xff' * (phys - len(out))
+    struct.pack_into('<I', out, 0, phys - 1)
     return bytes(out)
 
 

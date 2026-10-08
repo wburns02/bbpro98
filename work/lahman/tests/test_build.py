@@ -1,0 +1,93 @@
+"""End to end: build the 1927 association into a scratch install and check what the game will read. Needs the Lahman
+database, the T16_2L template and the work install's MLBPA96E.PYR / _DEFAULT.ASN; skips without them."""
+import os
+import shutil
+import struct
+import tempfile
+
+import pytest
+
+import ctree
+from lahman import build as B, ratings as RT
+from lahman.asnfile import AsnFile, cstr
+
+INSTALL = '/mnt/nvme/bbpro98/work_install'
+SCRATCH = '/mnt/nvme/bbpro98/tmp'
+NEEDED = [B.DB, os.path.join(INSTALL, 'Assn', 'MLBPA96E.PYR'), os.path.join(INSTALL, 'Assn', '_DEFAULT.ASN')]
+
+
+@pytest.fixture(scope='module')
+def built():
+    if not all(os.path.exists(p) for p in NEEDED) or not os.path.isdir(SCRATCH):
+        pytest.skip('Lahman DB or game install absent')
+    try:
+        B.load_template('T16_2L')
+    except (OSError, SystemExit, KeyError):
+        pytest.skip('T16_2L template absent')
+    root = tempfile.mkdtemp(prefix='lahbuild-', dir=SCRATCH)
+    try:
+        for sub in ('Assn', 'Stats'):
+            os.mkdir(os.path.join(root, sub))
+        for f in ('MLBPA96E.PYR', '_DEFAULT.ASN'):
+            os.symlink(os.path.join(INSTALL, 'Assn', f), os.path.join(root, 'Assn', f))
+        log = []
+        out = B.build(1927, root, log=log.append)
+        yield out, log, {k: open(v, 'rb').read() for k, v in out.items()}
+    finally:
+        shutil.rmtree(root)
+
+
+def test_files_named_by_slots_and_year(built):
+    out, _, _ = built
+    assert {os.path.basename(p) for p in out.values()} == {'16L1927.ASN', '16L1927.PYR', '16L1927.PYF',
+                                                         '16L1927.DAT'}
+
+
+def test_teams_and_association(built):
+    _, _, data = built
+    asn = AsnFile(data['ASN'])
+    a = asn.recs['a'][0][1]
+    assert cstr(a, 0x12, 33) == '1927 Major League Baseball'
+    names = {cstr(p, 0x12, 32) for _, p in asn.recs['t']}
+    assert len(asn.recs['t']) == 16
+    assert any('Yankees' in n for n in names) and any('Pirates' in n for n in names)
+    assert not any(n.startswith('Filler Team') for n in names)      # 1927 fills all 16 slots with real teams
+    assert asn.recs.get('tr', []) == []                              # template trades cleared
+
+
+def test_players(built):
+    _, log, data = built
+    _, recs = RT.read_pyr(built[0]['PYR'])
+    names = {(RT.cstr(r[30:47]), RT.cstr(r[47:64])) for r in recs}
+    assert ('Babe', 'Ruth') in names and ('Lou', 'Gehrig') in names and ('Lefty', 'Grove') in names
+    ids = [struct.unpack_from('<H', r, 0)[0] for r in recs]
+    assert ids == list(range(100, 100 + len(recs)))
+    assert len(recs) >= 400
+    fa = struct.unpack_from('<h', data['PYF'], 8)[0]
+    assert data['PYF'][:4] == b'PPD:' and len(data['PYF']) == 10 + 2 * fa
+
+
+def test_stats_file_valid(built):
+    _, _, data = built
+    d = data['DAT']
+    assert len(d) % 0x8000 == 0 and struct.unpack_from('<I', d, 0)[0] == len(d) - 1
+    recs, by_mem, members, idxinfo, *_ = ctree.parse(d)
+    sizes = {}
+    for idxmem, (trees, datam, base) in idxinfo.items():
+        live = {r.hdr for r in by_mem.get(datam, []) if d[r.off] != 0xFF}
+        for tr in trees:
+            if tr.klen:
+                keys = [k for k, _ in tr.entries]
+                assert keys == sorted(keys) and {p for _, p in tr.entries} == live
+        sizes[base] = len(live)
+    assert sizes['bt'] > 400 and sizes['pt'] > 150 and sizes['ft'] > 400
+    # Career lines (scope 2) predate 1927 only; Ruth's career batting line carries 1914-1926 home runs (356).
+    _, recs_p = RT.read_pyr(built[0]['PYR'])
+    ruth = next(struct.unpack_from('<H', r, 0)[0] for r in recs_p
+                if (RT.cstr(r[30:47]), RT.cstr(r[47:64])) == ('Babe', 'Ruth'))
+    bt = next(m['num'] for m in members if m['name'] == 'bt.dat')
+    lines = [bytes(d[r.off:r.off + r.pl]) for r in by_mem[bt] if d[r.off] != 0xFF]
+    mine = [p for p in lines if struct.unpack_from('<HHH', p, 0) == (2, 2, ruth)]
+    assert len(mine) == 1
+    words = struct.unpack_from('<17H', mine[0], 6)                  # stats.BAT order: ab h1b h2b h3b hr ...
+    assert words[4] == 356
