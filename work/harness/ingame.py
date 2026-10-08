@@ -27,8 +27,12 @@ import hashlib, json, os, re, shutil, signal, subprocess, sys, time
 WORK = '/mnt/nvme/bbpro98/work_install'
 LIVE = os.path.realpath(os.path.expanduser('~/.bbpro98_prefix/drive_c/Sierra/BBPRO_98'))
 LAUNCH = os.path.expanduser('~/bb_launch_work.sh')
-GAME = re.compile(r'C:.Sierra.BBPRO_98_work.(bblaunch|Baseball|BBArch)\.exe|winedbg')
+GAME = re.compile(r'C:.Sierra.BBPRO_98_work.(bblaunch|Baseball)\.exe|^\d+ [A-Z]:.BBArch\.exe|winedbg')
 EXES = ('BBArch.exe',)       # other programs a plan may start ("exe")
+# BBArch lists the *.ASN / *.ARC of its whole current drive with a fixed path buffer: on C: the walk follows the
+# prefix's Desktop/Documents links into /home and a 64-char directory name overruns it (access violation at "NO S").
+# So "exe" runs start from their own drive K: whose root is the work copy (A: and B: are refused as floppies).
+EXE_DRIVE = os.path.expanduser('~/.bbpro98_prefix/dosdevices/k:')
 ENV = dict(os.environ, DISPLAY=':99')
 
 
@@ -38,7 +42,7 @@ def sha(p):
 
 
 def game_pids():
-    out = subprocess.run(['pgrep', '-af', 'BBPRO_98_work|winedbg'], capture_output=True, text=True).stdout
+    out = subprocess.run(['pgrep', '-af', 'BBPRO_98_work|BBArch|winedbg'], capture_output=True, text=True).stdout
     mine = ancestors()
     return [int(l.split()[0]) for l in out.splitlines() if GAME.search(l) and int(l.split()[0]) not in mine]
 
@@ -190,9 +194,12 @@ def main():
         exe = plan.get('exe')
         if exe is None:
             cmd = ['setsid', 'bash', LAUNCH]
-        elif exe in EXES:                                  # same environment as the launch script
+        elif exe in EXES:                                  # same environment as the launch script, cwd K:\
+            if os.path.lexists(EXE_DRIVE):
+                sys.exit(f'REFUSED: {EXE_DRIVE} already exists')
+            os.symlink(WORK, EXE_DRIVE)
             cmd = ['setsid', 'bash', '-c', 'export WINEPREFIX=$HOME/.bbpro98_prefix WINEDEBUG=-all DISPLAY=:99 '
-                   'PULSE_SINK=bbnull; cd "$WINEPREFIX/drive_c/Sierra/BBPRO_98_work" && exec wine "$1"', 'bb', exe]
+                   'PULSE_SINK=bbnull; cd "$2" && exec wine "$1"', 'bb', exe, WORK]
         else:
             sys.exit(f'REFUSED: exe {exe!r} is not one of {EXES}')
         subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -242,6 +249,8 @@ def main():
     finally:
         if not plan.get('keep'):
             stop_game()
+            if plan.get('exe') in EXES and os.path.islink(EXE_DRIVE) and os.readlink(EXE_DRIVE) == WORK:
+                os.remove(EXE_DRIVE)
             for dst, (bk, h) in saved.items():
                 if bk is None:
                     os.remove(dst)
