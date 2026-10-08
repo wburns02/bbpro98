@@ -80,3 +80,9 @@ re/hfiles/audits/
 .audits/
 re/targets/*/lanes/*/runs/
 re/targets/*/WINNER
+*.ASN
+*.PYR
+*.PYF
+*.pyf
+*.eos
+*.apc

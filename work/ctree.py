@@ -142,7 +142,8 @@ def parse(d):
             idx_desc.append((r, trees, idxmem, datam, nm[:-4]))
 
     # ---- member table ----
-    maxmem = max([r.mem for r in recs] + [0])
+    # an empty member (fresh files) has a descriptor but no record: size the table by both
+    maxmem = max([r.mem for r in recs] + [x[2] for x in idx_desc if x[2] < MAX_MEM] + [0])
     members = [{'num': m, 'name': 'member%d' % m, 'kind': 'other'}
                for m in range(maxmem + 1)]
     idxinfo = {}
