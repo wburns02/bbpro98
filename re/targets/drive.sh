@@ -75,7 +75,7 @@ for line in open(sys.argv[1], errors="replace"):
 }
 
 # At most GLM_SLOTS glm sessions at once across all lanes (flock slots), and a z.ai 429 ("Rate limit reached") does
-# not consume a round: back off (60 s steps, cap 10 min) and retry it; give up after 30 straight 429s.
+# not consume a round: back off (60 s steps, cap 10 min) and retry it; give up after 30 straight or 60 total 429s.
 SLOTS=${GLM_SLOTS:-6}; SLOTDIR=/mnt/nvme/bbpro98/tmp/glmslots; mkdir -p "$SLOTDIR"
 acquire_slot() {
   while :; do
@@ -89,7 +89,7 @@ acquire_slot() {
 }
 release_slot() { flock -u "$SLOTFD"; exec {SLOTFD}>&-; }
 
-r=0; rl=0
+r=0; rl=0; rlt=0
 while [ "$r" -lt "$MAX" ]; do
   r=$((r + 1))
   [ -f "$T/WINNER" ] && { echo "STOPPED: $(cat "$T/WINNER")" | tee "$R/STATUS"; exit 0; }
@@ -102,13 +102,17 @@ ${FOCUS[$LANE]}
 This is round $r of $MAX. Latest referee output for your lane (tail):
 ${last:-<no $DECODER yet>}"
   sz=$(stat -c %s "$R/glm_round$r.log" 2>/dev/null || echo 0)
-  acquire_slot
+  acquire_slot; t0=$SECONDS
   glm_sandboxed "$prompt" >> "$R/glm_round$r.log" 2>&1; rc=$?
-  release_slot
+  release_slot; dt=$((SECONDS - t0))
   echo "glm exit $rc" >> "$R/run.log"
-  if [ "$rc" -ne 0 ] && tail -c +$((sz + 1)) "$R/glm_round$r.log" | grep -q 'Request rejected (429)'; then
-    rl=$((rl + 1)); r=$((r - 1))
-    [ "$rl" -ge 30 ] && { echo "STOPPED: rate limited 30 times in a row $(date -Is)" | tee "$R/STATUS"; exit 1; }
+  # A real 429 rejection is a tiny log written within seconds; anything longer is a real session (whose output could
+  # merely mention 429) and counts as a round. Total uncounted retries per lane are capped too.
+  added=$(( $(stat -c %s "$R/glm_round$r.log" 2>/dev/null || echo 0) - sz ))
+  if [ "$rc" -ne 0 ] && [ "$dt" -lt 180 ] && [ "$added" -lt 4096 ] \
+     && tail -c +$((sz + 1)) "$R/glm_round$r.log" | grep -q 'Request rejected (429)'; then
+    rl=$((rl + 1)); rlt=$((rlt + 1)); r=$((r - 1))
+    [ "$rl" -ge 30 ] || [ "$rlt" -ge 60 ] && { echo "STOPPED: rate limited ($rl in a row, $rlt total) $(date -Is)" | tee "$R/STATUS"; exit 1; }
     w=$((60 * rl)); [ "$w" -gt 600 ] && w=600; w=$((w + RANDOM % 60))
     echo "rate limited (429), round not counted, retry in ${w}s" >> "$R/run.log"; sleep "$w"; continue
   fi
