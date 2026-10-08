@@ -176,3 +176,23 @@ Open: the obfuscated 2698-byte first table (likely play-by-play or lineup/game h
   0x6808cc98) and the gadgets. Gadget kind u16 = class << 8 | type: class = record layout (1 edit, 2 slider, 4 labelled,
   8 cell grid), type = concrete control class. Common words: flags +0x16, state +0x18, link id +8. The lane PASSed
   with the rect list shifted by one u16 and guessed gadget names; work/reqcodec.py + work/spec/REQ_FORMAT.md replace it.
+
+## 2026-10-07: box-score lineup card fully mapped (work/hcard.py, work/spec/HCARD_FORMAT.md)
+
+The first H-file record is 8 header bytes + seed + a 0xa88-byte enciphered body: away side 0x533, home side 0x533,
+game tail 0x22. The hcard GLM lane PASSed with a 2698-byte body (rain-delay bytes left opaque), the date hardcoded to
+April, time of game called "game_id", total outs called "temperature", the batting-spot array off by one, and slot
+bytes +7..+20 (pitches, strikes, pickoffs, season HLD/SV/W/L) treated as padding. Claude remapped every byte from the
+Upstats card builder (FUN_6c002850/FUN_6c001980/FUN_6c002b00 and the event counters), the BBShell box-score screen,
+and the EZShell weather generator. Day serial = proleptic Gregorian ordinal + 365 (FUN_68049250), weekday = (serial-1)%7
+with 0 = Sunday. Tail bytes 0xa78..0xa87 mirror GDI 0x3d4..0x3e3 (wind dir/mph, sky, temperature, rain kind/start/span,
+delay count, 4 delay outs, 4 delay minutes); game type = GDI 999, city = GDI 0x3eb, date = GDI 0x405.
+
+## 2026-10-07: full determinism (ROADMAP #10 M12)
+
+Besides the FastSim LFSR, EZShell, LineUp and Upstats each carry their own time()-seeded lagged-Fibonacci RNG (a copy of
+BBShell's). The EZShell and LineUp GDI writers store the seed at GDI +0x3e4; BBShell `-ns<N>` sets the +996 value.
+src-latest/mods/seed.c `shell=N` redirects the seeding time() call in each DLL (BBShell 0x6805c35c, EZShell 0x6a01f0cc,
+LineUp 0x6b011dec, Upstats 0x6c018c0c) to return N; `trace=1` logs the seeds. Two runs with
+`MODKV="value=12345 shell=4321"` (game mode, 2 days, snapshot per day) give byte-identical game.bki and game.bko on both
+days.
