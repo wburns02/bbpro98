@@ -1,0 +1,504 @@
+{
+ "actor.at_0x2e": {
+  "name": "animation_frame_index",
+  "meaning": "u8 frame index of the actor's current animation: FUN_68003c86 (advance_anim_frame) adds the step at +0x2a each step, clamps it to 0 when it runs negative, pins it to framecount-1 at the ends and reverses, and FUN_68003fe3 (set_anim_frame) seeds it when an animation is armed. It counts frames since the animation started, 0 when idle; values 0..9 appear in the tape actors.",
+  "confidence": "high",
+  "evidence": [
+   {
+    "function": "FUN_68003c86",
+    "quote": "*(short *)(param_1 + 0x2e) = *(short *)(param_1 + 0x2e) + (short)*(undefined4 *)(param_1 + 0x2a)"
+   },
+   {
+    "function": "FUN_68003c86",
+    "quote": "else if (local_8 <= *(short *)(param_1 + 0x2e)) { *(short *)(param_1 + 0x2e) = local_8 + -1;"
+   },
+   {
+    "function": "FUN_68003c86",
+    "quote": "FUN_680063b0(*(undefined4 *)(param_1 + 0x1e)); local_8 = FUN_680060c0();"
+   },
+   {
+    "function": "FUN_68003fe3",
+    "quote": "*(undefined2 *)(param_1 + 0x2e) = param_2; *(undefined2 *)(param_1 + 0x30) = 0;"
+   }
+  ]
+ },
+ "camera.at_0x58": {
+  "name": "camera_save_probe_word",
+  "meaning": "u16 word of the global camera the Vcr save path probes before capturing: FUN_680156ca reads it with a 2-byte membuf call (FUN_680ac2be) and fails the save if it reads back short, and the restore counterpart FUN_680157e8 probes it identically with FUN_680ac31a. The decompile shows no other use, so it reads as a save-related camera marker word; it is 1 in the snapshot frame and 0 afterwards in both tapes.",
+  "confidence": "low",
+  "evidence": [
+   {
+    "function": "FUN_680156ca",
+    "quote": "cVar1 = FUN_680ac2be(param_1 + 0x58,2);"
+   },
+   {
+    "function": "FUN_680157e8",
+    "quote": "cVar1 = FUN_680ac31a(param_1 + 0x58,2);"
+   }
+  ],
+  "code_use": "none"
+ },
+ "camera.at_0x5b": {
+  "name": "camera_extent_bound",
+  "meaning": "u16 display extent bound of the global camera: FUN_680133a6's camera-script cases compute it as FUN_6800fd60((extent << 4) / config entry, 0x80, 0x1000) \u2014 a clamp between 0x80 and 0x1000 \u2014 or copy it from the camera config entry, and FUN_68014256 continues to use it as the pan extent. It changes every frame while the camera pans (596..2240 in the tapes), units are 1/256 view extents.",
+  "confidence": "high",
+  "evidence": [
+   {
+    "function": "FUN_680133a6",
+    "quote": "uVar3 = FUN_6800fd60((uint)(iVar4 << 4) / (uint)(int)*(short *)(*(int *)(param_1 + 0x69) * 0x1a + 0x8d + param_1), uVar5,uVar9); *(undefined2 *)(param_1 + 0x5b) = uVar3;"
+   },
+   {
+    "function": "FUN_680133a6",
+    "quote": "*(undefined2 *)(param_1 + 0x5b) = *(undefined2 *)(*(int *)(param_1 + 0x69) * 0x1a + 0x8d + param_1);"
+   },
+   {
+    "function": "FUN_68014256",
+    "quote": "*(undefined2 *)(param_1 + 0x35) = *(undefined2 *)(param_1 + 0x5b);"
+   }
+  ]
+ },
+ "camera.at_0x61": {
+  "name": "camera_look_target",
+  "meaning": "3 x u16 point (x +0x61, y +0x63, z +0x65) the global camera looks at: FUN_68015653 derives the pitch angle from (target_z +0x65 - camera position_z) with the delta/angle helpers FUN_680a4d50 (vector difference) and FUN_680a467c over camera +0x61, so +0x61..+0x65 behaves as the look-at target point. It is (0,0,0) throughout both tapes.",
+  "confidence": "medium",
+  "evidence": [
+   {
+    "function": "FUN_68015653",
+    "quote": "iVar2 = *(short *)(param_1 + 0x65) - DAT_680d546d; uVar3 = FUN_680a4d50(param_1 + 0x61); sVar1 = FUN_680a467c(iVar2,uVar3);"
+   }
+  ]
+ },
+ "camera.at_0x67": {
+  "name": "camera_target_roll_word",
+  "meaning": "u16 word that follows the target point (x +0x61, y +0x63, z +0x65) of the global camera: FUN_6801539c picks either camera +0x67 or the actor head +0x16 as the third word of the camera target vector, so +0x67 reads as the roll word of the target vector. It is 0 throughout both tapes; the decompile shows no other use.",
+  "confidence": "low",
+  "evidence": [
+   {
+    "function": "FUN_6801539c",
+    "quote": "local_8 = *(undefined2 *)(param_1 + 0x67);"
+   }
+  ]
+ },
+ "ball.at_0x50": {
+  "name": "ball_pitch_segment_flag",
+  "meaning": "u16 per-ball flag cleared to 0 on every trajectory segment recompute: FUN_6804a62c (called from the pitch/batted-ball rebuilds FUN_68048550 and FUN_6804870b after clearing the +0x30 event bits) sets ball +0x50 = 0 alongside the velocity rebuild. It is 0 throughout both tapes, so it behaves as a marker that is always cleared in saved highlights; its exact meaning is not shown in the decompile.",
+  "confidence": "low",
+  "evidence": [
+   {
+    "function": "FUN_6804a62c",
+    "quote": "*(undefined2 *)(param_1 + 0x50) = 0; uVar1 = FUN_680a5168(*(undefined2 *)(param_1 + 6));"
+   }
+  ]
+ },
+ "ball.at_0x52": {
+  "name": "ball_flight_time",
+  "meaning": "u16 flight time of the ball in 1/69-second ticks (the 0x45 constant is config +0x6b, the 69 scale): FUN_68048550 computes it as max(1, distance / FUN_6804a62c) from the squared speed extent and stores speed = time * 0x45 >> 1, the pitch init FUN_6804870b sets it to 1. It counts down 149 -> 28 while the ball travels in the tapes, so it reads as the remaining flight time in ticks.",
+  "confidence": "medium",
+  "evidence": [
+   {
+    "function": "FUN_68048550",
+    "quote": "uVar1 = FUN_68005ba0(local_c / iVar5,1); *(undefined2 *)(param_1 + 0x52) = uVar1;"
+   },
+   {
+    "function": "FUN_68048550",
+    "quote": "*(int *)(param_1 + 0x30) = *(short *)(param_1 + 0x52) * 0x45 >> 1;"
+   },
+   {
+    "function": "FUN_6804870b",
+    "quote": "*(undefined2 *)((int)param_1 + 0x52) = 1;"
+   }
+  ]
+ },
+ "ball.at_0x44": {
+  "name": "catch_point",
+  "confidence": "medium",
+  "meaning": "Packed field point (s16 x low word, s16 y high word) where the ball comes down to catchable height: the path builder FUN_680498d7 stores the path point at frame +0xe78 here; for a throw FUN_68048550 first sets it to the target point and derives distance and flight time from it. Tape values decode to field coordinates such as (1812,10556) and (-252,6381).",
+  "evidence": [
+   {
+    "function": "FUN_680498d7",
+    "quote": "puVar7 = (undefined4 *)FUN_680492fc(local_f0,param_1[0x39e]);"
+   },
+   {
+    "function": "FUN_68048550",
+    "quote": "*(undefined4 *)(param_1 + 0x44) = *param_2;"
+   },
+   {
+    "function": "FUN_68048550",
+    "quote": "iVar5 = FUN_68016c30(param_1 + 0x44);"
+   }
+  ]
+ },
+ "ball.at_0x40": {
+  "name": "blend_start_point",
+  "confidence": "medium",
+  "meaning": "Packed field point (s16 x, s16 y) the ball's projected spot is blended from: FUN_68048550 copies the throw target here and FUN_6804870b copies the ball's launch position (x,y) here, before the path builder overwrites +0x44; FUN_68048b40 then blends between this point and +0x44 by flight progress toward the first bounce (+0xe7c). Tape values decode to field coordinates such as (2613,17323).",
+  "evidence": [
+   {
+    "function": "FUN_68048550",
+    "quote": "*(undefined4 *)(param_1 + 0x40) = *(undefined4 *)(param_1 + 0x44);"
+   },
+   {
+    "function": "FUN_6804870b",
+    "quote": "param_1[0x11] = *param_1; param_1[0x10] = param_1[0x11];"
+   },
+   {
+    "function": "FUN_68048b40",
+    "quote": "uVar1 = *(undefined4 *)(param_1 + 0x40);"
+   }
+  ]
+ },
+ "ball.at_0x4c": {
+  "name": "exit_point",
+  "confidence": "medium",
+  "meaning": "Packed field point (s16 x, s16 y) where the ball leaves the field: FUN_680498d7 stores the path point at frame +0xe88 when the ball goes out, otherwise the catch-height point (same as +0x44). In both tapes no ball leaves the field and it equals +0x44 in every frame.",
+  "evidence": [
+   {
+    "function": "FUN_680498d7",
+    "quote": "if (param_1[0x3a2] != -1) { puVar7 = (undefined4 *)FUN_680492fc(local_fc,param_1[0x3a2]);"
+   },
+   {
+    "function": "FUN_680498d7",
+    "quote": "param_1[0x13] = *puVar7;"
+   }
+  ]
+ },
+ "sim.at_0xe92": {
+  "name": "sim_event_flags",
+  "meaning": "u16 bit-flag word of the sim object (set with flags_or_set FUN_68002760, cleared with FUN_68002c20, toggled with FUN_6800a1c0 on this+0xe92): the pitch setup FUN_68008f35 sets 0x200 and 0x40, FUN_680090dc toggles 0x100, and FUN_68008c42 mirrors it into the working copy +0xe94 each step. Tapes show 0x200, 0x208, 0x209 and 0x309. Individual bit meanings are not all named.",
+  "confidence": "medium",
+  "evidence": [
+   {
+    "function": "FUN_68008c42",
+    "quote": "*(undefined2 *)(param_1 + 0xe94) = *(undefined2 *)(param_1 + 0xe92); cVar1 = FUN_68007b30();"
+   },
+   {
+    "function": "FUN_680090dc",
+    "quote": "FUN_6800a1c0(0x100,iVar2 == 0);"
+   },
+   {
+    "function": "FUN_68008f35",
+    "quote": "FUN_68002760(0x200);"
+   }
+  ]
+ },
+ "sim.at_0xea8": {
+  "name": "current_fielder_index",
+  "meaning": "u32 index of the player of the play (the fielder making the play) in the sim object: the get helpers FUN_68009388/FUN_680093c9 read it (stashing the previous value at +0xeac) via FUN_680081f0 when < 9 else 0, the play-select FUN_6800940a sets it from param_2, and the pitch routines FUN_680090dc/FUN_6800921d reset it to 9 (no fielder) between plays. Across the tapes it moves 9 -> 7 -> 3 -> 1 as plays start and end.",
+  "confidence": "high",
+  "evidence": [
+   {
+    "function": "FUN_6800940a",
+    "quote": "FUN_6800a190(); *(undefined4 *)(param_1 + 0xea8) = param_2; FUN_6800a1c0(0x400,*(int *)(param_1 + 0xea8) < 9);"
+   },
+   {
+    "function": "FUN_680090dc",
+    "quote": "*(undefined4 *)(param_1 + 0xea8) = 9;"
+   }
+  ]
+ },
+ "fielders.at_0x2a5": {
+  "name": "fielder_assignment_id",
+  "meaning": "u32 assignment id stored in the tape fielder extras right after the 10-byte actor: the tape fielder copy FUN_6802d8a3 stores it (4-byte membuf call) and its counterpart FUN_6802d82d reads it back first, proving it is the first fielder-extra word. The tape holds small ids 0..16 that change as players are assigned during plays; the decompile shows no game-code use of this offset, so the id's exact meaning is not shown.",
+  "confidence": "low",
+  "evidence": [
+   {
+    "function": "FUN_6802d8a3",
+    "quote": "local_8 = FUN_68005985(param_2); if (local_8 == '\\x01') { local_8 = FUN_680ac31a(param_1 + 0x2a5,4); }"
+   }
+  ],
+  "code_use": "none"
+ },
+ "fielders.at_0x2a9": {
+  "name": "fielder_cover_flag",
+  "meaning": "u32 second fielder-extra word the tape copy FUN_6802d8a3 appends after +0x2a5, and its restore counterpart FUN_6802d82d probes in the same order, proving it belongs to the fielder extras. The decompile shows no game-code use of this offset (only the copy/restore pair references it), and in the tapes it takes 0..16 (0 for most fielders), so it reads as a per-assignment flag word; its exact meaning is not shown in the decompile.",
+  "confidence": "low",
+  "evidence": [
+   {
+    "function": "FUN_6802d8a3",
+    "quote": "if (local_8 == '\\x01') { local_8 = FUN_680ac31a(param_1 + 0x2a5,4); } if (local_8 == '\\x01') { local_8 = FUN_680ac31a(param_1 + 0x2a9,4); } return local_8;"
+   },
+   {
+    "function": "FUN_6802d82d",
+    "quote": "if (local_8 == '\\x01') { local_8 = FUN_680ac2be(param_1 + 0x2a5,4); } if (local_8 == '\\x01') { local_8 = FUN_680ac2be(param_1 + 0x2a9,4); } return local_8;"
+   }
+  ],
+  "code_use": "none"
+ },
+ "offense.at_0x2b9": {
+  "name": "runner_new_base",
+  "meaning": "u32 base ordinal the offense person is headed to: FUN_68060f39 sets +0x2b9 = param_2 + local_10 and clamps it to 3 when it passes 3, FUN_6805ee76 copies play state +0x2b1 into +0x2b9, and FUN_68060391 copies +0x2b9 back into +0x2b1 and tests it == 3 (home) when the play logic completes. Values move 7/9/11 during the pitch phase and 0..3 while base running.",
+  "confidence": "medium",
+  "evidence": [
+   {
+    "function": "FUN_68060f39",
+    "quote": "*(int *)(iVar1 + 0x2b9) = param_2 + local_10;",
+    "note": "sets +0x2b9"
+   },
+   {
+    "function": "FUN_6805ee76",
+    "quote": "*(undefined4 *)(param_1 + 0x2b9) = *(undefined4 *)(param_1 + 0x2b1);"
+   },
+   {
+    "function": "FUN_68060391",
+    "quote": "(*(undefined4 *)(iVar1 + 0x2b1) = *(undefined4 *)(iVar1 + 0x2b9), *(int *)(iVar1 + 0x2b1) == 3)) {"
+   }
+  ]
+ },
+ "offense.at_0x2a9": {
+  "name": "runner_base_copy",
+  "meaning": "u32 offense word the tape copy FUN_6805de6a appends after the +0x2b9 word (order +0x2b9, +0x2a9, +0x2ad, +0x2b1), and its restore counterpart FUN_6805ddac reads back in the same order, proving it belongs to the offense extras. In the tapes it is 0..3 for base runners (usually equal to +0x2ad, 1875 of 2060 offense slots across both tapes, so it reads as the base the runner is on, with 4294967295 = none for idle slots); the decompile shows no other use, so the identity claim stays an interpretation.",
+  "confidence": "low",
+  "evidence": [
+   {
+    "function": "FUN_6805de6a",
+    "quote": "if (local_8 == '\\x01') { local_8 = FUN_680ac31a(param_1 + 0x2b9,4); } if (local_8 == '\\x01') { local_8 = FUN_680ac31a(param_1 + 0x2a9,4); } if (local_8 == '\\x01') { local_8 = FUN_680ac31a(param_1 + 0x2ad,4); } if (local_8 == '\\x01') { local_8 = FUN_680ac31a(param_1 + 0x2b1,4); } return local_8;"
+   },
+   {
+    "function": "FUN_6805ddac",
+    "quote": "if (local_8 == '\\x01') { local_8 = FUN_680ac2be(param_1 + 0x2a9,4); }"
+   }
+  ],
+  "code_use": "none"
+ },
+ "offense.at_0x2ad": {
+  "name": "fielder_assign_base",
+  "meaning": "u32 base/assignment id the offense person is assigned for this play: the fielder finder FUN_6802e950 selects the fielder whose +0x2ad equals a base ordinal (0..3), the runner-state init FUN_6805da51 indexes the bag-position table with it, and the anim select FUN_6805dcf2 arms the 0x2b anim when it is nonzero. Across the tapes it is 1 (runner assigned 2B in highlight005), 2 (3B) and 4294967295 (batter-runner / none).",
+  "confidence": "medium",
+  "evidence": [
+   {
+    "function": "FUN_6802e950",
+    "quote": "*(int *)(*(int *)(param_1 + 0xb + local_8 * 4) + 0x2ad) == param_2) break;"
+   },
+   {
+    "function": "FUN_6805da51",
+    "quote": "param_1[3] = *(int *)(&DAT_6818439d + *(int *)((int)param_1 + 0x2ad) * 3);"
+   },
+   {
+    "function": "FUN_6805dcf2",
+    "quote": "*(int *)(param_1 + 0x2ad) != 0)) { FUN_68018340(0x2b);"
+   }
+  ]
+ },
+ "offense.at_0x2b1": {
+  "name": "runner_logic_state",
+  "meaning": "u32 play-logic state the offense person is running through: FUN_6802d942 returns the string 'DO_LOGIC' + +0x2b1 * 0xd confirming it is the do-logic state selector, the runner tick FUN_6805e207 steps +0x2b1 toward the play target +0x2b9 and triggers FUN_6802956e when it reaches 3 (home), and FUN_6805e063 counts it down one state at a time. It holds -1 (idle), 0..3 and pitch-phase values across the tapes.",
+  "confidence": "high",
+  "evidence": [
+   {
+    "function": "FUN_6802d942",
+    "quote": "return \"DO_LOGIC\" + *(int *)(param_1 + 0x2b1) * 0xd;"
+   },
+   {
+    "function": "FUN_6805e207",
+    "quote": "*(undefined4 *)((int)param_1 + 0x2b1) = *(undefined4 *)((int)param_1 + 0x2b9);"
+   },
+   {
+    "function": "FUN_6805e063",
+    "quote": "*(int *)((int)param_1 + 0x2b1) = *(int *)((int)param_1 + 0x2b1) + -1;"
+   },
+   {
+    "function": "FUN_6805e129",
+    "quote": "if (*(int *)((int)param_1 + 0x2b1) < *(int *)((int)param_1 + 0x2b9)) {"
+   }
+  ]
+ },
+ "record.at_0x1d": {
+  "name": "umpire_crew_spare_word",
+  "meaning": "Trailing u16 of the umpire crew object (global 0x681ec578; the Vcr frame writer is called with ecx=0x681ec578 at 68079c90, and the six pointers it walks at +5..+0x19 are the six umpires built by FUN_68077bb7 in BBSim_Umpire). Only the Vcr save/load pair touches +0x1d; no game code sets or tests it, and it is 0 in every frame of both tapes, so it is a spare word saved with the crew.",
+  "confidence": "low",
+  "evidence": [
+   {
+    "function": "FUN_68078374",
+    "quote": "cVar1 = FUN_680ac31a(param_1 + 0x1d,2);"
+   },
+   {
+    "function": "FUN_680782e1",
+    "quote": "cVar1 = FUN_680ac2be(param_1 + 0x1d,2);"
+   }
+  ],
+  "code_use": "none"
+ },
+ "pitch.at_0x3390": {
+  "name": "pitch_marker_frames",
+  "meaning": "u32 script marker count of the precipitation/pitching overlay: the init FUN_68047dc5 sets it to 0x672 (1650), runs its for-loop that many times building the offset table, then resets it to FUN_68048340() * 200 + 400 (400 or 600); the per-frame tick FUN_6804809c applies (delta >> 4) against it via FUN_68005bd0. It is 2000 in the tapes, in frame-count units.",
+  "confidence": "medium",
+  "evidence": [
+   {
+    "function": "FUN_68047dc5",
+    "quote": "*(undefined4 *)(param_1 + 0x3390) = 0x672;"
+   },
+   {
+    "function": "FUN_68047dc5",
+    "quote": "*(uint *)(param_1 + 0x3390) = (uint)bVar1 * 200 + 400;"
+   },
+   {
+    "function": "FUN_6804809c",
+    "quote": "sVar3 = FUN_68005bd0((int)*(short *)(param_1 + 0x3394) >> 4,(int)*(short *)(param_1 + 0x3390));"
+   }
+  ]
+ },
+ "pitch.at_0x3394": {
+  "name": "pitch_sway_offset",
+  "meaning": "u16 sway offset of the precipitation/pitching overlay sprite: the per-frame tick FUN_6804809c increments or decrements it (branching on the event flags), wraps it with FUN_68016e40(delta, 0, 0x640), and applies it as (delta >> 4) against the count at +0x3390 to place the sprite via FUN_680b11f0. It is 0 across both tapes (no sway in the saved highlights), units 1/16 steps up to 0x640.",
+  "confidence": "high",
+  "evidence": [
+   {
+    "function": "FUN_6804809c",
+    "quote": "uVar2 = FUN_68016e40(*(undefined2 *)(param_1 + 0x3394),0,0x640); *(undefined2 *)(param_1 + 0x3394) = uVar2;"
+   },
+   {
+    "function": "FUN_6804809c",
+    "quote": "sVar3 = FUN_68005bd0((int)*(short *)(param_1 + 0x3394) >> 4,(int)*(short *)(param_1 + 0x3390));"
+   }
+  ]
+ },
+ "state.at_0x00": {
+  "name": "inning_brick_header",
+  "meaning": "u16 header word of the team/inning state brick: the snapshot copy FUN_6806a8d4 writes the batting side (FUN_680027c0) and then this word (a 2-byte membuf write at param_1, brick offset +0x00). Only the save/load pair uses it. In the two tapes it is 0xc020 with batting side 1 (h002, inning 1) and 0xc021 with batting side 0 (h005, inning 3), so the low bit looks like the fielding side on a 0xc020 base; two samples only.",
+  "confidence": "low",
+  "evidence": [
+   {
+    "function": "FUN_6806a8d4",
+    "quote": "local_8 = FUN_680027c0(); local_c = FUN_680ac31a(&local_8,2); if (local_c == '\\x01') { local_c = FUN_680ac31a(param_1,2); }"
+   }
+  ],
+  "code_use": "none"
+ },
+ "snapshot.at_0x7e": {
+  "name": "playing_surface",
+  "confidence": "high",
+  "meaning": "Field surface/pattern in effect, saved with the replay: +0x7e is the user setting (0 = use the stadium's), +0x82 is the stadium's info.dat 0x6a field pattern + 1. FUN_68038070 treats value 1 as artificial turf, which the path builder uses to pick the turf bounce constants (0x2e7/0x2e8) and the renderer uses for field markings. 1 in both tapes.",
+  "evidence": [
+   {
+    "function": "FUN_68038070",
+    "quote": "if ((*(int *)(param_1 + 0x7e) == 1) || ((*(int *)(param_1 + 0x7e) == 0 && (*(int *)(param_1 + 0x82) == 1)))) {"
+   },
+   {
+    "function": "FUN_6804d289",
+    "quote": "*(int *)(param_1 + 0x82) = local_34[0] + 1;"
+   },
+   {
+    "function": "FUN_6804d5b0",
+    "quote": "*(undefined4 *)(param_1 + 0x7e) = *(undefined4 *)(param_1 + 0x82);"
+   }
+  ]
+ },
+ "ball_flight.at_0xe70": {
+  "name": "ball_flight_frame_index",
+  "meaning": "u32 current index into the ball's recorded flight-path frames: the per-frame step FUN_6804877d tests index < frame total (+0xe74) and increments it before copying the frame's point (the vec3 copy FUN_68016d20 over +0xe70 * 0xc + +0x60) to the live flight, and the restore path FUN_68048f5c reads it back first. It ticks with the replayed path from 0 to the frame total (63 or 55) in the tapes.",
+  "confidence": "high",
+  "evidence": [
+   {
+    "function": "FUN_6804877d",
+    "quote": "bVar1 = *(int *)(param_1 + 0xe70) < *(int *)(param_1 + 0xe74); if (bVar1) { *(int *)(param_1 + 0xe70) = *(int *)(param_1 + 0xe70) + 1;"
+   },
+   {
+    "function": "FUN_6804877d",
+    "quote": "FUN_68016d20(*(int *)(param_1 + 0xe70) * 0xc + param_1 + 0x60); FUN_68049388(); }"
+   },
+   {
+    "function": "FUN_68048f5c",
+    "quote": "if (local_8 == '\\x01') { local_8 = FUN_680ac2be(param_1 + 0xe70,4); }"
+   }
+  ]
+ },
+ "path.at_0xe78": {
+  "name": "catch_height_frame",
+  "confidence": "high",
+  "meaning": "Flight-path frame index at which the ball first comes down to catchable height: the path builder FUN_680498d7 inits it to -1 and sets it to the first frame where the vertical speed is not positive and the height is under 0x3841; for a throw/pitch path (flag 0x20) it is the flight time +0x52 instead. The ball's (x,y) at this frame becomes ball +0x44. Tapes: 0 (h002 ground ball), 56/150/28 (h005), always before the first bounce.",
+  "evidence": [
+   {
+    "function": "FUN_680498d7",
+    "quote": "param_1[0x39e] = 0xffffffff;"
+   },
+   {
+    "function": "FUN_680498d7",
+    "quote": "if (((param_1[0x39e] == -1) && ((int)param_1[0xc] < 1)) && ((int)param_1[9] < 0x3841)) { param_1[0x39e] = local_8; }"
+   },
+   {
+    "function": "FUN_680498d7",
+    "quote": "param_1[0x39e] = (int)*(short *)((int)param_1 + 0x52);"
+   },
+   {
+    "function": "FUN_680498d7",
+    "quote": "puVar7 = (undefined4 *)FUN_680492fc(local_f0,param_1[0x39e]);"
+   }
+  ]
+ },
+ "path.at_0xe7c": {
+  "name": "first_bounce_frame",
+  "confidence": "high",
+  "meaning": "Flight-path frame index of the ball's first contact: FUN_680498d7 sets it (once, from -1) on the first frame the height goes below 0 (ground bounce, which then applies the surface bounce constants) or on the first wall rebound. Game code compares the current frame +0xe70 against it (has the ball bounced yet, frames left until it does), and FUN_68048b40 blends the projected spot by progress toward it. Tapes: 2 (h002), 154/62/38 (h005).",
+  "evidence": [
+   {
+    "function": "FUN_680498d7",
+    "quote": "if ((int)param_1[9] < 0) { if (param_1[0x39f] == -1) { param_1[0x39f] = local_8; }"
+   },
+   {
+    "function": "FUN_6800a2f0",
+    "quote": "return *(int *)(param_1 + 0xe7c) <= *(int *)(param_1 + 0xe70);"
+   },
+   {
+    "function": "FUN_680028f0",
+    "quote": "*(int *)(param_1 + 0xe7c) - *(int *)(param_1 + 0xe70)"
+   },
+   {
+    "function": "FUN_68048b40",
+    "quote": "if (*(int *)(param_1 + 0xe7c) < 1) {"
+   }
+  ]
+ },
+ "path.at_0xe80": {
+  "name": "roll_start_frame",
+  "confidence": "high",
+  "meaning": "Flight-path frame index at which the ball stops bouncing and starts to roll: after a bounce FUN_680498d7 damps the vertical speed, and the first time it falls under 0x100 it zeroes height and vertical speed and records the frame here (-1 until then). FUN_6802c0d0 (BBSim_Field) compares it with the current frame. Tapes: 103 (h002), 214/78/51 (h005), always after the first bounce.",
+  "evidence": [
+   {
+    "function": "FUN_680498d7",
+    "quote": "if ((int)param_1[0xc] < 0x100) { param_1[9] = 0; param_1[0xc] = 0; if (param_1[0x3a0] == -1) { param_1[0x3a0] = local_8; }"
+   },
+   {
+    "function": "FUN_6802c0d0",
+    "quote": "return *(int *)(param_1 + 0xe80) <= *(int *)(param_1 + 0xe70);"
+   }
+  ]
+ },
+ "path.at_0xe84": {
+  "name": "wall_bounce_frame",
+  "confidence": "medium",
+  "meaning": "Flight-path frame index of the first wall rebound: when the fair-territory/field test FUN_6806d84a fails and FUN_6806d950 can step the ball back inside, FUN_680498d7 reflects the velocity and records the frame here (also as the first bounce if none yet); -1 means the ball never reached the wall. FUN_6800a3b0 tests whether the current frame has passed it. Tapes: -1 (h002), 187/190/-1 (h005).",
+  "evidence": [
+   {
+    "function": "FUN_680498d7",
+    "quote": "if (param_1[0x3a1] == -1) { param_1[0x3a1] = local_8; }"
+   },
+   {
+    "function": "FUN_680498d7",
+    "quote": "cVar1 = FUN_6806d950(&local_3c,param_1,&local_b0);"
+   },
+   {
+    "function": "FUN_6800a3b0",
+    "quote": "if ((*(int *)(param_1 + 0xe84) == -1) || (*(int *)(param_1 + 0xe70) < *(int *)(param_1 + 0xe84)))"
+   }
+  ]
+ },
+ "path.at_0xe88": {
+  "name": "leaves_park_frame",
+  "confidence": "medium",
+  "meaning": "Flight-path frame index at which the ball leaves the playing field for good: FUN_680498d7 records it when the field test FUN_6806d84a fails and FUN_6806d950 cannot bring the ball back (over the fence or out of play); -1 means it stays in. The ball's (x,y) at this frame becomes ball +0x4c, and FUN_6800a370 / FUN_68002990 compare the current frame with it. -1 in every path of both tapes.",
+  "evidence": [
+   {
+    "function": "FUN_680498d7",
+    "quote": "if (cVar1 == '\\0') { if (param_1[0x3a2] == -1) { param_1[0x3a2] = local_8; }"
+   },
+   {
+    "function": "FUN_680498d7",
+    "quote": "if (param_1[0x3a2] != -1) { puVar7 = (undefined4 *)FUN_680492fc(local_fc,param_1[0x3a2]);"
+   },
+   {
+    "function": "FUN_6800a370",
+    "quote": "return *(int *)(param_1 + 0xe88) == *(int *)(param_1 + 0xe70);"
+   }
+  ]
+ }
+}

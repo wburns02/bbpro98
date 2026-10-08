@@ -118,19 +118,54 @@ Actor (10 bytes, FUN_68005985): s16 x (+4), s16 y (+6), u16 z (+0x10, about 144 
 -32768 faces home), u8 animation (+0x1e), u8 +0x2e. Units are 1/30 ft with home plate at (0, 0) and +x toward
 first base: 1B bag (1909, 1909), 2B (0, 3818), pitcher y = 1815 (60.5 ft), batter (±60, 0).
 
-Fields named `at_0x..` / `global_..` are stored and editable but their meaning is not labelled yet (ROADMAP #10).
+Field names (ROADMAP #10, 2026-10-08). The 29 fields first stored as `at_0x<offset>` now decode under the names
+below; encode still accepts the old `at_0x` keys. Evidence quotes and full meanings: `work/spec/TAP_NAMES.json`
+(referee re/targets/tapnameref.py, PASS; Claude-gated). `low` = only the tape save/load pair touches the offset, so the
+meaning rests on the tape values. `global_..` fields stay unlabelled.
+
+| Old key | Name | Conf. | Meaning |
+|---|---|---|---|
+| actor.at_0x2e | animation_frame_index | high | u8 frame index of the actor's current animation: FUN_68003c86 (advance_anim_frame) adds the step at +0x2a each step, clamps it to 0 when it runs negative, pins it to framecount-1 at the ends and reverses, and FUN_68003fe3 (set_anim_frame) seeds it when an animation is armed. |
+| camera.at_0x58 | camera_save_probe_word | low | u16 word of the global camera the Vcr save path probes before capturing: FUN_680156ca reads it with a 2-byte membuf call (FUN_680ac2be) and fails the save if it reads back short, and the restore counterpart FUN_680157e8 probes it identically with FUN_680ac31a. |
+| camera.at_0x5b | camera_extent_bound | high | u16 display extent bound of the global camera: FUN_680133a6's camera-script cases compute it as FUN_6800fd60((extent << 4) / config entry, 0x80, 0x1000): a clamp between 0x80 and 0x1000: or copy it from the camera config entry, and FUN_68014256 continues to use it as the pan extent. |
+| camera.at_0x61 | camera_look_target | medium | 3 x u16 point (x +0x61, y +0x63, z +0x65) the global camera looks at: FUN_68015653 derives the pitch angle from (target_z +0x65 - camera position_z) with the delta/angle helpers FUN_680a4d50 (vector difference) and FUN_680a467c over camera +0x61, so +0x61..+0x65 behaves as the look-at target point. |
+| camera.at_0x67 | camera_target_roll_word | low | u16 word that follows the target point (x +0x61, y +0x63, z +0x65) of the global camera: FUN_6801539c picks either camera +0x67 or the actor head +0x16 as the third word of the camera target vector, so +0x67 reads as the roll word of the target vector. |
+| ball.at_0x50 | ball_pitch_segment_flag | low | u16 per-ball flag cleared to 0 on every trajectory segment recompute: FUN_6804a62c (called from the pitch/batted-ball rebuilds FUN_68048550 and FUN_6804870b after clearing the +0x30 event bits) sets ball +0x50 = 0 alongside the velocity rebuild. |
+| ball.at_0x52 | ball_flight_time | medium | u16 flight time of the ball in 1/69-second ticks (the 0x45 constant is config +0x6b, the 69 scale): FUN_68048550 computes it as max(1, distance / FUN_6804a62c) from the squared speed extent and stores speed = time * 0x45 >> 1, the pitch init FUN_6804870b sets it to 1. |
+| ball.at_0x44 | catch_point | medium | Packed field point (s16 x low word, s16 y high word) where the ball comes down to catchable height: the path builder FUN_680498d7 stores the path point at frame +0xe78 here; |
+| ball.at_0x40 | blend_start_point | medium | Packed field point (s16 x, s16 y) the ball's projected spot is blended from: FUN_68048550 copies the throw target here and FUN_6804870b copies the ball's launch position (x,y) here, before the path builder overwrites +0x44; |
+| ball.at_0x4c | exit_point | medium | Packed field point (s16 x, s16 y) where the ball leaves the field: FUN_680498d7 stores the path point at frame +0xe88 when the ball goes out, otherwise the catch-height point (same as +0x44). |
+| sim.at_0xe92 | sim_event_flags | medium | u16 bit-flag word of the sim object (set with flags_or_set FUN_68002760, cleared with FUN_68002c20, toggled with FUN_6800a1c0 on this+0xe92): the pitch setup FUN_68008f35 sets 0x200 and 0x40, FUN_680090dc toggles 0x100, and FUN_68008c42 mirrors it into the working copy +0xe94 each step. |
+| sim.at_0xea8 | current_fielder_index | high | u32 index of the player of the play (the fielder making the play) in the sim object: the get helpers FUN_68009388/FUN_680093c9 read it (stashing the previous value at +0xeac) via FUN_680081f0 when < 9 else 0, the play-select FUN_6800940a sets it from param_2, and the pitch routines FUN_680090dc/FUN_6800921d reset it to 9 (no fielder) between plays. |
+| fielders.at_0x2a5 | fielder_assignment_id | low | u32 assignment id stored in the tape fielder extras right after the 10-byte actor: the tape fielder copy FUN_6802d8a3 stores it (4-byte membuf call) and its counterpart FUN_6802d82d reads it back first, proving it is the first fielder-extra word. |
+| fielders.at_0x2a9 | fielder_cover_flag | low | u32 second fielder-extra word the tape copy FUN_6802d8a3 appends after +0x2a5, and its restore counterpart FUN_6802d82d probes in the same order, proving it belongs to the fielder extras. |
+| offense.at_0x2b9 | runner_new_base | medium | u32 base ordinal the offense person is headed to: FUN_68060f39 sets +0x2b9 = param_2 + local_10 and clamps it to 3 when it passes 3, FUN_6805ee76 copies play state +0x2b1 into +0x2b9, and FUN_68060391 copies +0x2b9 back into +0x2b1 and tests it == 3 (home) when the play logic completes. |
+| offense.at_0x2a9 | runner_base_copy | low | u32 offense word the tape copy FUN_6805de6a appends after the +0x2b9 word (order +0x2b9, +0x2a9, +0x2ad, +0x2b1), and its restore counterpart FUN_6805ddac reads back in the same order, proving it belongs to the offense extras. |
+| offense.at_0x2ad | fielder_assign_base | medium | u32 base/assignment id the offense person is assigned for this play: the fielder finder FUN_6802e950 selects the fielder whose +0x2ad equals a base ordinal (0..3), the runner-state init FUN_6805da51 indexes the bag-position table with it, and the anim select FUN_6805dcf2 arms the 0x2b anim when it is nonzero. |
+| offense.at_0x2b1 | runner_logic_state | high | u32 play-logic state the offense person is running through: FUN_6802d942 returns the string 'DO_LOGIC' + +0x2b1 * 0xd confirming it is the do-logic state selector, the runner tick FUN_6805e207 steps +0x2b1 toward the play target +0x2b9 and triggers FUN_6802956e when it reaches 3 (home), and FUN_6805e063 counts it down one state at a time. |
+| record.at_0x1d | umpire_crew_spare_word | low | Trailing u16 of the umpire crew object (global 0x681ec578; |
+| pitch.at_0x3390 | pitch_marker_frames | medium | u32 script marker count of the precipitation/pitching overlay: the init FUN_68047dc5 sets it to 0x672 (1650), runs its for-loop that many times building the offset table, then resets it to FUN_68048340() * 200 + 400 (400 or 600); |
+| pitch.at_0x3394 | pitch_sway_offset | high | u16 sway offset of the precipitation/pitching overlay sprite: the per-frame tick FUN_6804809c increments or decrements it (branching on the event flags), wraps it with FUN_68016e40(delta, 0, 0x640), and applies it as (delta >> 4) against the count at +0x3390 to place the sprite via FUN_680b11f0. |
+| state.at_0x00 | inning_brick_header | low | u16 header word of the team/inning state brick: the snapshot copy FUN_6806a8d4 writes the batting side (FUN_680027c0) and then this word (a 2-byte membuf write at param_1, brick offset +0x00). |
+| snapshot.at_0x7e | playing_surface | high | Field surface/pattern in effect, saved with the replay: +0x7e is the user setting (0 = use the stadium's), +0x82 is the stadium's info.dat 0x6a field pattern + 1. |
+| ball_flight.at_0xe70 | ball_flight_frame_index | high | u32 current index into the ball's recorded flight-path frames: the per-frame step FUN_6804877d tests index < frame total (+0xe74) and increments it before copying the frame's point (the vec3 copy FUN_68016d20 over +0xe70 * 0xc + +0x60) to the live flight, and the restore path FUN_68048f5c reads it back first. |
+| path.at_0xe78 | catch_height_frame | high | Flight-path frame index at which the ball first comes down to catchable height: the path builder FUN_680498d7 inits it to -1 and sets it to the first frame where the vertical speed is not positive and the height is under 0x3841; |
+| path.at_0xe7c | first_bounce_frame | high | Flight-path frame index of the ball's first contact: FUN_680498d7 sets it (once, from -1) on the first frame the height goes below 0 (ground bounce, which then applies the surface bounce constants) or on the first wall rebound. |
+| path.at_0xe80 | roll_start_frame | high | Flight-path frame index at which the ball stops bouncing and starts to roll: after a bounce FUN_680498d7 damps the vertical speed, and the first time it falls under 0x100 it zeroes height and vertical speed and records the frame here (-1 until then). |
+| path.at_0xe84 | wall_bounce_frame | medium | Flight-path frame index of the first wall rebound: when the fair-territory/field test FUN_6806d84a fails and FUN_6806d950 can step the ball back inside, FUN_680498d7 reflects the velocity and records the frame here (also as the first bounce if none yet); |
+| path.at_0xe88 | leaves_park_frame | medium | Flight-path frame index at which the ball leaves the playing field for good: FUN_680498d7 records it when the field test FUN_6806d84a fails and FUN_6806d950 cannot bring the ball back (over the fence or out of play); |
 
 ## JSON keys
 
 ```
-{caption, snapshot: {state: {batting_side, at_0x00, teams: [{runs, linescore, hits, errors, left_on_base}] x2,
+{caption, snapshot: {state: {batting_side, inning_brick_header, teams: [{runs, linescore, hits, errors, left_on_base}] x2,
                              balls, strikes, outs, inning, clock},
                      team_records: [{team_id, setup_5, name, alt_name, manager, abbrev, unused_0x44, stadium, city8,
                                      uniform_palette: [[r, g, b]] x32}] x2,
                      game: {game_mode, setup_mode, setup_0x3e8, stadium_file, association_file,
                             date: {year, month, day}, low_rating: [a, b], _day_serial},
-                     stadium_dat, fielders: [{first_name, last_name, number}] x9, offense: [...] x5, at_0x7e},
- frames: [{camera: {...}, ball_flight: {at_0xe70, path?: {at_0xe78.., points: [[x, y, z]]}}, record: {...}}],
+                     stadium_dat, fielders: [{first_name, last_name, number}] x9, offense: [...] x5, playing_surface},
+ frames: [{camera: {...}, ball_flight: {ball_flight_frame_index, path?: {catch_height_frame.., points: [[x, y, z]]}}, record: {...}}],
  _frame_count, _tape_length, _checksum, _stale_strings?}
 ```
 
