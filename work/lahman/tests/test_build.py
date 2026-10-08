@@ -1,5 +1,5 @@
 """End to end: build the 1927 association into a scratch install and check what the game will read. Needs the Lahman
-database, the T16_2L template and the work install's MLBPA96E.PYR / _DEFAULT.ASN; skips without them."""
+database, the T16_2L template and the work install's MLBPA96E.PYR / _DEFAULT.ASN / _DEFAULT.PYR; skips without them."""
 import os
 import shutil
 import struct
@@ -13,7 +13,8 @@ from lahman.asnfile import AsnFile, cstr
 
 INSTALL = '/mnt/nvme/bbpro98/work_install'
 SCRATCH = '/mnt/nvme/bbpro98/tmp'
-NEEDED = [B.DB, os.path.join(INSTALL, 'Assn', 'MLBPA96E.PYR'), os.path.join(INSTALL, 'Assn', '_DEFAULT.ASN')]
+NEEDED = [B.DB, os.path.join(INSTALL, 'Assn', 'MLBPA96E.PYR'), os.path.join(INSTALL, 'Assn', '_DEFAULT.ASN'),
+          os.path.join(INSTALL, 'Assn', '_DEFAULT.PYR')]
 
 
 @pytest.fixture(scope='module')
@@ -28,7 +29,7 @@ def built():
     try:
         for sub in ('Assn', 'Stats'):
             os.mkdir(os.path.join(root, sub))
-        for f in ('MLBPA96E.PYR', '_DEFAULT.ASN'):
+        for f in ('MLBPA96E.PYR', '_DEFAULT.ASN', '_DEFAULT.PYR'):
             os.symlink(os.path.join(INSTALL, 'Assn', f), os.path.join(root, 'Assn', f))
         log = []
         out = B.build(1927, root, log=log.append)
@@ -47,7 +48,7 @@ def test_teams_and_association(built):
     _, _, data = built
     asn = AsnFile(data['ASN'])
     a = asn.recs['a'][0][1]
-    assert cstr(a, 0x12, 33) == '1927 Major League Baseball'
+    assert cstr(a, 0x12, 33) == '1927 Major Leagues'
     names = {cstr(p, 0x12, 32) for _, p in asn.recs['t']}
     assert len(asn.recs['t']) == 16
     assert any('Yankees' in n for n in names) and any('Pirates' in n for n in names)

@@ -11,7 +11,7 @@ rotations and bullpens; players rated from that season's stats (ratings.py); car
 and last season's line. Template slots no real team fills get filler teams from the template's own generated
 players; real teams that do not fit, and roster overflow, go to the free-agent pool.
 
-Game files (templates, the install's MLBPA96E.PYR and _DEFAULT.ASN) are read at build time and never copied into
+Game files (templates, the install's MLBPA96E.PYR, _DEFAULT.ASN and _DEFAULT.PYR) are read at build time and never copied into
 the repository.
 """
 import argparse
@@ -421,7 +421,11 @@ def build(year, install, db=DB, name=None, log=print):
     before = lahdb.seasons_before(con, year)
     hdr, tmpl_recs = RT.read_pyr(files['PYR'])
     tmpl_year = RT.from_serial(struct.unpack_from('<I', asn.recs['a'][0][1], 0x0a)[0]).year
-    generated = [r for r in tmpl_recs if struct.unpack_from('<H', r, 0)[0] >= 721]
+    # Filler teams draw on the template's own players: the ones the game generated first, then the real 1997
+    # players it placed (a T10 template has no generated players at all).
+    real_97 = {(RT.cstr(r[30:47]), RT.cstr(r[47:64]))
+               for r in RT.read_pyr(os.path.join(install, 'Assn', '_DEFAULT.PYR'))[1]}
+    generated = sorted(tmpl_recs, key=lambda r: (RT.cstr(r[30:47]), RT.cstr(r[47:64])) in real_97)
 
     new_recs, id_of = [], {}
 
@@ -447,7 +451,7 @@ def build(year, install, db=DB, name=None, log=print):
     opening = RT.from_serial(struct.unpack_from('<I', a_p, 0x0e)[0])
     struct.pack_into('<I', a, 0x0a, RT.serial(datetime.date(year, 1, 1)))
     struct.pack_into('<I', a, 0x0e, RT.serial(opening.replace(year=year)))
-    put_str(a, 0x12, 33, '%d Major League Baseball' % year)
+    put_str(a, 0x12, 33, '%d Major Leagues' % year)          # the load list clips past ~19 characters
     put_str(a, 0x33, 33, 'World Series' if year >= 1903 else 'Pennant')
     asn.rewrite('a', a_off, bytes(a))
 
