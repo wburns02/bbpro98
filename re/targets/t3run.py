@@ -4,8 +4,8 @@ only sees each record's inputs and forwards every oracle call over its stdin/std
 read the recorded events nor write the result.
 
 Protocol, one JSON line each way: host -> {"rec": inputs (bytes fields as hex)} | {"end": 1};
-shim -> {"x": [va, arg1]} | {"pb": i} | {"o": [t, gen, a]}, host -> {"v": value} | {"m": 1} (mismatch);
-shim -> {"done": null | error, "ret": replay's return (int or null)} after replay returns or raises."""
+shim -> {"x": [va, arg1]} | {"x2": [va, arg1]} | {"al": [a, b, c]} | {"pb": i} | {"o": [t, gen, a]}, host -> {"v": value} | {"m": 1} (mismatch);
+shim -> {"done": null | error, "ret": replay's return (int, list of ints or null)} after replay returns or raises."""
 import json, os, sys
 
 W = sys.argv[1] if len(sys.argv) > 1 else '/w'
@@ -30,6 +30,8 @@ def ask(msg):
 class Oracle:
     __slots__ = ()
     def x(self, va, arg1=None): return ask({'x': [va, arg1]})
+    def x2(self, va, arg1=None): return tuple(ask({'x2': [va, arg1]}))
+    def align(self, a, b, c): return ask({'al': [a, b, c]})
     def pb(self, i): return ask({'pb': i})
     def other(self, t, gen=None, a=None): return tuple(ask({'o': [t, gen, a]}))
 
@@ -47,7 +49,9 @@ for line in proto_in:
     try:
         if rep is None: raise RuntimeError(f'{MODULE}.py did not import')
         ret, err = rep(o, r), None
-        if not (ret is None or type(ret) is int and abs(ret) < 1 << 64): ret, err = None, 'replay returned a non-int'
+        if not (ret is None or type(ret) is int and abs(ret) < 1 << 64 or type(ret) in (list, tuple) and len(ret) <= 8
+                and all(type(v) is int and abs(v) < 1 << 64 for v in ret)): ret, err = None, 'replay returned a non-int'
+        if type(ret) is tuple: ret = list(ret)
     except t3lib.Mismatch:
         ret, err = None, 'mismatch'
     except Exception as e:

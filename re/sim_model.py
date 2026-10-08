@@ -16,6 +16,9 @@ Checks, per traced function:
   runner_ai  the runner AI update: every getter and RNG roll, and the runner's first 0x20 bytes after the call
   launch     the ball launch: the cos-table speed (returned and passed on), heading flip, and the ball's 0x20 bytes after
   throw_speed  the throw speed from the arm rating and PB 0x2f0-0x2f5, and its return value
+  positioning  the defensive alignment: every getter / PB read / slot write and the alignment object after the call
+  find_fielder  which fielder goes for the ball: the flight-path walk, every fielder's score and the pointer returned
+                (needs a simtrace v3 trace built with the z logging, st11 on: older traces are skipped)
 A model replays the record's events through a Tape (exact order, arguments and PB values); 'skipped' means a nested
 record was dropped by its cap or the record overflowed.
 Exits 1 if any check has a mismatch.
@@ -98,20 +101,39 @@ class Tape:
         if e[5] != PB[i]: raise Mismatch(f'PB[{i}] read {e[5]}, table {PB[i]}')
         return e[5]
 
-    def x(self, va, arg1=None):
-        """the next getter return (unsigned 32 bit); arg1, when given, must be the recorded first stack argument"""
+    def x_ev(self, va, arg1=None, ecx=None):
+        """the next getter's X event; arg1 / ecx, when given, must be the recorded first stack argument / this"""
         n = self.ev[self.i] if self.i < len(self.ev) else None
         if self.i and (n is None or chr(n[0]) != 'X' or PROBES[n[1]][0] != va
                        or arg1 is not None and n[4] & 0xffffffff != arg1 & 0xffffffff):
             p = self.ev[self.i - 1]   # simtrace.c ev() drops an X event identical to the previous one: a repeated call
             if chr(p[0]) == 'X' and PROBES[p[1]][0] == va and (arg1 is None or p[4] & 0xffffffff == arg1 & 0xffffffff):
-                return p[5] & 0xffffffff
+                return p
         e = self._next('X', f'getter {va:x}')
         if PROBES[e[1]][0] != va:
             raise Mismatch(f'model wants getter {va:x}, record has {fmt_ev(e)} (event {self.i - 1})')
         if arg1 is not None and e[4] & 0xffffffff != arg1 & 0xffffffff:
             raise Mismatch(f'getter {va:x} arg {e[4] & 0xffffffff:#x}, model {arg1 & 0xffffffff:#x}')
-        return e[5] & 0xffffffff
+        if ecx is not None and e[3] & 0xffffffff != ecx & 0xffffffff:
+            raise Mismatch(f'getter {va:x} this {e[3] & 0xffffffff:#x}, model {ecx & 0xffffffff:#x}')
+        return e
+
+    def x(self, va, arg1=None, ecx=None):
+        """the next getter return (unsigned 32 bit); arg1 / ecx, when given, must be the recorded first stack argument /
+        this pointer"""
+        return self.x_ev(va, arg1, ecx)[5] & 0xffffffff
+
+    def x2(self, va, arg1=None, ecx=None):
+        """(return, idx) of the next getter: idx is the second stack argument, or for FUN_6803997d (simtrace v3) the
+        flight-path step's new z"""
+        e = self.x_ev(va, arg1, ecx)
+        return e[5] & 0xffffffff, e[2]
+
+    def align(self, a, b, c):
+        """FUN_6801a4b1(&align, a, b, c) (event L): the alignment slots set for the current mode"""
+        e = self._next('L', f'align({a}, {b}, {c})')
+        if (e[3], e[4], e[2]) != (a, b, c):
+            raise Mismatch(f'model align({a}, {b}, {c}), record has {fmt_ev(e)} (event {self.i - 1})')
 
     def mod(self, n):
         """main RNG mod(n): its recorded result (check_rng separately proves the value replays)"""
@@ -1377,6 +1399,116 @@ def _ra_body(P, act, st):
         ra_set_action(P, t, 4, P.ax(0x68002ce0, 0), 0)
 
 
+ALIGN = 0x680c8f98   # the defensive alignment object: mode at +9, slots a / b / c per mode at +0xd / +0x15 / +0x1d
+
+
+def model_positioning(r):
+    """FUN_6803853e(def_mgr): the defensive alignment for the pitch. Mode 0 (FUN_68019fba) gets slots
+    (a, b, c) = (0..3, 2, 2) from the game state (FUN_68039356 / FUN_68038ed0 / FUN_68032ff0, bases FUN_68002c80,
+    score margin from FUN_68056985(3) - (4)), then c is shifted by the inning-vs-PB[0x30..0x31] test (FUN_68038e90;
+    FUN_6802fd50 == 1 picks the direction). Mode 1 gets (0, 0..3, 2), b shifted by FUN_68038e70 vs PB[0x34..0x35],
+    then the same c shift, then (on the (0, 2/3, 2) paths) a c shift on PB[0x32..0x33] and a b shift when the two
+    counts FUN_6800f1e0 / FUN_6800f1c0 differ by more than one. Shifts clamp: c in 0..4 (FUN_6801a716 down,
+    FUN_6801a7e8 up), b in 0..3 (FUN_6801a50e up, FUN_6801a612 down). Checked: every getter / PB read / slot write in
+    order, and the object's 0x20 bytes from +9 after the call (mode, the mode 0 and 1 slots, +0x25 = 0xffff)."""
+    t = Tape(r)
+    b2 = t.x(0x6800f200) & 0xff
+    margin = s16v((t.x(0x68056985, 3) & 0xff) - (t.x(0x68056985, 4) & 0xff))
+    bases, n1, n2 = (t.x(va) & 0xff for va in (0x68002c80, 0x6800f1e0, 0x6800f1c0))
+    c6 = t.x(0x68039356) & 0xff
+    i8, i9 = s32(t.x(0x68032ff0)), s32(t.x(0x6800f600))
+    b15 = int(t.x(0x6800f640) != 0)
+    up = s32(t.x(0x6802fd50)) == 1
+    slot = {'a': [None, None], 'b': [None, None], 'c': [None, None]}
+    mode = [None]
+
+    def setmode(m):
+        t.x(0x68019fba, m, ecx=ALIGN); mode[0] = m
+
+    def align(a, b, c):
+        t.align(a, b, c)
+        slot['a'][mode[0]], slot['b'][mode[0]], slot['c'][mode[0]] = a, b, c
+
+    def shift(va, k, d, lo, hi):
+        t.x(va, ecx=ALIGN)
+        v = slot[k][mode[0]] + d
+        if lo <= v <= hi: slot[k][mode[0]] = v
+
+    def c_down(): shift(0x6801a716, 'c', -1, 0, 4)
+    def c_up(): shift(0x6801a7e8, 'c', 1, 0, 4)
+    def b_up(): shift(0x6801a50e, 'b', 1, 0, 3)
+    def b_down(): shift(0x6801a612, 'b', -1, 0, 3)
+
+    def c_shift(p0):
+        if s32(t.x(0x68038e90)) < s32(t.pb(p0)):
+            if s32(t.x(0x68038e90)) <= s32(t.pb(p0 + 1)): (c_down if up else c_up)()
+        else: (c_up if up else c_down)()
+
+    setmode(0)
+    if not c6 or not b15 or margin < -1 or bases > 1:
+        if not c6 or t.x(0x68038ed0) & 0xff: align(0 if not i8 or bases > 1 else 3, 2, 2)
+        else: align(1, 2, 2)
+    else: align(2, 2, 2)
+    c_shift(0x30)
+    setmode(1)
+    more = False
+    if i32(r['xf'], 0) == 0 and b2 > 8 and b15 and margin == 0 and bases < 2: align(0, 0, 2)
+    elif not c6 or not i9 or -1 - b15 != margin:
+        more = True
+        if not c6 or not i8 or -1 - b15 - int(i9 != 0) != margin:
+            align(0, 2, 2)
+            v = s32(t.x(0x68038e70))
+            if s32(t.pb(0x35)) < v:
+                v = s32(t.x(0x68038e70))
+                if s32(t.pb(0x34)) <= v: b_up()
+            else: b_down()
+        else:
+            align(0, 3, 2)
+            if s32(t.x(0x68038e70)) <= s32(t.pb(0x35)): b_down()
+    else: align(0, 1, 2)
+    c_shift(0x30)
+    if more:
+        c_shift(0x32)
+        if n1 + 1 < n2: b_up()
+        elif n2 + 1 < n1: b_down()
+    t.x(0x68038dd0)
+    t.done()
+    want = struct.pack('<7iH', mode[0], *slot['a'], *slot['b'], *slot['c'], 0xffff)
+    post = bytes(r['post'][:len(want)])
+    if want != post:
+        d = next(i for i in range(len(want)) if want[i] != post[i])
+        raise Mismatch(f'alignment byte {9 + d:#x}: model {want.hex()}, after the call {post.hex()}')
+
+
+def model_find_fielder(r):
+    """FUN_68022ea4(fielders): which fielder goes for the ball. Steps the ball's flight path (FUN_6803997d; z = the
+    new point's height, logged by simtrace v3); a point counts when it is reachable (FUN_68023be0 false) and z <= 0xe0.
+    At the first such point each of the 9 fielders (this+0xb+4k) scores time to the point (FUN_68003988, this
+    fielder+8) + reaction delay (FUN_68021fca), as shorts; the lowest score under the step count wins (first on ties).
+    No winner: the next counting point. Path ended (FUN_6803997d false or FUN_68002e30): the nearest fielder
+    (FUN_6802644a), returned as is. Checked: every getter in order with its this pointer, and the returned pointer."""
+    t, b = Tape(r), r['obj']
+    fielders = [struct.unpack_from('<I', b, 0xb + 4 * k)[0] for k in range(9)]
+    t.x(0x68039645)
+    steps, pick = 0, 0
+    while not pick:
+        while True:
+            ok, z = t.x2(0x6803997d)
+            if not ok & 0xff or t.x(0x68002e30) & 0xff:
+                v = t.x(0x6802644a, ecx=r['self'])
+                t.done()
+                if v != r['ret'] & 0xffffffff: raise Mismatch(f'nearest fielder {v:#x}, recorded {r["ret"] & 0xffffffff:#x}')
+                return
+            steps = s16v(steps + 1)
+            if not t.x(0x68023be0) & 0xff and s16v(z) <= 0xe0: break
+        best = 0
+        for f in fielders:
+            s = s16v(s16v(t.x(0x68003988, ecx=f + 8)) + s16v(t.x(0x68021fca, ecx=f)))
+            if s < steps and (not pick or s < best): best, pick = s, f
+    t.done()
+    if pick != r['ret'] & 0xffffffff: raise Mismatch(f'fielder {pick:#x}, recorded {r["ret"] & 0xffffffff:#x}')
+
+
 V2_MODELS = ('def_mgr', 'def_strategy', 'def_ratings', 'replace_p', 'relief_chk', 'relief_pick', 'throw')
 
 
@@ -1415,7 +1547,7 @@ def main():
         if err is not None and len(bad[name]) < 5: bad[name].append((r['i'], err))
 
     for path in sys.argv[1:]:
-        pending = {}
+        pending, ff, has_z = {}, [], False
         for r in records(path):
             n += 1
             link(r, pending)
@@ -1434,6 +1566,10 @@ def main():
             if f == 'lead' and not r['over']: note('lead', guard(model_lead, r), r)
             if f == 'runner_ai' and not r['over']: note('runner_ai', guard(model_runner_ai, r), r)
             if f in ('launch', 'throw_speed') and not r['over']: note(f, guard(globals()['model_' + f], r), r)
+            if f == 'positioning' and not r['over']: note(f, guard(model_positioning, r), r)
+            if f == 'find_fielder' and not r['over']:
+                ff.append(r)
+                has_z |= any(chr(e[0]) == 'X' and PROBES[e[1]][0] == 0x6803997d and e[2] for e in r['ev'])
             if f in V2_MODELS and not r['over'] and 'model_' + f in globals():
                 note(f, guard(globals()['model_' + f], r), r)
             if f == 'inj_check': note('inj_check', model_inj_check(r), r)
@@ -1444,6 +1580,9 @@ def main():
                     note('fatigue', model_fatigue(r, prev['ret']), r)
                 else: res['fatigue']['skipped (nested stamina not recorded)'] += 1
             prev = r
+        for r in ff:   # the trace logs the flight-path z (simtrace v3, st11 on) when any step of any record has one
+            if has_z: note('find_fielder', guard(model_find_fielder, r), r)
+            else: res['find_fielder']['skipped (trace without the z logging)'] += 1
     print(f'records {n}')
     fail = False
     for k, c in res.items():

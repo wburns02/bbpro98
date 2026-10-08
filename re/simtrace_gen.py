@@ -69,7 +69,7 @@ def probe_of(va):
             ops = txt.split(None, 1)
             dst_only = ops[0] in ('mov', 'movzbl', 'movsbl', 'movzwl', 'movswl', 'lea') and \
                 re.search(r',%(edx|dx|dl)$', ops[1]) and 'edx' not in ops[1].rsplit(',', 1)[0] or \
-                ops[0] == 'xor' and ops[1] == '%edx,%edx' or ops[0] in ('cltd', 'cdq')
+                ops[0] in ('xor', 'sub') and ops[1] == '%edx,%edx' or ops[0] in ('cltd', 'cdq')
             if not dst_only: return None
             break
     pro, n = b'', 0

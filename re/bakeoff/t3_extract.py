@@ -2,7 +2,8 @@
 """Bake-off tier 3 data: the st8 runner_ai records (FUN_6804faa1, simtrace target 24) as self-contained JSON lines,
 split in trace order: the first half is the lanes' dev set, the second half the holdout they never see.
 
-usage: t3_extract.py [NAME [TAG]]   NAME a simtrace target (default runner_ai), TAG the target dir name (default t3rai)
+usage: t3_extract.py [NAME [TAG [TRACE]]]   NAME a simtrace target (default runner_ai), TAG the target dir name
+       (default t3rai), TRACE the simtrace.bin (default st8; st9 is the v3 trace without the 255-event cap)
        -> /mnt/nvme/bbpro98/targets_data/TAG/records.jsonl, /mnt/nvme/bbpro98/targets_holdout/TAG/...
 
 Each line: i (record index in st8), fn, depth, self, arg, ret, rm0, rm1, ri0, ri1, game / mflags / obj / xf / post (hex),
@@ -16,9 +17,9 @@ sys.path.insert(0, os.path.join(HERE, '..'))
 from simtrace_dump import NAMES, records
 from simtrace_probes import PROBES
 
-SRC = '/mnt/nvme/bbpro98/re/hookab/st8/simtrace.bin'
 NAME = sys.argv[1] if len(sys.argv) > 1 else 'runner_ai'
 TAG = sys.argv[2] if len(sys.argv) > 2 else 't3rai'
+SRC = sys.argv[3] if len(sys.argv) > 3 else '/mnt/nvme/bbpro98/re/hookab/st8/simtrace.bin'
 FN = NAMES.index(NAME)
 OUT = {'dev': f'/mnt/nvme/bbpro98/targets_data/{TAG}', 'holdout': f'/mnt/nvme/bbpro98/targets_holdout/{TAG}'}
 

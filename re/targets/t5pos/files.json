@@ -1,0 +1,1 @@
+{"dev": "/mnt/nvme/bbpro98/targets_data/t5pos/records.jsonl", "holdout": "/mnt/nvme/bbpro98/targets_holdout/t5pos/records.jsonl", "module": "positioning", "post_u32": [0, 4, 8, 12, 16, 20, 24]}

@@ -186,17 +186,31 @@ steal 2nd / steal 3rd is likeliest and on the runners). Fires if the best steal 
 chance >= PB15 (25): `PB16 (25)` + balls (0: PB17 5, 1: PB18 0, 2: PB19 -25, 3: PB20 -100) + inning 8 PB21 (5) /
 9+ PB22 (10) + PB23 (-5) at home.
 
-### Fielder positioning (FUN_6803853e) [decompile]
+### Fielder positioning (FUN_6803853e) [refereed: 13,239 (st11)]
 
-Shifts by pull and power ratings with thresholds PB48-53 (defPosHighPull 80 / LowPull 19 / ...).
+Sets the defensive alignment object 0x680c8f98 once per pitch: per mode g (0 and 1) slots a (0..3), b (0..3) and
+c (0..4). Mode 0 gets (a, 2, 2): a = 2 when FUN_68039356 && FUN_6800f640 && margin >= -1 && outs <= 1, else 1 when
+FUN_68039356 && !FUN_68038ed0, else 0 when FUN_68032ff0 == 0 || outs > 1, else 3 (margin = FUN_68056985(3) -
+FUN_68056985(4), outs = FUN_68002c80). Then the pull band moves c: the batter's pull rating (FUN_68038e90) >=
+PB48 defPosHighPull (80) one way, <= PB49 defPosLowPull (19) the other, FUN_6802fd50 == 1 (batter side) swapping the
+directions. Mode 1 gets (0, b, 2): b = 0 late and level (this+0x348e == 0, inning > 8, FUN_6800f640, margin 0, outs
+< 2), 1 or 3 on two margin tests, else 2; on b = 2 the power rating (FUN_68038e70) moves b up at >= PB52
+defPosHighPower (85) and down at <= PB53 defPosLowPower (20) (b = 3: only the down test). Then the pull band again,
+and on b = 2 / 3 the pull-extra band (PB50 / PB51, 60 / 39) and a b move when FUN_6800f1e0 and FUN_6800f1c0 differ by
+more than one. Shifts clamp at the ends. Checked: every getter, PB read and slot write in order, and the object's 0x20
+bytes from +9 after the call. Spec: work/spec/FUN_6803853e.md.
 
 ## Fielding
 
-### Fielder selection (FUN_68022ea4) [decompile]
+### Fielder selection (FUN_68022ea4) [refereed: 508 (st11)]
 
-For each fielder: time to reach the ball's path at each sampled point; choose the minimum of time + reaction delay.
-The delay per position is PB475-483 (delayBase*) plus FA * PB484-492 (delayFAPct*, negative: better fielders react
-sooner), loaded into the tables at 6808e940.. by FUN_68023dd3. No RNG.
+Walks the ball's flight path one point per step (FUN_6803997d), counting steps n. A point counts when it is reachable
+(FUN_68023be0 false) and its height z <= 0xe0. At the first counting point every fielder (this+0xb+4k, k = 0..8)
+scores time to the point (FUN_68003988 on fielder+8: distance / speed) + reaction delay (FUN_68021fca), as 16-bit
+values; the lowest score below n wins, the first on ties. No score below n: the next counting point. When the path
+ends (FUN_6803997d false or FUN_68002e30) the nearest fielder wins (FUN_6802644a). The delay per position is
+PB475-483 (delayBase*) plus FA * PB484-492 (delayFAPct*, negative: better fielders react sooner), loaded into the
+tables at 6808e940.. by FUN_68023dd3. No RNG.
 
 ### Catch roll (FUN_68014f7b) [refereed: 5,470]
 
@@ -300,6 +314,11 @@ is ok with 0 bad; skipped rows are records whose nested target or events were dr
 | def_mgr / def_strategy / def_ratings | | 12,500 / 25,000 / 3,904 |
 | lead / throw | | 131 / 2,584 |
 | replace_p / relief_chk / relief_pick | | 8,736 / 3,151 / 3,904 |
+
+Trace st11 (simtrace v3, 2026-10-08: variable-length records, 112 probes, flat logging for the two looping targets,
+the alignment writes as L events, the flight-path z in FUN_6803997d's X): 117,187 records, every check above ok with
+0 bad, plus positioning 13,239 and find_fielder 508 (v2 records overflowed on both). find_fielder needs the z, so it
+is skipped on traces without it.
 
 Trace quirks the referee absorbs, all from re/simtrace.c: ev() drops an X event identical to the one before it (two
 calls of the same getter with the same argument in a row show up once; Tape.x reuses the previous value); a probed

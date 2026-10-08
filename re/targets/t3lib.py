@@ -51,6 +51,7 @@ def fmt(e):
     t, g, idx, a, b, r, va = e
     if t == 'X': return f'X[{va:x}](ecx={a & 0xffffffff:#x}, arg1={b}, arg2={idx})={r}'
     if t == 'P': return f'PB[{idx}]={r}'
+    if t == 'L': return f'align(a={a}, b={b}, c={idx})'
     return f'{t}(gen={g}, idx={idx}, a={a}, b={b})={r}'
 
 
@@ -65,21 +66,36 @@ def make_oracle(rec):
         pos[0] += 1
         return e
 
-    def x(va, arg1=None):
-        """the return of probed getter va (unsigned 32 bit), called next; arg1 (when given) must equal the recorded
-        first stack argument. simtrace drops an X identical to the one before it, so a repeated identical call
-        returns the previous value without consuming an event."""
+    def x_ev(va, arg1):
         i = pos[0]
         n = ev[i] if i < len(ev) else None
         if i and (n is None or n[0] != 'X' or n[6] != va or arg1 is not None and n[4] & 0xffffffff != arg1 & 0xffffffff):
             p = ev[i - 1]
             if p[0] == 'X' and p[6] == va and (arg1 is None or p[4] & 0xffffffff == arg1 & 0xffffffff):
-                return p[5] & 0xffffffff
+                return p
         e = nxt('X', f'getter {va:x}')
         if e[6] != va: raise Mismatch(f'model wants getter {va:x}, record has {fmt(e)} (event {pos[0] - 1})')
         if arg1 is not None and e[4] & 0xffffffff != arg1 & 0xffffffff:
             raise Mismatch(f'getter {va:x} arg1 {e[4] & 0xffffffff:#x}, model {arg1 & 0xffffffff:#x} (event {pos[0] - 1})')
-        return e[5] & 0xffffffff
+        return e
+
+    def x(va, arg1=None):
+        """the return of probed getter va (unsigned 32 bit), called next; arg1 (when given) must equal the recorded
+        first stack argument. simtrace drops an X identical to the one before it, so a repeated identical call
+        returns the previous value without consuming an event."""
+        return x_ev(va, arg1)[5] & 0xffffffff
+
+    def x2(va, arg1=None):
+        """as x, but returns (value, idx): idx is the X event's extra word (the second stack argument, or what simtrace
+        logs there for that getter, e.g. the flight-path step's new z for FUN_6803997d)"""
+        e = x_ev(va, arg1)
+        return e[5] & 0xffffffff, e[2]
+
+    def align(a, b, c):
+        """FUN_6801a4b1(a, b, c) (simtrace event L): the alignment slots the function sets; checked, nothing returned"""
+        e = nxt('L', f'align({a}, {b}, {c})')
+        if (e[3], e[4], e[2]) != (a, b, c):
+            raise Mismatch(f'model align({a}, {b}, {c}), record has {fmt(e)} (event {pos[0] - 1})')
 
     def pb(i):
         e = nxt('P', f'PB[{i}]')
@@ -87,13 +103,15 @@ def make_oracle(rec):
         return e[5]
 
     def other(t, gen=None, a=None):
-        """any other event type (S speed, G/H/K stat reads, F/W fatigue, M/R/C RNG): returns (idx, a, b, r)"""
+        """any other event type (S speed, G/H/K stat reads, F/W fatigue, M/R/C RNG): returns (idx, a, b, r). Not X, P or L:
+        those are outputs or have their own checked calls"""
+        if t in ('X', 'Y', 'P', 'L'): raise Mismatch(f'other({t!r}): use the dedicated oracle call')
         e = nxt(t, t)
         if gen is not None and e[1] != gen or a is not None and e[3] != a:
             raise Mismatch(f'model wants {t} gen {gen} a {a}, record has {fmt(e)} (event {pos[0] - 1})')
         return e[2], e[3], e[4], e[5]
 
-    o = types.SimpleNamespace(x=x, pb=pb, other=other)
+    o = types.SimpleNamespace(x=x, x2=x2, align=align, pb=pb, other=other)
     return o, (lambda: pos[0] == len(ev))
 
 

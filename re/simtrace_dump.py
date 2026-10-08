@@ -25,21 +25,31 @@ def probe_map(path):
 
 
 def records(path):
+    """v3 (magic STR3): a 428-byte header, u16 nev, u16 overflow inside it, then nev events. v1/v2: fixed records of
+    255 event slots (4492 / 4504 bytes)."""
     pm = probe_map(path)
     f = open(path, 'rb')
     m = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
-    X = 16 if len(m) % 4504 == 0 and len(m) % 4492 else 4   # v2 records carry 4 extra fields (4504 bytes), v1 one
+    v3 = m[:4] == b'STR3'
+    X = 16 if v3 or len(m) % 4504 == 0 and len(m) % 4492 else 4   # v2+ records carry 4 extra fields, v1 one
     H = 376 + X + 32
-    R = H + 16 * 255
-    for i in range(len(m) // R):
-        b = m[i * R:(i + 1) * R]
-        fn, dep, n, over = b[0], b[1], b[2], b[3]
+    p, i = (4 if v3 else 0), 0
+    while p + H <= len(m):
+        if v3:
+            n, over = struct.unpack_from('<HH', m, p + H)
+            E = H + 4; R = E + 16 * n
+        else:
+            n, over, E = m[p + 2], m[p + 3], H; R = H + 16 * 255
+        if p + R > len(m): break
+        b = m[p:p + R]
+        fn, dep = b[0], b[1]
         self_, arg, ret, rm0, rm1, ri0, ri1 = struct.unpack_from('<7I', b, 4)
-        ev = [struct.unpack_from('<BBHiii', b, H + 16 * j) for j in range(n)]
+        ev = [struct.unpack_from('<BBHiii', b, E + 16 * j) for j in range(n)]
         if pm: ev = [(e[0], pm[e[1]]) + e[2:] if e[0] in (88, 89) else e for e in ev]   # X / Y events
         yield dict(i=i, fn=fn, depth=dep, over=over, self=self_, arg=arg, ret=ret, rm0=rm0, rm1=rm1, ri0=ri0, ri1=ri1,
                    game=b[32:112], mflags=b[112:120], obj=b[120:376], xf=b[376:376 + X].ljust(16, b'\0'),
                    post=b[376 + X:H], ev=ev)
+        p += R; i += 1
 
 
 def fmt_ev(e):
@@ -54,6 +64,7 @@ def fmt_ev(e):
     if t == 'X': return f'X{g}[{PROBES[g][0]:x}]({a & 0xffffffff:x}{"," + str(b_) if PROBES[g][1] else ""}{"," + str(idx) if PROBES[g][1] > 1 else ""})={r}'
     if t == 'Y': return f'Y{g}{{'
     if t == 'Z': return f'Z<{NAMES[g]}>'
+    if t == 'L': return f'L({a},{b_},{idx})'
     return f'{t}{g}({a})={r}' + (f'@{b_ & 0xffffffff:x}' if g == 0 else '')
 
 

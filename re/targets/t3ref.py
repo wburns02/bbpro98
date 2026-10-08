@@ -8,7 +8,8 @@ usage: python3 t3ref.py <target_dir> <lane_dir> [-v]        score <lane>/runner_
 Contract for <lane>/runner_ai.py (stdlib + t3lib only, under 200 KB; runs in a bwrap jail, no network, no files):
   def replay(o, r): re-execute FUN_6804faa1 for one call. r = t3lib.inputs(record) (this pointer, the 0x100 bytes of
   *this before the call, the game state and manager flag bytes, ...; never the after-call ret / post / RNG states); o = the oracle: o.x(va, arg1=None) returns the
-  next probed getter's recorded value, o.pb(i) a PlayBalance read, o.other(t, gen, a) any other event. A call the
+  next probed getter's recorded value (o.x2 the pair (value, idx)), o.align(a, b, c) checks an alignment-slot write
+  (simtrace event L), o.pb(i) a PlayBalance read, o.other(t, gen, a) any other event. A call the
   function would not make, or a different getter / argument, raises t3lib.Mismatch and fails the record. The record
   passes when replay returns having consumed every top-level event.
 Isolation: the records and the oracle live in this (host) process. The jail runs t3run.py, which imports runner_ai and
@@ -16,7 +17,9 @@ forwards each oracle call over a pipe, so the graded code never sees recorded ev
 writes the result.
 Score: records ok out of all, and the deep subset (records past the two early exits). PASS = every dev record ok.
 targets: files.json {"dev": records.jsonl, "holdout": records.jsonl, "module": lane file stem (default runner_ai),
-         "ret_bits": 0 | 8 | 16 | 32 (when set, replay must also return the function's result: the low bits of eax)}
+         "ret_bits": 0 | 8 | 16 | 32 (when set, replay must also return the function's result: the low bits of eax),
+         "post_u32": [byte offsets] (instead of ret_bits: replay returns a list of the u32 values the call leaves at
+         those offsets of the record's 0x20-byte post snapshot, for void functions whose effect is a memory write)}
 Other simtrace targets reuse this referee unchanged: <module>.replay(o, r) with the same oracle (re/bakeoff/t3_extract.py
 NAME writes their records).
 """
@@ -92,7 +95,7 @@ def _int(v, none=False):
     return v
 
 
-def score(lane, recs, ret_bits=0):
+def score(lane, recs, ret_bits=0, post_u32=()):
     """one record at a time: send its inputs, answer the shim's oracle calls from the host-side oracle, then judge"""
     res = {'n': len(recs), 'ok': 0, 'deep': 0, 'deep_ok': 0, 'fail': []}
     ierr = lane.recv().get('import_error')
@@ -109,7 +112,14 @@ def score(lane, recs, ret_bits=0):
                     cerr = m['done']
                     err = herr or (cerr if cerr is None or isinstance(cerr, str) else 'protocol: bad done')
                     if err is None and not finished(): err = 'replay returned before consuming every event'
-                    if err is None and ret_bits:
+                    if err is None and post_u32:
+                        rv = m.get('ret')
+                        want = [t3lib.u32(r['post'], k) for k in post_u32]
+                        if not (type(rv) is list and len(rv) == len(want) and all(type(v) is int for v in rv)):
+                            err = f'return {str(rv)[:80]}, want a list of {len(want)} ints (post u32 at {list(post_u32)})'
+                        elif [v & 0xffffffff for v in rv] != want:
+                            err = f'post u32 at {list(post_u32)}: model {[v & 0xffffffff for v in rv]}, recorded {want}'
+                    elif err is None and ret_bits:
                         rv, want = m.get('ret'), r['ret'] & ((1 << ret_bits) - 1)
                         if type(rv) is not int or rv & ((1 << ret_bits) - 1) != want:
                             err = f'return {rv!r}, recorded {want} (low {ret_bits} bits of eax)'
@@ -119,6 +129,10 @@ def score(lane, recs, ret_bits=0):
                 try:
                     if 'x' in m and isinstance(m['x'], list) and len(m['x']) == 2:
                         v = o.x(_int(m['x'][0]), _int(m['x'][1], True))
+                    elif 'x2' in m and isinstance(m['x2'], list) and len(m['x2']) == 2:
+                        v = list(o.x2(_int(m['x2'][0]), _int(m['x2'][1], True)))
+                    elif 'al' in m and isinstance(m['al'], list) and len(m['al']) == 3:
+                        v = o.align(*(_int(a) for a in m['al']))
                     elif 'pb' in m:
                         v = o.pb(_int(m['pb']))
                     elif 'o' in m and isinstance(m['o'], list) and len(m['o']) == 3 and isinstance(m['o'][0], str):
@@ -142,7 +156,7 @@ def score(lane, recs, ret_bits=0):
     return res
 
 
-def run(lane_dir, recfile, hold, module='runner_ai', ret_bits=0):
+def run(lane_dir, recfile, hold, module='runner_ai', ret_bits=0, post_u32=()):
     w = tempfile.mkdtemp(prefix='t3ref.', dir='/mnt/nvme/bbpro98/tmp' if os.path.isdir('/mnt/nvme/bbpro98/tmp') else None)
     try:
         open(f'{w}/{module}.py', 'wb').write(J.read_file(lane_dir, f'{module}.py', 200_000))
@@ -160,7 +174,7 @@ def run(lane_dir, recfile, hold, module='runner_ai', ret_bits=0):
             cmd, env = J.jail_cmd(f'{HERE}/t3run.py', w, ['/w', module], name='t3run.py', max_size=100_000, writable=False)
         lane = Lane(cmd, env, w)
         try:
-            return score(lane, recs, ret_bits)
+            return score(lane, recs, ret_bits, post_u32)
         finally:
             lane.close()
     finally:
@@ -178,7 +192,10 @@ def main():
         if not (mod.isidentifier() and mod not in ('t3lib', 't3run')): raise RefError('bad module name in files.json')
         rb = files.get('ret_bits', 0)
         if rb not in (0, 8, 16, 32): raise RefError('bad ret_bits in files.json')
-        res = run(lane, files['holdout' if hold else 'dev'], hold, mod, rb)
+        pu = files.get('post_u32', [])
+        if not (type(pu) is list and len(pu) <= 8 and all(type(k) is int and 0 <= k <= 0x1c for k in pu)) or pu and rb:
+            raise RefError('bad post_u32 in files.json')
+        res = run(lane, files['holdout' if hold else 'dev'], hold, mod, rb, tuple(pu))
     except RefError as e:
         print(f'error: {J.err(e)}'); print('FAIL'); sys.exit(1)
     if res.get('import_error'):
