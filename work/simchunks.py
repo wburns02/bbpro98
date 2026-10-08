@@ -359,8 +359,8 @@ def enc_cams(doc):
 # after rolls; contiguous, so derived), 19 default odds (replaced at load by settings 0x354 + i, FUN_68002cd0), the
 # category tables (cumulative threshold against rand 1..999 -> injury number), 205 injuries of 96 bytes (number = i + 1,
 # 1-based duration and after-roll indexes, part / detail / condition text of 30), 46 durations (days = base + n dice
-# of `sides`; below reroll_below the second dice set is rolled instead) and 12 after rolls (n dice of `sides` + base;
-# 9998 / 9997 bases give the 9999 / 9998 markers).
+# of `sides`; below reroll_below the second dice set is rolled instead) and 12 after rolls (n dice of `sides` + base =
+# severity percent, clamped 0..100 by FUN_6805b23c, which cuts the player's ratings by that percent for the game).
 def _dice(t):
     return {'dice': t[0], 'sides': t[1], 'base': t[2]}
 

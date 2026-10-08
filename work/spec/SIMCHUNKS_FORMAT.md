@@ -126,8 +126,13 @@ Third base seats, Trail ball, Batter, Trail selected player, Over dugout, Blimp 
 - 46 durations x 16: s16 number (derived), roll (s16 dice, sides, base), s16 reroll_below, reroll (dice, sides,
   base). Days = base + sum of `dice` x (rand(sides) + 1); below reroll_below the reroll set decides
   (objdump 0x68038900).
-- 12 after rolls x 8: s16 number (derived), dice, sides, base. The result goes to the injury's second value; bases
-  9998 / 9997 give 9999 / 9998, likely season markers (not traced).
+- 12 after rolls x 8: s16 number (derived), dice, sides, base. The result is the injury's severity percent (record
+  +4, FUN_68038583). FUN_6805b23c clamps it to 0..100, stores it as the player's in-game stat 2 and, once per game
+  (flag 0x30), scales ratings 0x14, 0x15, 0, 1 and the nine FUN_6804e8f6 ratings by (100 - severity) / 100
+  (FUN_68005bd0); the log line is "%s(%s) suffered a %d%% injury". Bases 9998 / 9997 (rolls 1 and 2, used by 97
+  injuries) give 9999 / 9998, which the clamp turns into 100 (ratings zeroed for the rest of the game). Separately,
+  duration 46 (base 9998) gives 9999 days, which BBShell treats as never healing (player +0x80 == 9999 is skipped by
+  the daily heal FUN_68055540; FUN_680555b0 likewise).
 
 No binary reads part / detail / condition: BBSIM and FastSim use only an injury's number, duration and after roll.
 The names the shell prints are SHELL.VOL ASNEWS.DAT / TMNEWS.DAT section 0 strings 83..287 (injury n at 82 + n,
@@ -178,6 +183,6 @@ from the [Sounds] settings keys (SoundsOn, ActionVol, ...). Kept as `unused_valu
 
 ## Open
 
-- info.dat at_0x6c meaning, the fence flag, the injury after-roll value, numbers.inf side.
+- info.dat at_0x6c meaning, the fence flag, numbers.inf side.
 - Game-visible edit tests (#11): shape.tbl (t_shape_edit.py), logic.dat (t_logic_edit.py), injury names
   (t_injury_edit.py) done.
