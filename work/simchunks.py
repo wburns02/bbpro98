@@ -250,10 +250,9 @@ def enc_shape(doc):
 # stadium object (+0x12). Then BBSIM FUN_6806c898 (Smodel.cpp, seek 0x66) = FastSim 52208: s16 version (must be 6),
 # sky color (0 = default 0x47/0x4f; DAT_681ec12c), field_pattern (stored +1 at stadium +0x82: 1 turf, 2 mow lines, 3
 # checkered, 4 circles), wall_bounce (stadium +0x20: percent of ball speed kept off the wall, DAT_680b35ac[v] = 30 / 15
-# / 29),
-# color-cycle frames (FUN_68074849, one step per 1000 ticks), crowd colors (FUN_6807491f paints polygon color 0xf4
-# with pair 1 and 0xf5 with pair 2), 4 palette cycles (start, count, step; FUN_6806d066 rotates them), the foul poles
-# (+8, +0x18), two side pairs read by FUN_68019330 (dugouts) and FUN_68061c40 (on-deck circles), then the fence
+# / 29), color-cycle frames (FUN_68074849, one step per 1000 ticks), crowd colors (FUN_6807491f paints polygon color
+# 0xf4 with pair 1 and 0xf5 with pair 2), 4 palette cycles (start, count, step; FUN_6806d066 rotates them), the foul
+# poles (+8, +0x18), two side pairs read by FUN_68019330 (dugouts) and FUN_68061c40 (on-deck circles), then the fence
 # outline (n x (x, y, flag)), which no loader reads.
 # .DT (BBShell 20565 / EZShell 15289): u8 version 1, name[63], dome, turf (the shell's stadium +0x2c / +0x30).
 def _xy(d, p):
