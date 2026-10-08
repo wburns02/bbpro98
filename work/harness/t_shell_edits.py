@@ -8,6 +8,8 @@ Builds from the pristine SHELL.VOL (volcodec) a copy with
                          label "Championship Trophy:" -> "World Series Trophy:" (same width: the label
                          gadget is 149 px wide, so a longer label is clipped, and the caption's right neighbour is
                          the name gadget at x=228, so a longer caption is overdrawn)
+  DIAL.REQ   (reqcodec)  Preferences requester (id 40): title "Preferences" -> "Options", "Startup Screen" ->
+                         "Opening Screen"
   MENU.DAT   (volmisc)   popup "Association" -> "Leagues", its entry "Statistics" -> "Stat Sheets"
   PREFSCRN.DAT (strtable) "Association Data" -> "Association Summary"
 and from the work copy's league file (league.py) the trophy "The Dynamix Cup" -> "The Claude Cup", league
@@ -43,6 +45,12 @@ def main():
         one([c for c in r['captions'] if c['text'] == 'Association Data -'], 'caption')['text'] = 'League Data -'
         one([g for g in r['gadgets'] if g.get('label') == 'Championship Trophy:'], 'label')['label'] = 'World Series Trophy:'
         open(path['MENU.REQ'], 'wb').write(reqcodec.encode(doc))
+
+        doc = reqcodec.decode(open(path['DIAL.REQ'], 'rb').read())
+        r = one([r for r in doc['requesters'] if r['id'] == 40], 'requester 40')
+        one([c for c in r['captions'] if c['text'] == 'Preferences'], 'prefs title')['text'] = 'Options'
+        one([c for c in r['captions'] if c['text'] == 'Startup Screen'], 'prefs label')['text'] = 'Opening Screen'
+        open(path['DIAL.REQ'], 'wb').write(reqcodec.encode(doc))
 
         m = volmisc.menu_decode(open(path['MENU.DAT'], 'rb').read())
         pops = [p for bar in m['menus'] for p in bar['popups'] if p['title']['text'] == 'Association']
@@ -85,7 +93,8 @@ def main():
                       ['click', 447, 328, 1.5],
                       ['ocr', 'leagues_menu', [300, 320, 400, 260], {'expect': ['Stat Sheets'], 'absent': ['Statistics']}],
                       ['key', 'Escape', 1], ['key', 'ctrl+p', 5],
-                      ['ocr', 'prefs', None, {'expect': ['Association Summary']}]]}
+                      ['ocr', 'prefs', None, {'expect': ['Association Summary', 'Options', 'Opening Screen'],
+                                              'absent': ['Startup Screen', 'Preferences']}]]}
     json.dump(plan, open(f'{out}/plan.json', 'w'), indent=1)
     env = dict(os.environ, DBUS_SYSTEM_BUS_ADDRESS='unix:path=/nonexistent')
     sys.exit(subprocess.run([sys.executable, f'{HERE}/ingame.py', f'{out}/plan.json', f'{out}/shots'], env=env).returncode)
