@@ -28,7 +28,7 @@ def state():
     d_sch = np.abs(a[UPD_BOX] - SCH[UPD_BOX]).mean()
     return ('updating' if d_upd < d_sch else 'schedule'), d_upd, d_sch
 
-def wait_done(timeout=240):
+def wait_done(timeout=int(os.environ.get('SIM_TIMEOUT', '240'))):
     t0 = time.time()
     while time.time() - t0 < timeout:
         time.sleep(10)
