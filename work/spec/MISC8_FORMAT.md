@@ -30,15 +30,15 @@ default copy (DAT_6a038220, FUN_6a0054f0) and seeks to 0x6f for the music byte.
 | 0x35 | char[14] | custom_stadium_file | loaded by FUN_68053930, cleared when missing; passed to FUN_68061c10 |
 | 0x43 | u8 | custom_stadium_type | set from FUN_6801b1b0(name); passed to FUN_68061c40 |
 | 0x44 + 0x10k | 16 | side_controls[k] | below |
-| 0x64 | u8 | option_0x64 | gadget 0x25 + value |
-| 0x65 | u8 | option_0x65 | controls 0x69..0x6f set 4..10 |
-| 0x66 | u8 | option_0x66 | control 0x4c cycles 0..4, skipping 4 |
-| 0x67 | u8 | option_0x67 | control 0x4e cycles 0..7 |
-| 0x68 | u8 | option_0x68 | controls 0x4f/0x50/0x53, selector + 0x23 (0x23..0x69; 0x48 in the sample) |
-| 0x69 | u8 | option_0x69 | controls 0x51/0x52/0x54, < 0x29 |
-| 0x6a | u8 | game_option_3e9 | control 0x47 toggles; game start copies it to GDI 0x3e9 (FUN_68061b50) |
+| 0x64 | u8 | weather_mode | Exhibition Play radio gadget 0x25 + value: 0 Computer Selects, 1 Set Month, 2 Set Conditions; game start FUN_68016ec0 reads 0x65..0x69 only for 2 (month alone for 1) |
+| 0x65 | u8 | month | controls 0x69..0x6f set 4..10 (April..October); game start passes it to FUN_68061b40 -> GDI month |
+| 0x66 | u8 | sky | control 0x4c cycles 0..4, skipping 4; Set Conditions -> GDI weather.sky |
+| 0x67 | u8 | wind_direction | control 0x4e cycles 0..7; Set Conditions -> GDI weather.wind_direction |
+| 0x68 | u8 | temperature_f | controls 0x4f/0x50/0x53, selector + 0x23 (35..105 F; 72 in the sample); Set Conditions -> GDI weather.temperature_f |
+| 0x69 | u8 | wind_mph | controls 0x51/0x52/0x54, < 41; Set Conditions -> GDI weather.wind_mph |
+| 0x6a | u8 | preset_lineups | "Use Preset Lineups" checkbox 0x47; game start copies it to GDI 0x3e9 (FUN_68061b50) |
 | 0x6b, 0x6c | u8 | at_0x6b, at_0x6c | no reader found yet |
-| 0x6d | u8 | game_option_3ea | control 0x4a toggles; GDI 0x3ea (FUN_68061b60) |
+| 0x6d | u8 | one_pitch | "One Pitch Mode" checkbox 0x4a; GDI 0x3ea (FUN_68061b60) |
 | 0x6e | u8 | at_0x6e | no reader found yet (1 in the sample) |
 | 0x6f | u8 | shell_music | DAT_6809167f; FUN_6804c570 plays, FUN_6804be20 stops, FUN_6804ca90 toggles |
 | 0x70 | u32 | start_screen | index into PREFSCRN.DAT's 0x2b screens (options dialog this+0x74; FUN_6801fe40) |

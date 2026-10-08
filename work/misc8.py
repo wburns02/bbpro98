@@ -76,9 +76,9 @@ def cfg_decode(b):
             **{name: u8(o + 4 + i) for i, name in enumerate(SIDE_LEVELS)},
             'toggles_0x8': list(b[o + 8:o + 0xf]),
             'at_0xf': u8(o + 0xf)})
-    d.update({'option_0x64': u8(0x64), 'option_0x65': u8(0x65), 'option_0x66': u8(0x66), 'option_0x67': u8(0x67),
-              'option_0x68': u8(0x68), 'option_0x69': u8(0x69), 'game_option_3e9': u8(0x6a), 'at_0x6b': u8(0x6b),
-              'at_0x6c': u8(0x6c), 'game_option_3ea': u8(0x6d), 'at_0x6e': u8(0x6e), 'shell_music': u8(0x6f),
+    d.update({'weather_mode': u8(0x64), 'month': u8(0x65), 'sky': u8(0x66), 'wind_direction': u8(0x67),
+              'temperature_f': u8(0x68), 'wind_mph': u8(0x69), 'preset_lineups': u8(0x6a), 'at_0x6b': u8(0x6b),
+              'at_0x6c': u8(0x6c), 'one_pitch': u8(0x6d), 'at_0x6e': u8(0x6e), 'shell_music': u8(0x6f),
               'start_screen': u32(0x70), 'at_0x74': u32(0x74), 'print_to_file': u32(0x78)})
     tails = {k: stale_tail(b[o:o + 14]) for k, o in (('association', 2), ('side0', 0x14), ('side1', 0x24),
                                                      ('custom_stadium_file', 0x35))}
@@ -117,9 +117,9 @@ def cfg_encode(d):
             raise ValueError('toggles_0x8 needs 7 bytes')
         out[o + 8:o + 0xf] = bytes(s['toggles_0x8'])
         out[o + 0xf] = s['at_0xf']
-    for o, k in ((0x64, 'option_0x64'), (0x65, 'option_0x65'), (0x66, 'option_0x66'), (0x67, 'option_0x67'),
-                 (0x68, 'option_0x68'), (0x69, 'option_0x69'), (0x6a, 'game_option_3e9'), (0x6b, 'at_0x6b'),
-                 (0x6c, 'at_0x6c'), (0x6d, 'game_option_3ea'), (0x6e, 'at_0x6e'), (0x6f, 'shell_music')):
+    for o, k in ((0x64, 'weather_mode'), (0x65, 'month'), (0x66, 'sky'), (0x67, 'wind_direction'),
+                 (0x68, 'temperature_f'), (0x69, 'wind_mph'), (0x6a, 'preset_lineups'), (0x6b, 'at_0x6b'),
+                 (0x6c, 'at_0x6c'), (0x6d, 'one_pitch'), (0x6e, 'at_0x6e'), (0x6f, 'shell_music')):
         out[o] = d[k]
     struct.pack_into('<3I', out, 0x70, d['start_screen'], d['at_0x74'], d['print_to_file'])
     return bytes(out)
