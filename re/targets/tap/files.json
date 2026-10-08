@@ -1,0 +1,6 @@
+{
+ "dir": "/mnt/nvme/bbpro98/targets_data/tap",
+ "files": ["highlight002.tap", "highlight005.tap", "MLBPA97.NQ0"],
+ "holdout": ["highlight004.tap", "highlight006.tap", "highlight008.tap"],
+ "holdout_dir": "/mnt/nvme/bbpro98/targets_holdout/tap"
+}
