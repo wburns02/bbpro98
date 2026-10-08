@@ -1,0 +1,11 @@
+{
+ "dir": "/mnt/nvme/bbpro98/targets_data/voldat",
+ "files": [
+  "PGENFRST.DAT",
+  "PGENLAST.DAT",
+  "PGENTABL.DAT",
+  "PGEND.DAT",
+  "AGEPLYR.DAT",
+  "SPRPLYR.DAT"
+ ]
+}

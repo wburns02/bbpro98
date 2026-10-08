@@ -1,0 +1,14 @@
+{
+ "dir": "/mnt/nvme/bbpro98/targets_data/voldat",
+ "files": [
+  "ASNEWS.DAT",
+  "TMNEWS.DAT",
+  "PONEWS.DAT",
+  "ASSERTXT.DAT",
+  "BOXTEXT.DAT",
+  "PREFSCRN.DAT",
+  "PRINTTBL.DAT",
+  "PRINTTXT.DAT",
+  "ROSTEXT.DAT"
+ ]
+}
