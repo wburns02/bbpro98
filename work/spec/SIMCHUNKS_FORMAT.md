@@ -111,7 +111,7 @@ FastSim 52208 seek 0x66 for the rest):
 index for view 6), 15 camera records at 14 (views 0..5 one record each, view 6 = multi camera = records 6..14),
 s32 current_slot at 404, then 10 slots: used flags at 408, names[64] at 418, s32 view at 1058, s32 target at 1098,
 s32 multi at 1138, 15 records each (390 bytes) at 1178.
-Camera record (26): s32 x, s32 y, s16 pitch, s16 roll, s16 at_0xc, s16 heading, s32 distance (clamped 30..60000 on
+Camera record (26): s32 x, s32 y, s16 pitch, s16 roll, s16 at_0xc (no Cams.cpp code addresses record +0xc, i.e. view object +0x81 + 0x1a * view; 0 in all 165 shipped and saved records), s16 heading, s32 distance (clamped 30..60000 on
 load), s32 z, s16 zoom (+0x5b).
 Shipped slot names: Behind home plate (fixed), Behind home plate (tracking), Multi camera view, First base seats,
 Third base seats, Trail ball, Batter, Trail selected player, Over dugout, Blimp view.
@@ -178,6 +178,6 @@ from the [Sounds] settings keys (SoundsOn, ActionVol, ...). Kept as `unused_valu
 
 ## Open
 
-- info.dat at_0x6c meaning, the fence flag, cams at_0xc, the injury after-roll value, numbers.inf side.
+- info.dat at_0x6c meaning, the fence flag, the injury after-roll value, numbers.inf side.
 - Game-visible edit tests (#11): shape.tbl (t_shape_edit.py), logic.dat (t_logic_edit.py), injury names
   (t_injury_edit.py) done.
