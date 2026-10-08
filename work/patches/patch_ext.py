@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Extension-columns code patch for BBShell.dll (League Statistics screen). usage: patch_ext.py DLL [--ids b0,b1,b2,b3:p0,p1,p2,p3]
-Requires the widened SHELL.VOL (build_wide_vol.py --hdrbase 0x1d). Asserts original bytes; refuses if already patched."""
+Requires the widened SHELL.VOL (build_wide_vol.py --bodybase 0x30 --hdrbase 0x1d). Asserts original bytes; refuses if already patched."""
 import os,sys; sys.path.insert(0,os.path.dirname(os.path.abspath(__file__))); import liveguard
 import sys, struct
 f=sys.argv[1]

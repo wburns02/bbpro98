@@ -11,6 +11,26 @@ names were guesses; see the superseded note in re/targets/req/lanes/code/FORMAT.
 inner `REQ:` tag). n - 1 requesters back to back, then tail bytes (one NUL). Requester: `"REQ:" u32 (0x80000000 | len)`
 holding `"REQ:" u32 hlen <header>` and `"GAD:" u32 glen <gadgets>`. MENU has 35 full screens, DIAL 79 dialogs.
 
+How the game reads it (BBShell): FUN_68043150 loads the IDX table (count at +0xa0, offsets at +0xa4). The requester
+loader (decompile ~line 52628) seeks the member stream to offsets[id - 2] with vtable[2] = 0x68063360, which sets the
+walker position (+0x6c), clears +0x70 and sets the depth (+0x66) to 4 but keeps the chunk path at +0x4c, then calls
+FUN_68063450(stream, "REQ:REQ:", 0). The path left by the previous load is the same "REQ:REQ:", so the walker takes
+the chunk at the seek position as the inner header. Consequences:
+- the outer container header is never read: a stale `len` there is harmless;
+- requesters need not be in slot order, need not be contiguous and need not have an outer header at all, as long as
+  idx[k] points at the inner `REQ:`;
+- the VOL entry's stored size is a hard limit: the member stream refuses reads past it (see work/volcodec.py), which
+  is the "requester past ~0xfe9x fails to load" seen with the first widened SHELL.VOL.
+
+The codec walks blocks by their inner REQ + GAD lengths, keeps a stale outer length as `_container_len` [stored,
+actual] (written back only while the block keeps its size), and records any non-default arrangement (moved blocks,
+bare blocks, stray bytes) in `_layout`; the JSON list is always in slot order. Encode rebuilds the IDX table. The
+first widened SHELL.VOL (wide5, still in the live install) has all three: slot 9 (New Association) moved to the end
+without its outer header, slot 10's container length left at the old slot 9 value, slot 12's left at its pre-edit
+value. work/patches/build_wide_vol.py now produces the same requesters through the codecs with a clean layout
+(verified in game 2026-10-07 with work/harness/ingame.py: League Statistics shows the 4 extra columns, the New
+Association dialog loads).
+
 ## Header (BBShell FUN_680442b0, requester vtable slot 0)
 | Off | Field | Code |
 |---|---|---|

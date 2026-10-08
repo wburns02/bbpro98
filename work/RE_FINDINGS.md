@@ -245,3 +245,19 @@ list survives past the live one. The misc8 data lane won; its bb.cfg names were 
   default team ids per league for 8..16-team leagues (plus the 14-team 5-5-4 option).
 - The old /mnt/nvme/bbpro98/vol/SHELL/ extraction has wrong entry names (its MENU.DAT is 250 KB of image data); use
   volcodec unpack of the pristine SHELL.VOL (e0001 ASNEW, e0006 MENU.DAT, e0018 WEATHER, e0020 MENU.REQ).
+
+## 2026-10-07: VOL entry size, REQ loader, the wide5 SHELL.VOL
+
+- The VOL entry header's u32 size (pristine: payload length - 1, the last byte is a pad) is the member stream's length
+  (BBShell FUN_68051380, stream +0x22): reads and seeks past it fail. volcodec now keeps a stored size only while the
+  payload length is unchanged and otherwise writes length - 1.
+- The requester loader seeks to idx[id - 2] and re-uses the "REQ:REQ:" chunk path of the previous load (seek
+  0x68063360 does not reset the path at +0x4c), so idx entries point straight at the inner REQ: header and the outer
+  container header is never read. Blocks can sit anywhere, in any order, with or without the outer header.
+- The first widened SHELL.VOL (wide5, in the live install since 2026-10-06) left the entry size at the pristine 66074
+  while MENU.REQ grew to 66311; requesters past 66074 then failed, which looked like a "64K block-start limit" and was
+  worked around by moving the biggest requester to the end. Its builder also called the entry DIAL.REQ: it took each
+  directory record's offset from the 4 bytes before the next name. build_wide_vol.py now edits through reqcodec and
+  volcodec, nothing moves, and the result is verified in game (work/harness/ingame.py).
+- work/harness/ingame.py is the #11 in-game check: install files into the work copy, launch on :99, click/key steps,
+  OCR asserts (tesseract on a grayscale x3 crop, both polarities), restore with sha256 check.

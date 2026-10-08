@@ -25,8 +25,12 @@ reader EZShell Utility\\Volume.cpp; full evidence in FORMAT.md):
         u32     offset     absolute offset of the entry blob (recomputed)
     then, contiguously to EOF, one blob per entry in directory order:
         u8      method     2 in every known archive (stored, no compression)
-        u32     size       len(payload)-1 in pristine archives; a tool may
-                           append bytes without updating it (modded SHELL.VOL)
+        u32     size       len(payload)-1 in every pristine entry.  The game's
+                           member stream (BBShell FUN_68051380) treats it as
+                           the member length: a seek or read past it fails, so
+                           a payload that grows needs a new size.  A tool may
+                           have appended bytes without updating it (the wide5
+                           SHELL.VOL built before 2026-10-07)
         u32     stamp      DOS date (high u16) + DOS time (low u16)
         u8[.]   payload    the entry's bytes (PCX starts 0x0A, WAV "RIFF")
 
@@ -34,8 +38,10 @@ Payloads are sliced from offset+9 to the next entry's offset (EOF for the
 last entry): the offsets are authoritative, so blobs whose payload is longer
 than `size` still unpack byte-exactly.  pack() recomputes the structure that
 depends on the entry set (ndir is kept from meta, dirnames_len, count,
-dirbytes and every offset) and preserves each record's static 16 bytes and
-each blob header verbatim.
+dirbytes and every offset) and preserves each record's static 16 bytes.
+The manifest keeps a blob's `size` only when it is not len(payload)-1, next
+to the `len` it was read with; pack() writes that size back only while the
+payload still has that length, else len(payload)-1.
 """
 
 import json
@@ -118,9 +124,11 @@ def unpack(inpath, outdir):
         fn = "e%04d.bin" % i
         with open(os.path.join(outdir, fn), "wb") as fh:
             fh.write(data)
+        hdr = {"method": method, "stamp": stamp}
+        if size != len(data) - 1:
+            hdr.update(size=size, len=len(data))
         out.append({"name": dirname + name, "file": fn, "flags": flags,
-                    "rec": rec.hex(),
-                    "hdr": {"method": method, "size": size, "stamp": stamp}})
+                    "rec": rec.hex(), "hdr": hdr})
     man = {"entries": out,
            "meta": {"format": "VOLM", "version": version, "dirs": dirs}}
     with open(os.path.join(outdir, "manifest.json"), "w") as fh:
@@ -163,7 +171,8 @@ def pack(outdir, inpath):
                 + struct.pack("<H", (hi << 8) | (int(e.get("flags", 0)) & 0xFF))
         hdr = e.get("hdr") or {}
         method = int(hdr.get("method", 2))
-        size = int(hdr["size"]) if "size" in hdr else len(data) - 1
+        keep = "size" in hdr and int(hdr.get("len", -1)) == len(data)
+        size = int(hdr["size"]) if keep else len(data) - 1
         size = max(size, 0)
         stamp = int(hdr.get("stamp", 0))
         recs.append(rec + struct.pack("<I", off))

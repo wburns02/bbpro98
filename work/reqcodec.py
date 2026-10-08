@@ -104,40 +104,83 @@ def decode_gadgets(d, a, end):
     return out
 
 
-def decode(d):
-    if len(d) < 12 or d[:4] != b'IDX:':
-        _fail('no IDX header')
-    idxLen, n = struct.unpack_from('<II', d, 4)
-    if idxLen != 4 + 4 * n or 12 + 4 * n > len(d):
-        _fail('bad IDX length')
-    idx = struct.unpack_from('<%dI' % n, d, 12)
-    a = 12 + 4 * n
-    reqs, tops = [], []
-    while a + 8 <= len(d) and d[a:a + 4] == b'REQ:':
+def _block(d, a, bare):
+    """One requester at a: [outer "REQ:" u32 0x80000000|L] "REQ:" u32 hlen header "GAD:" u32 glen gadgets."""
+    q = a if bare else a + 8
+    if d[q:q + 4] != b'REQ:':
+        _fail(f'bad requester at {a}')
+    (hlen,) = struct.unpack_from('<I', d, q + 4)
+    g = q + 8 + hlen
+    if g + 8 > len(d) or d[g:g + 4] != b'GAD:':
+        _fail(f'bad requester header at {a}')
+    (glen,) = struct.unpack_from('<I', d, g + 4)
+    end = g + 8 + glen
+    if end > len(d):
+        _fail(f'GAD section past the file at {a}')
+    r = decode_header(d, q + 8, g)
+    r['gadgets'] = decode_gadgets(d, g + 8, end)
+    if not bare:
         (L,) = struct.unpack_from('<I', d, a + 4)
         if not L >> 31:
             _fail(f'requester at {a} is not a container')
-        end = a + 8 + (L & 0x7fffffff)
-        if end > len(d) or d[a + 8:a + 12] != b'REQ:':
-            _fail(f'bad requester at {a}')
-        (hlen,) = struct.unpack_from('<I', d, a + 12)
-        g = a + 16 + hlen
-        if g + 8 > end or d[g:g + 4] != b'GAD:':
-            _fail(f'bad requester header at {a}')
-        (glen,) = struct.unpack_from('<I', d, g + 4)
-        if g + 8 + glen != end:
-            _fail(f'GAD length mismatch at {a}')
-        r = {'index': len(reqs)}
-        r.update(decode_header(d, a + 16, g))
-        r['gadgets'] = decode_gadgets(d, g + 8, end)
-        reqs.append(r)
-        tops.append(a)
+        if L & 0x7fffffff != end - q:
+            r['_container_len'] = [L & 0x7fffffff, end - q]
+    return r, end
+
+
+def decode(d):
+    """IDX slot k >= 1 points at the inner "REQ:" header of requester k - 1 (the loader seeks there and reads with
+    the "REQ:REQ:" path of the previous load, so the outer container header is never read); slot 0 points at the
+    first block. The shipped files hold the blocks back to back in slot order plus one 0x00; patched files may move
+    blocks, drop their outer header or leave stale bytes, which _layout records."""
+    if len(d) < 12 or d[:4] != b'IDX:':
+        _fail('no IDX header')
+    idxLen, n = struct.unpack_from('<II', d, 4)
+    if n < 2 or idxLen != 4 + 4 * n or 12 + 4 * n > len(d):
+        _fail('bad IDX length')
+    idx = struct.unpack_from('<%dI' % n, d, 12)
+    slot = {}
+    for k, v in enumerate(idx[1:]):
+        if v in slot or not 12 + 4 * n <= v < len(d):
+            _fail('IDX table does not match the requesters')
+        slot[v] = k
+    starts = sorted(set(slot) | {v - 8 for v in slot if d[v - 8:v - 4] == b'REQ:'})
+    reqs, layout = [None] * (n - 1), []
+    a = 12 + 4 * n
+    while a < len(d):
+        if a + 8 in slot and d[a:a + 4] == b'REQ:' and d[a + 8:a + 12] == b'REQ:':
+            k, bare = slot[a + 8], False
+        elif a in slot:
+            k, bare = slot[a], True
+        else:
+            nxt = next((s for s in starts if s > a), len(d))
+            layout.append({'raw': d[a:nxt].decode('latin1')})
+            a = nxt
+            continue
+        if reqs[k] is not None:
+            _fail(f'requester {k} stored twice')
+        reqs[k], end = _block(d, a, bare)
+        layout.append({'req': k, 'bare': True} if bare else {'req': k})
         a = end
-    if not reqs:
-        _fail('no requesters')
-    if list(idx) != [tops[0]] + [t + 8 for t in tops]:
+    if None in reqs:
         _fail('IDX table does not match the requesters')
-    return {'requesters': reqs, '_tail': d[a:].decode('latin1')}
+    for k, r in enumerate(reqs):
+        reqs[k] = dict({'index': k}, **r)
+    doc = {'requesters': reqs}
+    first = next(i for i in layout if 'req' in i)
+    if idx[0] != _first_top(d, idx, first):
+        doc['_idx0'] = idx[0]
+    body = [i for i in layout if 'raw' not in i]
+    if body == [{'req': k} for k in range(n - 1)] and all('raw' not in i for i in layout[:n - 1]):
+        doc['_tail'] = ''.join(i['raw'] for i in layout[n - 1:])
+    else:
+        doc['_layout'] = layout
+    return doc
+
+
+def _first_top(d, idx, first):
+    v = idx[1 + first['req']]
+    return v if first.get('bare') else v - 8
 
 
 def _enc_texts(items):
@@ -169,21 +212,37 @@ def encode_gadget(g):
 
 
 def encode(doc):
-    blocks = []
-    for r in doc['requesters']:
-        gad = struct.pack('<H', len(r['gadgets'])) + b''.join(encode_gadget(g) for g in r['gadgets'])
-        hdr = encode_header(r)
-        body = b'REQ:' + struct.pack('<I', len(hdr)) + hdr + b'GAD:' + struct.pack('<I', len(gad)) + gad
-        blocks.append(b'REQ:' + struct.pack('<I', 0x80000000 | len(body)) + body)
-    n = len(blocks) + 1
+    reqs = doc['requesters']
+    layout = doc.get('_layout')
+    if layout is None or sorted(i['req'] for i in layout if 'req' in i) != list(range(len(reqs))):
+        # default: blocks back to back in slot order, then the tail
+        layout = [{'req': k} for k in range(len(reqs))] + [{'raw': doc.get('_tail', '')}]
+    n = len(reqs) + 1
     a = 12 + 4 * n
-    tops = []
-    for b in blocks:
-        tops.append(a)
+    out, inner, first = [], {}, None
+    for item in layout:
+        if 'raw' in item:
+            b = item['raw'].encode('latin1')
+        else:
+            r = reqs[item['req']]
+            gad = struct.pack('<H', len(r['gadgets'])) + b''.join(encode_gadget(g) for g in r['gadgets'])
+            hdr = encode_header(r)
+            b = b'REQ:' + struct.pack('<I', len(hdr)) + hdr + b'GAD:' + struct.pack('<I', len(gad)) + gad
+            if item.get('bare'):
+                inner[item['req']] = a
+            else:
+                L = len(b)
+                stale = r.get('_container_len')
+                if stale and stale[1] == L:      # a stale outer length survives only while the block keeps its size
+                    L = stale[0]
+                b = b'REQ:' + struct.pack('<I', 0x80000000 | L) + b
+                inner[item['req']] = a + 8
+            if first is None:
+                first = a
+        out.append(b)
         a += len(b)
-    idx = [tops[0]] + [t + 8 for t in tops]
-    return (b'IDX:' + struct.pack('<II', 4 + 4 * n, n) + struct.pack('<%dI' % n, *idx) + b''.join(blocks)
-            + doc.get('_tail', '').encode('latin1'))
+    idx = [doc.get('_idx0', first)] + [inner[k] for k in range(len(reqs))]
+    return b'IDX:' + struct.pack('<II', 4 + 4 * n, n) + struct.pack('<%dI' % n, *idx) + b''.join(out)
 
 
 def main():
