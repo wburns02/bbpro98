@@ -339,3 +339,16 @@ list survives past the live one. The misc8 data lane won; its bb.cfg names were 
 - HMP header 0x38 is a tick rate (120/s), not BPM: with 192 ticks per quarter a quarter is 1.6 s, and the 0x3c
   seconds field is floor(ticks / 120) on all 13 songs.
 - HMP deltas are LSB-first 7-bit groups with bit 7 set on the LAST byte; events carry explicit status bytes.
+
+## 2026-10-08: M9 pitch model (work/SIM_PITCH_MODEL.md, re/pitch_model.py, src-latest/mods/pitchtrace.c)
+
+- FastSim batter swing setup FUN_6800b36e (fbattr2d.cpp): timing FUN_6800da34, swing decision FUN_6800e043, check swing
+  FUN_6800e826, adjust FUN_6800ec38; contact FUN_68053d2e, launch FUN_68054d4a. Formulas and tables in the spec.
+- pitchtrace.dll records each call (inputs, RNG before/after, outputs). Exact replay on 67,548 records (pt1 + pt2, 6 sim
+  days): swing 18,425/18,425, timing 28,073/28,073, contact 21,050/21,050. Swing rate chi2 p 0.262, contact zone p 0.237,
+  sweet-spot exit-speed draw p 0.168.
+- The FastSim LFSR (0xa3000000, period 2^32-1) has correlated consecutive draws (mod-100 r about 0.25): multi-dice timing
+  rolls are 11-25% wider than the designers' ideal dice. The 2d40 timing bracket also deviates from the uniform-state
+  LFSR distribution at n = 10k (open, not gated).
+- The GLM draft work/spec/FUN_68053d2e.md misnamed the IsTracking getters: they read batter fields (ba9c = +0x139,
+  bb0d = +0x112, bb5e = +0x125, bae4 = +0x107, bb2c = +0x11f / +0x123) and the RNG is DAT_68185a60. The spec supersedes it.
