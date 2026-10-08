@@ -31,16 +31,17 @@ last=""
 # config holds ONLY the Hive provider and its models (no z.ai/OpenRouter/OAuth keys), so lanes never see other keys
 # and never touch the real ~/.kimi-code session index.
 BACKEND=${GLM_BACKEND:-zai}; HIVE_MODEL=hive/zai-org/glm-5.3-flash
-KH=/mnt/nvme/bbpro98/tmp/kimihome/$TARGET.$LANE
+KH=/mnt/nvme/bbpro98/tmp/kimihome/$TARGET.$LANE   # Claude-only: config.toml; never bound writable
+KS=/mnt/nvme/bbpro98/tmp/kimistate/$TARGET.$LANE  # the lane's writable kimi home, recreated empty every round
 if [ "$BACKEND" = hive ]; then
-  mkdir -p "$KH/bin"; chmod 700 "$KH"
+  [ -e "$KH" ] && rm -r -- "$KH"; mkdir -m 700 -p "$KH"
   python3 -I -B - "$H/.kimi-code/config.toml" "$KH/config.toml" "$HIVE_MODEL" <<'PY' || { echo "no hive config" >&2; exit 2; }
 import sys, re, os
 src, dst, model = sys.argv[1:4]
 blocks = re.split(r'(?m)^(?=\[)', open(src).read())
 keep = [b for b in blocks if re.match(r'\[(providers\.hive|models\."hive/[^"]+")\]\s*$', b.splitlines()[0])]
 if not any(b.startswith('[providers.hive]') for b in keep) or not any(model in b.splitlines()[0] for b in keep): sys.exit(1)
-fd = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+fd = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
 with os.fdopen(fd, 'w') as fh:
     fh.write(f'default_model = "{model}"\n\n' + ''.join(keep).rstrip() + '\n\n[thinking]\nenabled = true\neffort = "high"\n')
 PY
@@ -61,7 +62,9 @@ glm_sandboxed() {
   local p; for p in "${EXTRA_RO[@]}"; do b+=(--ro-bind "$p" "$p"); done
   local cmd=(timeout 3600 "$H/.local/bin/glm" --yolo -p "$1")
   if [ "$BACKEND" = hive ]; then
-    b+=(--bind "$KH" "$H/.kimi-code" --ro-bind "$H/.kimi-code/bin/kimi" "$H/.kimi-code/bin/kimi" --tmpfs "$H/.config/zai")
+    [ -e "$KS" ] && rm -r -- "$KS"; mkdir -m 700 -p "$KS"   # rm -r never follows symlinks the lane left behind
+    b+=(--bind "$KS" "$H/.kimi-code" --ro-bind "$KH/config.toml" "$H/.kimi-code/config.toml"
+        --ro-bind "$H/.kimi-code/bin/kimi" "$H/.kimi-code/bin/kimi" --tmpfs "$H/.config/zai")
     cmd=(timeout 3600 "$H/.kimi-code/bin/kimi" -m "$HIVE_MODEL" --add-dir "$RE" --add-dir "$H/bbpro98/work")
     for p in "${EXTRA_RO[@]}"; do cmd+=(--add-dir "$p"); done
     cmd+=(-p "$1")
@@ -137,7 +140,10 @@ ${last:-<no $DECODER yet>}"
   # merely mention 429) and counts as a round. Total uncounted retries per lane are capped too.
   added=$(( $(stat -c %s "$R/glm_round$r.log" 2>/dev/null || echo 0) - sz ))
   if [ "$rc" -ne 0 ] && [ "$dt" -lt 180 ] && [ "$added" -lt 4096 ] \
-     && tail -c +$((sz + 1)) "$R/glm_round$r.log" | grep -qiE 'Request rejected \(429\)|\b429\b|rate.?limit|too many requests'; then
+     && tail -c +$((sz + 1)) "$R/glm_round$r.log" | grep -v '^[[:space:]]*$' | tail -n 1 \
+        | grep -qE '^(API Error: Request rejected \(429\)|Error: .*(429|[Rr]ate limit|Too Many Requests))'; then
+    # only the round's final line counts: the CLI prints the provider error last and exits; tool output can echo
+    # arbitrary lines earlier. Short, failed rounds only, and capped below, so a forged line buys little.
     rl=$((rl + 1)); rlt=$((rlt + 1)); r=$((r - 1))
     [ "$rl" -ge 30 ] || [ "$rlt" -ge 60 ] && { echo "STOPPED: rate limited ($rl in a row, $rlt total) $(date -Is)" | tee "$R/STATUS"; exit 1; }
     w=$((60 * rl)); [ "$w" -gt 600 ] && w=600; w=$((w + RANDOM % 60))
