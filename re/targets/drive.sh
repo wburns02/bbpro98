@@ -74,7 +74,24 @@ for line in open(sys.argv[1], errors="replace"):
     if r.get("type") == "result": print(r.get("result") or "")' "$2"
 }
 
-for r in $(seq 1 "$MAX"); do
+# At most GLM_SLOTS glm sessions at once across all lanes (flock slots), and a z.ai 429 ("Rate limit reached") does
+# not consume a round: back off (60 s steps, cap 10 min) and retry it; give up after 30 straight 429s.
+SLOTS=${GLM_SLOTS:-6}; SLOTDIR=/mnt/nvme/bbpro98/tmp/glmslots; mkdir -p "$SLOTDIR"
+acquire_slot() {
+  while :; do
+    for i in $(seq 1 "$SLOTS"); do
+      exec {SLOTFD}>"$SLOTDIR/$i"
+      flock -n "$SLOTFD" && return 0
+      exec {SLOTFD}>&-
+    done
+    sleep $((15 + RANDOM % 30))
+  done
+}
+release_slot() { flock -u "$SLOTFD"; exec {SLOTFD}>&-; }
+
+r=0; rl=0
+while [ "$r" -lt "$MAX" ]; do
+  r=$((r + 1))
   [ -f "$T/WINNER" ] && { echo "STOPPED: $(cat "$T/WINNER")" | tee "$R/STATUS"; exit 0; }
   echo "=== round $r $(date -Is)" | tee -a "$R/run.log"
   prompt="$(sed "s#\$LANE#$L#g" "$T/TASK.md")
@@ -84,8 +101,18 @@ ${FOCUS[$LANE]}
 
 This is round $r of $MAX. Latest referee output for your lane (tail):
 ${last:-<no $DECODER yet>}"
-  glm_sandboxed "$prompt" >> "$R/glm_round$r.log" 2>&1
-  echo "glm exit $?" >> "$R/run.log"
+  sz=$(stat -c %s "$R/glm_round$r.log" 2>/dev/null || echo 0)
+  acquire_slot
+  glm_sandboxed "$prompt" >> "$R/glm_round$r.log" 2>&1; rc=$?
+  release_slot
+  echo "glm exit $rc" >> "$R/run.log"
+  if [ "$rc" -ne 0 ] && tail -c +$((sz + 1)) "$R/glm_round$r.log" | grep -q 'Request rejected (429)'; then
+    rl=$((rl + 1)); r=$((r - 1))
+    [ "$rl" -ge 30 ] && { echo "STOPPED: rate limited 30 times in a row $(date -Is)" | tee "$R/STATUS"; exit 1; }
+    w=$((60 * rl)); [ "$w" -gt 600 ] && w=600; w=$((w + RANDOM % 60))
+    echo "rate limited (429), round not counted, retry in ${w}s" >> "$R/run.log"; sleep "$w"; continue
+  fi
+  rl=0
   [ -f "$L/$DECODER" ] || { last="No $DECODER was written."; echo "$last" >> "$R/run.log"; continue; }
   out=$("${REFEREE[@]}" "$L" 2>&1 | tail -n 20); echo "$out" >> "$R/run.log"; last="$out"
   echo "$out" | tail -n 1 | grep -q '^PASS' || continue
