@@ -311,3 +311,7 @@ list survives past the live one. The misc8 data lane won; its bb.cfg names were 
   "Skipper Menu" (t_sim_edits.py PASS).
 - Tesseract reads the 3D panels' yellow-on-gray text only after a colour key (keep r,g > 0.6, b < 0.4); ingame.py
   ocr steps take `"key": "yellow"`.
+- The batting camera draws the stadium's nine PB chunks (640x122 raw images: stands, outfield wall, scoreboards,
+  everything above the grass) and RC field textures. Filling the PB bodies with index 253 turned that whole band
+  magenta (77,775 px); recolouring every shape.tbl polygon of every model left the frame pixel-identical. ingame.py
+  has a `pixels` step (count within tol of an rgb, min/max) for edits like this.

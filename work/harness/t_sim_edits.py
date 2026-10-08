@@ -6,17 +6,22 @@ usage: t_sim_edits.py OUTDIR
 
 Builds copies of work-copy files with
   Stadia/NEWYORKA.DAT  info.dat (e957)  name -> "Claude Park", short_name "New York Stadium" -> "Claude Short"
+  Stadia/NEWYORKA.DAT  the 9 PB stand panoramas (640x122 raw images, 38-byte header) filled with palette index 253
   Stadia/NEWYORKA.DT   info.dat (e957)  name -> "Claude Yard"
   FPS_Ctrl.dll         STRING 1205/1505 batting/fielding panel "Manager Menu" -> "Skipper Menu", plus a 3000-char
                                         filler string at the unused id 1215 so .rsrc outgrows its section and .reloc
                                         is moved (rsrc.replace_rsrc's growth path, loaded by the real loader)
 then starts Arcade Play (Atlanta at New York (A), Yankee Stadium) on :99 and OCRs the Game Updates panel and the batting
-menu. Every edited file and every game state file the run writes is restored (ingame.py).
+menu, and counts magenta (index 253) pixels in the 3D view, where the stands are drawn. Every edited file and every
+game state file the run writes is restored (ingame.py).
 
 Seen 2026-10-07: the Game Updates "Stadium:" line is the .DAT short_name (not name, not the .DT name). A crowd_colors
 edit (189/24 -> 253/254) changed nothing in the default batting view: the stands there are textured, the crowd
 polygons (color 0xf4 / 0xf5, models 12-14 of shape.tbl) were not drawn with the flat crowd colours. The batting
-panel's "Manager Menu" is FPS_Ctrl.dll's string resource, not SIM.DAT bpi.str (5200), whose edit showed nothing there.
+panel's "Manager Menu" is FPS_Ctrl.dll's string resource, and the batting camera draws the PB panoramas (stands, outfield
+wall, scoreboards; magenta fill = everything above the grass) over RC field textures: recolouring every shape.tbl
+polygon of every model left that frame pixel-identical, so the models are only drawn by other cameras. A bpi.str edit
+(SIM.DAT 5200) showed nothing in the batting panel.
 """
 import json, os, subprocess, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -51,6 +56,12 @@ def main():
         d['name'] = 'Claude Yard'
 
     edit(f'{WORK}/Stadia/NEWYORKA.DAT', f'{out}/NEWYORKA.DAT', 0xe957, 'info.dat', dat)
+    chunks, meta = chunkdat.split(open(f'{out}/NEWYORKA.DAT', 'rb').read())
+    pb = [i for i, c in enumerate(chunks) if c[1] == b'PB']
+    for i in pb:
+        k, tag, data = chunks[i]
+        chunks[i] = (k, tag, data[:38] + bytes([253]) * (len(data) - 38))
+    open(f'{out}/NEWYORKA.DAT', 'wb').write(chunkdat.join(chunks, meta))
     edit(f'{WORK}/Stadia/NEWYORKA.DT', f'{out}/NEWYORKA.DT', 0xe957, 'info.dat', dt)
     src = open(f'{WORK}/FPS_Ctrl.dll', 'rb').read()
     rd = f'{out}/fps_ctrl_rsrc'
@@ -76,7 +87,8 @@ def main():
                       ['ocr', 'updates', [0, 260, 260, 420], {'expect': ['Claude Short'],
                                                               'absent': ['New York Stadium']}],
                       ['ocr', 'bat_menu', [820, 20, 300, 200], {'expect': ['Skipper Menu'], 'absent': ['Manager'],
-                                                                'key': 'yellow'}]]}
+                                                                'key': 'yellow'}],
+                      ['pixels', 'stands', [243, 207, 650, 443], {'rgb': [255, 0, 255], 'tol': 40, 'min': 50000}]]}
     json.dump(plan, open(f'{out}/plan.json', 'w'), indent=1)
     env = dict(os.environ, DBUS_SYSTEM_BUS_ADDRESS='unix:path=/nonexistent')
     sys.exit(subprocess.run([sys.executable, f'{HERE}/ingame.py', f'{out}/plan.json', f'{out}/shots'],

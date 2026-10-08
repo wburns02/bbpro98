@@ -8,7 +8,8 @@ usage: ingame.py PLAN.json SHOTDIR
 PLAN: {"install": {"SHELL.VOL": "/path/to/edited/SHELL.VOL", ...},   keys are paths inside the work copy
        "launch_wait": 20,
        "steps": [["click", x, y, wait], ["key", "ctrl+w", wait], ["move", x, y], ["wait", s], ["shot", name],
-                 ["ocr", name, [x, y, w, h] | null, {"expect": [..], "absent": [..], "key": "yellow"}]],
+                 ["ocr", name, [x, y, w, h] | null, {"expect": [..], "absent": [..], "key": "yellow"}],
+                 ["pixels", name, [x, y, w, h], {"rgb": [r, g, b], "tol": 30, "min": n, "max": m}]],
        "keep": false}                                             keep = leave the edit installed and the game up
 Game state the run writes (game.sav / game.in of an unfinished game, ezshell.cfg, BBPRO.INI, league and stats files) is
 put back too: every file of the work copy is listed before the launch, the small state files (top-level files under
@@ -16,7 +17,8 @@ put back too: every file of the work copy is listed before the launch, the small
 are restored and files the run created are deleted. A change to any other file is reported and fails the run.
 Screen coordinates are the 1280x1024 :99 root window. "ocr" takes its own screenshot. Text match is case-insensitive
 and ignores runs of whitespace. "key" adds a pass that keeps only pixels of that colour (KEYS), for coloured text on a
-busy background (the 3D game's yellow-on-gray panels). Exit 0 = every ocr step passed.
+busy background (the 3D game's yellow-on-gray panels). "pixels" counts the pixels of the region within tol (max
+channel difference) of rgb and checks min <= count <= max (either bound optional), for edits that are not text. Exit 0 = every ocr step passed.
 """
 import hashlib, json, os, re, shutil, signal, subprocess, sys, time
 
@@ -130,6 +132,14 @@ def ocr(png, box, scratch, key=None):
     return '\n'.join(texts)
 
 
+def count_pixels(png, box, rgb, tol):
+    """Pixels of box [x, y, w, h] in png within tol of rgb in every channel (raw RGB via ImageMagick)."""
+    raw = subprocess.run(['magick', png, '-crop', '%dx%d+%d+%d' % (box[2], box[3], box[0], box[1]), '+repage',
+                          '-depth', '8', 'rgb:-'], capture_output=True, check=True).stdout
+    return sum(1 for i in range(0, len(raw) - 2, 3)
+               if all(abs(raw[i + k] - rgb[k]) <= tol for k in range(3)))
+
+
 def norm(s):
     return re.sub(r'\s+', ' ', s).strip().lower()
 
@@ -173,6 +183,14 @@ def main():
                 time.sleep(st[1])
             elif op == 'shot':
                 shot(f'{shots}/{st[1]}.png')
+            elif op == 'pixels':
+                png = f'{shots}/{st[1]}.png'
+                shot(png)
+                want = st[3]
+                n = count_pixels(png, st[2], want['rgb'], want.get('tol', 30))
+                good = want.get('min', 0) <= n <= want.get('max', n)
+                ok &= good
+                print(json.dumps({'pixels': st[1], 'ok': good, 'count': n}))
             elif op == 'ocr':
                 png = f'{shots}/{st[1]}.png'
                 shot(png)
