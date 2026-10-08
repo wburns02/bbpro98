@@ -25,7 +25,7 @@
    - addr(module, va): runtime address of a VA (NULL while the module is not loaded); use it to call game functions.
 
    Build (32-bit, from the repo root):
-     python -m ziglang cc -target x86-windows-gnu -O2 -shared -Isrc-latest -o steal.dll src-latest/mods/steal.c
+     /mnt/nvme/bbpro98/zigenv/bin/python -m ziglang cc -target x86-windows-gnu -O2 -shared -Isrc-latest -o steal.dll src-latest/mods/steal.c
 */
 #ifndef BBMOD_H
 #define BBMOD_H

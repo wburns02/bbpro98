@@ -1,7 +1,8 @@
 #!/bin/bash
 # Roadmap #9 referee arm: restore one snapshot into the WORK copy, run the game with bbfix.dll + mods/steal.dll in the
 # given mode, sim N days, collect Assn/Stats/bbtrace into /mnt/nvme/bbpro98/re/hookab/ARM.
-# usage: hookab.sh ARM MODE DAYS [BBFIX_DLL] [STEAL_DLL]      MODE = pass|zero|max|scale|off (off = no [mods])
+# usage: hookab.sh ARM MODE DAYS [BBFIX_DLL] [MOD_DLL]      MODE = pass|zero|max|scale|off (off = no [mods])
+# env: MODNAME=steal (mod file mods\$MODNAME.dll and its ini section [$MODNAME] mode=MODE), MODKV="k=v k2=v2" extra keys
 set -u
 ARM=$1 MODE=$2 DAYS=$3
 SP=/tmp/claude-1000/-home-will/8d342f9f-a447-4453-8414-200a2f7813d7/scratchpad
@@ -16,15 +17,17 @@ kill_work
 [ -f $W/bbfix.dll.pre_mods ] || cp $W/bbfix.dll $W/bbfix.dll.pre_mods
 rm -rf "$OUT"; mkdir -p "$OUT"
 for d in Assn Stats; do find "$W/$d" -mindepth 1 -delete; cp -a "$BASE/$d/." "$W/$d/"; done
-mkdir -p $W/mods; cp "$MOD" $W/mods/steal.dll; cp "$FIX" $W/bbfix.dll
-python3 - "$W/bbfix.ini" "$MODE" <<'P'
+MODNAME=${MODNAME:-steal}; [[ $MODNAME =~ ^[a-z0-9_]+$ ]] || { echo "bad MODNAME"; exit 8; }
+mkdir -p $W/mods; cp "$MOD" $W/mods/$MODNAME.dll; cp "$FIX" $W/bbfix.dll
+python3 - "$W/bbfix.ini" "$MODE" "$MODNAME" "${MODKV:-}" <<'P'
 import sys, configparser
-p, mode = sys.argv[1], sys.argv[2]
+p, mode, name, kv = sys.argv[1:5]
 c = configparser.ConfigParser(); c.optionxform = str; c.read(p)
-for s in ('mods', 'steal'):
+for s in ('mods', 'steal', 'seed', name):
     if c.has_section(s): c.remove_section(s)
 if mode != 'off':
-    c['mods'] = {'load': 'mods\\steal.dll'}; c['steal'] = {'mode': mode, 'pct': '100'}
+    c['mods'] = {'load': 'mods\\%s.dll' % name}
+    c[name] = {'mode': mode, **({'pct': '100'} if name == 'steal' else {}), **dict(x.split('=', 1) for x in kv.split())}
 with open(p, 'w') as fh: c.write(fh)
 P
 cp $W/bbfix.ini "$OUT/bbfix.ini"

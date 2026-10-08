@@ -26,6 +26,26 @@ export TMPDIR=/mnt/nvme/bbpro98/tmp
 echo "RUNNING $(date -Is)" > "$R/STATUS"
 last=""
 
+# GLM_BACKEND=zai (default): Claude Code CLI on the z.ai Coding Plan (glm wrapper). GLM_BACKEND=hive: the kimi-code
+# agent CLI on Hive's GLM-5.3-Flash (pay per token, no plan rate limit). Each hive lane gets a private kimi home whose
+# config holds ONLY the Hive provider and its models (no z.ai/OpenRouter/OAuth keys), so lanes never see other keys
+# and never touch the real ~/.kimi-code session index.
+BACKEND=${GLM_BACKEND:-zai}; HIVE_MODEL=hive/zai-org/glm-5.3-flash
+KH=/mnt/nvme/bbpro98/tmp/kimihome/$TARGET.$LANE
+if [ "$BACKEND" = hive ]; then
+  mkdir -p "$KH/bin"; chmod 700 "$KH"
+  python3 -I -B - "$H/.kimi-code/config.toml" "$KH/config.toml" "$HIVE_MODEL" <<'PY' || { echo "no hive config" >&2; exit 2; }
+import sys, re, os
+src, dst, model = sys.argv[1:4]
+blocks = re.split(r'(?m)^(?=\[)', open(src).read())
+keep = [b for b in blocks if re.match(r'\[(providers\.hive|models\."hive/[^"]+")\]\s*$', b.splitlines()[0])]
+if not any(b.startswith('[providers.hive]') for b in keep) or not any(model in b.splitlines()[0] for b in keep): sys.exit(1)
+fd = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+with os.fdopen(fd, 'w') as fh:
+    fh.write(f'default_model = "{model}"\n\n' + ''.join(keep).rstrip() + '\n\n[thinking]\nenabled = true\neffort = "high"\n')
+PY
+fi
+
 glm_sandboxed() {
   local b=(
     --ro-bind /usr /usr --symlink usr/lib /lib --symlink usr/lib64 /lib64 --symlink usr/bin /bin --symlink usr/sbin /sbin
@@ -39,12 +59,19 @@ glm_sandboxed() {
     --bind "$L" "$L" --ro-bind "$R" "$R"
   )
   local p; for p in "${EXTRA_RO[@]}"; do b+=(--ro-bind "$p" "$p"); done
+  local cmd=(timeout 3600 "$H/.local/bin/glm" --yolo -p "$1")
+  if [ "$BACKEND" = hive ]; then
+    b+=(--bind "$KH" "$H/.kimi-code" --ro-bind "$H/.kimi-code/bin/kimi" "$H/.kimi-code/bin/kimi" --tmpfs "$H/.config/zai")
+    cmd=(timeout 3600 "$H/.kimi-code/bin/kimi" -m "$HIVE_MODEL" --add-dir "$RE" --add-dir "$H/bbpro98/work")
+    for p in "${EXTRA_RO[@]}"; do cmd+=(--add-dir "$p"); done
+    cmd+=(-p "$1")
+  fi
   pasta --config-net --ipv4-only --no-map-gw --dns-forward 169.254.1.1 -t none -u none -T none -U none --quiet -- \
     bash -c 'nft -f "$1" && shift && exec "$@"' _ "$RE/hfiles/sandbox/egress.nft" \
   bwrap "${b[@]}" --chdir "$L" --unshare-user --uid 1000 --gid 1000 --unshare-pid --unshare-ipc --unshare-uts \
     --die-with-parent --new-session --clearenv --setenv HOME "$H" --setenv PATH "$H/.local/bin:$H/bin:/usr/bin" \
     --setenv LANG C.UTF-8 --setenv TERM dumb \
-    timeout 3600 "$H/.local/bin/glm" --yolo -p "$1"
+    "${cmd[@]}"
 }
 
 # Read a lane file without following symlinks (regular files only, capped), so GLM cannot point it at host data.
@@ -110,7 +137,7 @@ ${last:-<no $DECODER yet>}"
   # merely mention 429) and counts as a round. Total uncounted retries per lane are capped too.
   added=$(( $(stat -c %s "$R/glm_round$r.log" 2>/dev/null || echo 0) - sz ))
   if [ "$rc" -ne 0 ] && [ "$dt" -lt 180 ] && [ "$added" -lt 4096 ] \
-     && tail -c +$((sz + 1)) "$R/glm_round$r.log" | grep -q 'Request rejected (429)'; then
+     && tail -c +$((sz + 1)) "$R/glm_round$r.log" | grep -qiE 'Request rejected \(429\)|\b429\b|rate.?limit|too many requests'; then
     rl=$((rl + 1)); rlt=$((rlt + 1)); r=$((r - 1))
     [ "$rl" -ge 30 ] || [ "$rlt" -ge 60 ] && { echo "STOPPED: rate limited ($rl in a row, $rlt total) $(date -Is)" | tee "$R/STATUS"; exit 1; }
     w=$((60 * rl)); [ "$w" -gt 600 ] && w=600; w=$((w + RANDOM % 60))
