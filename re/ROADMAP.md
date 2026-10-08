@@ -37,6 +37,7 @@ final verification. Fable/Opus only when a lane stalls 2-3 rounds.
 | 4 | H-file 2698-byte first table semantics (now plaintext: league, team names, stadium codes, ...) | field layout | diff across sim days vs ASN/box-score truth | S |
 | 7a | Chunk semantics (lanes running: re/targets/chunks, 126 chunks + 8 held-out stadiums): HS ('DAT:' tables, 28 stadia), MI/STA: stadium info, GID: fence geometry, WT, XT; SIM.DAT @C cameras, MI injuries, PB strings, UN, MS, OL; HMI MIDI music (HMIMIDIP, 13 chunks: standard HMP, convert with hmp2mid) | layouts unknown | per-chunk round-trip + game-visible edit | S-M |
 | 8 | HHA.DAT, bb.cfg, .apc/.pyc/.pyf, hilights .tap, STS writer (ARC done; SIM.DAT chunks in #7a; INJURY.DAT does not exist, injuries = SIM.DAT MI chunk; pgen*.dat in #5a volpgen) | unknown or reader-only | per-format: round-trip + cross-check against decoded ASN/H/DAT truth | S-M each |
+| 8b | game.bki / game.bko (shell -> sim game setup GDI, enciphered; sim -> shell play-by-play GDO) | layouts unknown. Lanes running: re/targets/gamebk | box scores replayed from GDO events == MLBPA97.H?? (holdout: unseen sim days); GDI covers each game's pids; round-trip + edit | M |
 | 10 | Function labels (M1-M3), sim formulas (M9-M11), RNG + seed (M12) | ~1350/3800 P1 labelled; RNG not located | xref consistency; formula predicts logged pitch outcomes; seeded replay is deterministic | L |
 | 11 | Automated in-game test harness | partial (probe_screen.sh, simdays.py) | itself the referee for 6 and 9 | M |
 
