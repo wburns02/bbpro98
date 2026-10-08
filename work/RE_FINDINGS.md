@@ -374,3 +374,24 @@ list survives past the live one. The misc8 data lane won; its bb.cfg names were 
   21 bytes plus the 18-byte c-tree variable-length header, 0x32612..0x6d4ae; 0xFAFA is the c-tree record mark). The
   2026-10-07 section above decoded raw pages before the c-tree layer existed. league.py reads and writes both members
   (`sp`, `transactions`), so the news pool is writable.
+
+## 2026-10-08: function labels (M1-M3), gate PASS
+- No binary links MFC (no MFC42 import, no static MFC). Every MFC_LIB answer from Ghidra FID or GLM was a false match:
+  CRT routines, DLL exports (cfg*, pal*, wpl*, font helpers, implode/explode/crc, Run*, DllMain) or game code that
+  happened to hash like CSplitterWnd::IsTracking. name_sub() maps the export families; the rest re-vote from
+  neighbours.
+- re/label_refine.py post-pass (runs after det + GLM, source 'post', reason prepended to the comment): operator
+  new/delete names -> CRT; ctor/dtor under CRT/MFC_LIB -> callee vote or STRUCT_INIT; C-library-only bodies -> CRT
+  only when they register atexit or sit between CRT functions; c-tree ISAM calls -> IO_FILE; IO_REGISTRY needs a
+  registry/INI call; GDI and WIN32 labels must reach a real GDI / imported API call below them; SEH-restore-only
+  bodies -> CRT; API-only small bodies take the API family; small wrappers take their callees' unanimous subsystem
+  (EH unwind funclets stay CRT, wrappers of CRT/UTIL take their callers' unanimous subsystem); guessed labels take
+  2+ unanimous callees. Labels from a function's own source module (assert path, or propagated between asserts of one
+  .cpp) are never re-voted, and Utility_Vblock / Utility_Decoder are UTIL, Utility_Sfx AUDIO.
+- Gate (label_spotcheck.py, 100 random functions, holdout DeepSeek-V4.1-Flash grader; strong evidence >= 80%, WRONG
+  < 5%): seeds 4, 7, 8, 11 failed and each failure's WRONG classes became a rule above; fresh seeds 12 (Baseball BBSIM
+  FastSim: 92%, 3%) and 13 (the other 13 binaries: 91%, 2%) PASS. A filtered diagnostic run (SPOT_FILTER='^post',
+  seed 100, 200 rule-made labels) measured the rules themselves: wrappers of CRT/UTIL were the weak class (14/36
+  WRONG) and were fixed before seeds 12/13. Remaining WRONG rows are subsystem judgement calls (MATH vs SIM_STATS,
+  SIM_FATIGUE vs RATING).
+
