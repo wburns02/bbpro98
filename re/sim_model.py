@@ -97,6 +97,12 @@ class Tape:
 
     def x(self, va, arg1=None):
         """the next getter return (unsigned 32 bit); arg1, when given, must be the recorded first stack argument"""
+        n = self.ev[self.i] if self.i < len(self.ev) else None
+        if self.i and (n is None or chr(n[0]) != 'X' or PROBES[n[1]][0] != va
+                       or arg1 is not None and n[4] & 0xffffffff != arg1 & 0xffffffff):
+            p = self.ev[self.i - 1]   # simtrace.c ev() drops an X event identical to the previous one: a repeated call
+            if chr(p[0]) == 'X' and PROBES[p[1]][0] == va and (arg1 is None or p[4] & 0xffffffff == arg1 & 0xffffffff):
+                return p[5] & 0xffffffff
         e = self._next('X', f'getter {va:x}')
         if PROBES[e[1]][0] != va:
             raise Mismatch(f'model wants getter {va:x}, record has {fmt_ev(e)} (event {self.i - 1})')
@@ -142,6 +148,16 @@ class Tape:
     def fat(self):
         """the next fatigue state read (FUN_6803df0d)"""
         return self._next('F', 'fatigue state')[5]
+
+    def skip_to(self, va, arg1=None):
+        """consume events up to the next getter va (with first stack argument arg1): the span of an unprobed virtual
+        call, whose callees' events are top-level"""
+        while self.i < len(self.ev):
+            e = self.ev[self.i]
+            if chr(e[0]) == 'X' and PROBES[e[1]][0] == va and (arg1 is None or e[4] & 0xffffffff == arg1 & 0xffffffff):
+                return
+            self.i += 1
+        raise Mismatch(f'model skips to getter {va:x}, record has none')
 
     def done(self):
         if self.i != len(self.ev): raise Mismatch(f'{len(self.ev) - self.i} events left: {fmt_ev(self.ev[self.i])} ...')
@@ -646,19 +662,366 @@ def model_lead(r):
     return None
 
 
+def model_def_mgr(r):
+    """FUN_680382d9(mgr): the defensive manager's per-pitch rolls into the flag word at mgr+0x3496: 1 charge 1st,
+    1|4 charge 3rd, 0x20 pickoff, 0x40 pitchout, 0x200 intentional walk, 0x100 pitch around, 0x400 decided"""
+    t = Tape(r)
+    w = i32(r['xf'], 0) & 0xffff
+    v3 = s32(t.x(0x6803cc73))
+    t.x(0x68005ec0, 8); w &= ~8
+    if v3 < 3:
+        if t.x(0x68011570) & 0xff:
+            t.x(0x68005ec0, 0x65); w &= ~0x65
+        if t.x(0x68011570) & 0xff or v3 == 0:
+            t.call('positioning')
+            t.x(0x68035228)
+        for side, bits in ((0, (1,)), (2, (1, 4))):
+            v = t.pb(0x2e)
+            v = cdiv(s16v(t.call('def_strategy', side)) * v, 100)
+            if t.mod(100) < v:
+                for b in bits: t.x(0x68002c40, b); w |= b
+        if v3 == 0:
+            for name, bit in (('pickoff', 0x20), ('pitchout', 0x40)):
+                s = s16v(t.call(name))
+                if t.mod(100) < s: t.x(0x68002c40, bit); w |= bit
+            rec = t.x(0x680098e0, 0x400) & 0xff
+            if rec != (1 if w & 0x400 == 0 else 0): return f'flag test 0x400: recorded {rec}, word {w:#x}'
+            if rec:
+                s = s16v(t.call('def_ratings'))
+                if s > 0:
+                    roll = s16v(t.mod(100))
+                    if roll < cdiv(s * t.pb(0x2f), 100): t.x(0x68002c40, 0x200); w |= 0x200
+                    elif roll < s: t.x(0x68002c40, 0x100); w |= 0x100
+                t.x(0x68002c40, 0x400); w |= 0x400
+    t.done()
+    after = s16(r['post'], 0) & 0xffff
+    if w & 0xffff != after: return f'flag word {after:#06x}, model {w & 0xffff:#06x}'
+    return None
+
+
+def model_def_strategy(r):
+    """FUN_68036a52(mgr, side 0 = 1st / 2 = 3rd): infield charge chance (short), from PB0-6, two ratings at +0x83 and
+    the sacrifice chance; zero in a lopsided game or without a bunt situation"""
+    t = Tape(r)
+    param_1 = r['arg']
+    local_10 = 0
+    bVar1 = t.x(0x68002c80) & 0xff
+    iVar5 = t.x(0x68032ff0)
+    iVar6 = t.x(0x6800f600)
+    iVar7 = t.x(0x6800f640)
+    bVar2 = t.x(0x68056985, 3) & 0xff
+    bVar3 = t.x(0x68056985, 4) & 0xff
+    skip = False
+    diff = bVar2 - bVar3
+    if diff > 1 or diff < -2:
+        if (t.x(0x68049594) & 0xff) == 0:
+            skip = True
+    if not skip:
+        if (((param_1 == 0) or (param_1 == 2)) and
+                (((iVar6 != 0 and iVar7 == 0) or (iVar5 != 0 and iVar6 == 0))) and
+                (bVar1 < 2)):
+            if param_1 == 0:
+                local_10 = s16v(t.pb(0))
+            else:
+                local_10 = s16v(t.pb(1))
+            iVar10 = t.pb(2)
+            uVar4 = t.x(0x68039140) & 0xffff
+            iVar10 = cdiv(iVar10 * (0x32 - uVar4), 100)
+            iVar11 = t.pb(3)
+            uVar4 = t.x(0x68039140) & 0xffff
+            iVar11 = cdiv(iVar11 * (uVar4 - 0x32), 100)
+            uVar12 = t.call('sacrifice')
+            uVar8 = t.pb(4)
+            local_10 = s16v(local_10 + s16v(iVar10) + s16v(iVar11) + s16v(uVar12) + s16v(uVar8))
+            if param_1 == 2:
+                if (iVar5 != 0) and (iVar6 != 0):
+                    local_10 = s16v(local_10 + s16v(t.pb(5)))
+                if iVar7 != 0:
+                    local_10 = s16v(local_10 + s16v(t.pb(6)))
+    t.done()
+    if r['ret'] & 0xffff != local_10 & 0xffff:
+        return f'def_strategy {r["ret"] & 0xffff}, model {local_10 & 0xffff}'
+    return None
+
+
+def model_def_ratings(r):
+    """FUN_680371f8(): pitch-around chance 0..100 (PB24-45): late, runner in scoring position with 1st open, close
+    game; batter vs on-deck power/contact buckets (68038e70 power, 68038e50 contact, 68038b39 bucket), on-deck
+    68038eb0, outs"""
+    t = Tape(r)
+    local_1c = 0
+    inning = t.x(0x6800f200) & 0xff
+    outs = t.x(0x68002c80) & 0xff
+    runs_a = t.x(0x68056985) & 0xff
+    runs_b = t.x(0x68056985) & 0xff
+    run_diff = runs_a - runs_b
+    on_1st = t.x(0x68032ff0)
+    on_2nd = t.x(0x6800f600)
+    on_3rd = t.x(0x6800f640)
+    count = s16v(t.x(0x6800f570) & 0xffff)
+    if t.pb(0x18) < inning and (on_2nd != 0 or on_3rd != 0) and on_1st == 0:
+        b6 = t.x(0x68009610) & 0xff
+        if (t.x(0x68049594) & 0xff) == 0:
+            iVar13 = count + 2
+            if -run_diff == iVar13 or -iVar13 < run_diff:
+                if run_diff < 3:
+                    local_1c = s16v(t.pb(0x19) & 0xffff)
+                    v1 = t.x(0x68038e70)
+                    v2 = t.x(0x68038e50)
+                    v3 = t.x(0x68038e70)
+                    v4 = t.x(0x68038e50)
+                    s7 = s16v(v2 & 0xffff)
+                    s8 = s16v(v4 & 0xffff)
+                    s9 = s16v(t.x(0x68038b39, s16v(v1 & 0xffff)) & 0xffff)
+                    s10 = s16v(t.x(0x68038b39, s7) & 0xffff)
+                    s11 = s16v(t.x(0x68038b39, s16v(v3 & 0xffff)) & 0xffff)
+                    s12 = s16v(t.x(0x68038b39, s8) & 0xffff)
+                    if inning == 7 or inning == 8:
+                        local_1c = s16v((local_1c + t.pb(0x1a)) & 0xffff)
+                    elif inning > 8:
+                        local_1c = s16v((local_1c + t.pb(0x1b)) & 0xffff)
+                    d1 = s9 - s11
+                    if d1 < 2:
+                        if d1 == 1:
+                            local_1c = s16v((local_1c + t.pb(0x1d)) & 0xffff)
+                        elif s11 == s9:
+                            if s16v(v3 & 0xffff) < s16v(v1 & 0xffff):
+                                local_1c = s16v((local_1c + t.pb(0x1e)) & 0xffff)
+                            else:
+                                local_1c = s16v((local_1c + t.pb(0x1f)) & 0xffff)
+                        elif d1 == -1:
+                            local_1c = s16v((local_1c + t.pb(0x20)) & 0xffff)
+                    else:
+                        local_1c = s16v((local_1c + t.pb(0x1c)) & 0xffff)
+                    if d1 < -1:
+                        local_1c = s16v((local_1c + t.pb(0x21)) & 0xffff)
+                    d2 = s10 - s12
+                    if d2 < 2:
+                        if d2 == 1:
+                            local_1c = s16v((local_1c + t.pb(0x23)) & 0xffff)
+                        elif s12 == s10 and s7 < s8:
+                            if s8 < s7:
+                                local_1c = s16v((local_1c + t.pb(0x24)) & 0xffff)
+                            else:
+                                local_1c = s16v((local_1c + t.pb(0x25)) & 0xffff)
+                        elif d2 == -1:
+                            local_1c = s16v((local_1c + t.pb(0x26)) & 0xffff)
+                        elif d2 < -1:
+                            local_1c = s16v((local_1c + t.pb(0x27)) & 0xffff)
+                    else:
+                        local_1c = s16v((local_1c + t.pb(0x22)) & 0xffff)
+                    if s32(t.x(0x68038eb0)) <= t.pb(0x28):
+                        local_1c = s16v((local_1c + t.pb(0x29)) & 0xffff)
+                    if outs == 0:
+                        local_1c = s16v((local_1c + t.pb(0x2a)) & 0xffff)
+                    elif outs == 1:
+                        local_1c = s16v((local_1c + t.pb(0x2b)) & 0xffff)
+                    elif outs == 2:
+                        local_1c = s16v((local_1c + t.pb(0x2c)) & 0xffff)
+                    if on_2nd != 0 and on_3rd != 0:
+                        local_1c = s16v((local_1c + t.pb(0x2d)) & 0xffff)
+    t.done()
+    want = min(max(local_1c, 0), 100)
+    if (r['ret'] & 0xffff) != want:
+        return f'def_ratings {r["ret"] & 0xffff}, model {want}'
+    return None
+
+
+def model_replace_p(r):
+    """FUN_6804a357(team): is the starter done. Threshold PB174-182 by inning (+PB183 per extra inning, PB184 for
+    side 0, PB185/186 by bullpen pitches) vs G stat 7 + 3 per inning + outs + 2 * own runs + 2 * late innings
+    - 2 * opponent runs"""
+    t = Tape(r)
+    side = i32(r['xf'], 0)
+    fld = i32(r['xf'], 4)
+
+    inning = t.x(0x6800f200) & 0xff
+    A = [None] + [t.pb(0xae + i) for i in range(9)]
+    local_3c = A[min(max(inning, 1), 9)]
+    if inning > 9:
+        local_3c += t.pb(0xb7) * (inning - 9)
+    if side == 0:
+        local_3c += t.pb(0xb8)
+    k = min(max(9 - inning, 1), 8)
+    if fld < k * 0x32:
+        local_3c += t.pb(0xb9)
+    if k * 100 < fld:
+        local_3c += t.pb(0xba)
+
+    local_c = ((t.x(0x6800f200) & 0xff) - 1) * 3
+    if (t.x(0x68020a50) & 0xff) == 0:
+        if side == 1:
+            local_c += t.x(0x68002c80) & 0xff
+    elif side == 1:
+        local_c += 3
+    else:
+        local_c += t.x(0x68002c80) & 0xff
+    local_c += (t.x(0x68056985, side) & 0xff) * 2
+    u5 = t.x(0x6800f200) & 0xff
+    b1 = t.x(0x6800f200) & 0xff
+    local_c += min(max(b1 - 4, 0), u5) * 2
+    local_c += (t.x(0x68056985, int(side == 0)) & 0xff) * -2
+    stat7 = t.stat('G', 7)
+    t.done()
+    want = int(stat7 + local_c < local_3c)
+    if r['ret'] & 0xff != want:
+        return f'replace_p ret {r["ret"] & 0xff}, model {want}'
+    return None
+
+
+def model_relief_chk(r):
+    """FUN_6804a64d(team): is the reliever done: flagged (6804935e), stamina H3 - G10 - G11 below
+    (K0x20 + 51) * PB187 / 100, or a lead within PB189..PB188 with status bit 0x10"""
+    t = Tape(r)
+    t.x(0x68041d83)
+    t.x(0x68041d83)
+    t.x(0x68041d83)
+    h = t.stat('H', 3)
+    g10 = t.stat('G', 10)
+    g11 = t.stat('G', 11)
+    k20 = t.stat('K', 0x20)
+    pb_bb = t.pb(0xbb)
+    thresh = cdiv(pb_bb * (k20 + 0x33), 100)
+    flag = t.x(0x6804935e) & 0xff
+    local_1c = (flag != 0) or (h - (g10 + g11) < thresh)
+    side = i32(r['xf'], 0)
+    other = int(side != 1)
+    b3 = t.x(0x68056985, side) & 0xff
+    b4 = t.x(0x68056985, other) & 0xff
+    diff = b3 - b4
+    pb_bc = t.pb(0xbc)
+    if diff <= pb_bc:
+        pb_bd = t.pb(0xbd)
+        if pb_bd <= diff and (t.x(0x6803dec5, 0x10) & 0xff) != 0:
+            local_1c = True
+    t.done()
+    want = int(local_1c)
+    if r['ret'] & 0xff != want:
+        return f'relief chk {r["ret"] & 0xff}, model {want}'
+    return None
+
+
+def model_relief_pick(r):
+    """FUN_68043d91(team): the relief pick. The warming reliever (status bit 8) in slot 0x17328/0x1732c is chosen
+    unless the current pitcher is fine (starter: not 6804a357, reliever: not 6804a64d; fatigue state <= 2; not ahead
+    after the 7th; G stat 2 == 0). Checked through the index passed to 68041d33."""
+    t = Tape(r)
+    side = i32(r['xf'], 8)
+    local_c = -1
+    for k in range(2):
+        v = i32(r['xf'], 4 * k)
+        if v != -1 and (t.x(0x6803dec5, 8) & 0xff) != 0:
+            local_c = v
+    keep = True
+    if (t.x(0x68049663) & 0xff) != 0:
+        keep = (t.call('replace_p') & 0xff) == 0
+    elif (t.call('relief_chk') & 0xff) != 0:
+        keep = False
+    t.x(0x68041d83)
+    if t.fat() > 2:
+        keep = False
+    if (t.x(0x6800f200) & 0xff) > 7:
+        runs_side = t.x(0x68056985, side) & 0xff
+        runs_other = t.x(0x68056985, int(side != 1)) & 0xff
+        if runs_other < runs_side:
+            keep = False
+    t.x(0x68041d83)
+    if t.stat('G', 2) != 0:
+        keep = False
+    if keep:
+        local_c = -1
+    if local_c == -1:
+        t.x(0x68041d83)
+        t.x(0x68041d83)
+        t.x(0x6803d9f9, 0)
+        if t.peek() == 'H':
+            t.stat('H', 0)
+            if (t.x(0x68047c98) & 0xff) != 0:
+                return None
+    t.x(0x68041d33, local_c)
+    t.done()
+    return None
+
+
+GOOD_POS_PB = [499, 500, 501, 502, 497, 498, 505, 504, 503]   # 6808e968[pos] goodThrowChance, set by catch_adj
+
+
+def model_throw(r):
+    """FUN_6805dd30(fielder, target fielder, target point): the throw. Distance is cut to (byte 0x98 * PB494 / 100 +
+    PB493) * 30; a throw longer than 0x546 under manager flag 0x20 rolls chance(GOOD_POS[pos] + byte 0x97 * PB496 / 100
+    + PB495) and on a miss lands range(150, 300) off at an angle range(-0x4000, 0x4000) from the target. Shorter than
+    PB772 * 30: a lob (680153ed); else throw_speed(distance). Checked: the chance operand, both ranges and the distance
+    passed to throw_speed."""
+    t, o = Tape(r), r['obj']
+    t.x(0x68002bf0)
+    t.skip_to(0x6800a4a0)                       # vtable +0x1c: unprobed caller, its callees' events are top-level
+    t.x(0x6800a4a0)
+    dist = s16v(t.x(0x68002bb0))
+    cap = (cdiv(o[0x98] * t.pb(0x1ee), 100) + t.pb(0x1ed)) * 30
+    if cap < dist:
+        dist = s16v(cap)
+        t.x(0x6807c239)
+        t.x(0x6800a4a0)
+    t.x(0x6801e71c)
+    if dist > 0x546 and not t.x(0x680155c0) & 0xff and t.x(0x6800f270, i32(o, 0x68)) & 0xff:
+        fa = cdiv(o[0x97] * t.pb(0x1f0), 100)
+        good = s16v(PB[GOOD_POS_PB[i32(o, 100)]] + fa + t.pb(0x1ef)) & 0xff
+        c = t.take('C', 1, good, 'good throw chance')
+        if not c[5]:
+            e = t.take('R', 1, 0x96, 'wild throw distance')
+            if e[4] != 300: return f'wild distance range hi {e[4]}'
+            t.x(0x68002bf0)
+            e = t.take('R', 1, -0x4000, 'wild throw angle')
+            if e[4] != 0x4000: return f'wild angle range hi {e[4]}'
+            t.x(0x68005be0)
+            t.x(0x6807c239)
+            dist = s16v(t.x(0x68002bb0))
+            if t.peek() == 'X' and PROBES[t.ev[t.i][1]][0] == 0x6805dc50: t.x(0x6805dc50)
+    if dist < t.pb(0x304) * 30:
+        t.x(0x680153ed)
+        t.skip_to(0x68026380, 0xd)              # vtable +0xc: the lob (inj_check, throw_speed and PB reads inside)
+    else:
+        e = t._next('Z', 'call of throw_speed')
+        if NAMES[e[1]] != 'throw_speed': return f'record calls {NAMES[e[1]]}, model throw_speed'
+        if s16v(e[4]) != dist: return f'throw_speed({s16v(e[4])}), model distance {dist}'
+        t.skip_to(0x68009690)                   # past throw_speed's own events, inline once its record cap is hit
+        t.x(0x68009690)
+        t.skip_to(0x680030c0, 0x200)            # vtable +0x3c
+        if t.x(0x680030c0, 0x200) & 0xff: t.x(0x68003fcb, 2)
+    for k, v in ((0xd, 5), (0xc, 7)):
+        if t.x(0x68026380, k): t.x(0x680249f4, v)
+    t.x(0x68024af3, 0)
+    t.done()
+    return None
+
+
 def check_rng(r):
-    """main and injury RNG calls replay from the recorded state before the call"""
-    for gen, s0, s1 in ((1, r['rm0'], r['rm1']), (2, r['ri0'], r['ri1'])):
-        g = Rng(s0)
-        for t, gg, idx, a, b, res in r['ev']:
-            if gg != gen: continue
+    """main and injury RNG calls replay from the recorded state before the call; a nested target's draws are taken
+    from its own record (its state before and after), and a record whose nested target was dropped is skipped once
+    the replay can no longer be followed"""
+    for gen, k0, k1 in ((1, 'rm0', 'rm1'), (2, 'ri0', 'ri1')):
+        g, lost = Rng(r[k0]), False
+        for j, (t, gg, idx, a, b, res) in enumerate(r['ev']):
             t = chr(t)
+            if t == 'Z':
+                k = r.get('kids', {}).get(j)
+                if k is None: lost = True
+                elif g.s != k[k0]:
+                    if lost: return 'skip'
+                    return f'gen {gen} state {g.s:#x} before nested {NAMES[k["fn"]]}, its record {k[k0]:#x}'
+                else: g.s, lost = k[k1], False
+                continue
+            if gg != gen: continue
             if t == 'M': want = g.mod(a)
             elif t == 'R': want = g.range(a, b)
             elif t == 'C': want = int((g.next() & 0xfff) < a * 0x29)
             else: continue
-            if want != (res & 0xffffffff if t == 'M' else res): return f'gen {gen} {t}({a}) replays {want}, got {res}'
-        if g.s != s1: return f'gen {gen} end state {g.s:#x} != {s1:#x} (RNG used outside the probes)'
+            if want != (res & 0xffffffff if t == 'M' else res):
+                if lost: return 'skip'
+                return f'gen {gen} {t}({a}) replays {want}, got {res}'
+        if g.s != r[k1]:
+            if lost: return 'skip'
+            return f'gen {gen} end state {g.s:#x} != {r[k1]:#x} (RNG used outside the probes)'
     return None
 
 
@@ -755,6 +1118,9 @@ def model_fatigue(r, stamina_ret):
     return None
 
 
+V2_MODELS = ('def_mgr', 'def_strategy', 'def_ratings', 'replace_p', 'relief_chk', 'relief_pick', 'throw')
+
+
 def guard(fn, r):
     try:
         return fn(r)
@@ -807,6 +1173,8 @@ def main():
             if f in ('catch', 'catch_adj'): note(f, guard(globals()['model_' + f], r), r)
             if f == 'steal' and not r['over']: note('steal', guard(model_steal, r), r)
             if f == 'lead' and not r['over']: note('lead', guard(model_lead, r), r)
+            if f in V2_MODELS and not r['over'] and 'model_' + f in globals():
+                note(f, guard(globals()['model_' + f], r), r)
             if f == 'inj_check': note('inj_check', model_inj_check(r), r)
             elif f == 'inj_type': note('inj_type', model_inj_type(r), r)
             elif f == 'stamina': note('stamina', model_stamina(r), r)

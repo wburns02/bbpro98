@@ -352,3 +352,18 @@ list survives past the live one. The misc8 data lane won; its bb.cfg names were 
   LFSR distribution at n = 10k (open, not gated).
 - The GLM draft work/spec/FUN_68053d2e.md misnamed the IsTracking getters: they read batter fields (ba9c = +0x139,
   bb0d = +0x112, bb5e = +0x125, bae4 = +0x107, bb2c = +0x11f / +0x123) and the RNG is DAT_68185a60. The spec supersedes it.
+
+## 2026-10-08: M10/M11 game logic model (work/SIM_LOGIC_MODEL.md, re/sim_model.py, src-latest/mods/simtrace.c)
+
+- simtrace.dll (v2: 27 targets, 148 hooks) records every call of the baserunning, defensive manager, fielding,
+  pitching-change, injury and fatigue decision functions with its getter returns, PB reads, RNG draws and nested target
+  calls. re/sim_model.py replays each record from its inputs: st7 (184,489 records) and st8 (307,718) ALL PASS, every
+  RNG draw replayed. Counts per function in the spec's Validation table.
+- Trace quirks: simtrace ev() drops an X event identical to the previous one (same getter, same argument, back to back);
+  a target past its record cap writes its events inline into the caller; unprobed virtual calls (throw +0x1c / +0x3c /
+  lob +0xc) put their callees' events at the caller's top level. The referee absorbs all three.
+- Season gate: 49 sim days in the work copy; all 14 NL teams match the STATS.DAT decoder exactly on AB, R, H, HR, RBI,
+  BB, SO (98/98). League totals from the decoder: AB 61,621, H 14,471, 2B 2,583, 3B 69, HR 1,888, SO 13,503: triples
+  are very low and strikeouts high next to MLB (a modding target, not a decoder error).
+- The association stops at the mid-June amateur draft until the draft is run; re/simdays.py now runs it (Draft Delay
+  Time 0, Start/Continue Draft) and continues.
