@@ -129,6 +129,12 @@ Third base seats, Trail ball, Batter, Trail selected player, Over dugout, Blimp 
 - 12 after rolls x 8: s16 number (derived), dice, sides, base. The result goes to the injury's second value; bases
   9998 / 9997 give 9999 / 9998, likely season markers (not traced).
 
+No binary reads part / detail / condition: BBSIM and FastSim use only an injury's number, duration and after roll.
+The names the shell prints are SHELL.VOL ASNEWS.DAT / TMNEWS.DAT section 0 strings 83..287 (injury n at 82 + n,
+strtable.py); t_injury_edit.py (2026-10-08) renamed them all and read "(claudeitis) is day-to-day" in the news.
+The per-play odds are PB.INI [PlayBalance] injuryChance* (pb_table_BBSIM.tsv idx 852-870): an injury happens when
+rand(odds) == 0, so 1 = every check.
+
 ## logic.dat (6be6, BBSIM Act.cpp FUN_68001b9b)
 
 5 u16 section offsets (derived), then 9-byte rows: byte k is the job of fielder k (1B, 2B, 3B, SS, P, C, RF, CF, LF;
@@ -147,6 +153,11 @@ fielder +0x2ad, FUN_680010ef / FUN_6802cf75). Jobs (the "COVER_1B" name table): 
 Runner states 0..7: No runners, Runner on 1st, Runner on 2nd, Runners on 1st & 2nd, Runner on 3rd, Runners on 1st &
 3rd, Runners on 2nd & 3rd, Bases loaded. The JSON nests the rows by these names, e.g.
 `infield["Runner on 1st"]["Grounder"]["SS"]["2B"]` = the second baseman's job on a grounder to short.
+
+A row needs its covers: every job of every row set to BACKUP_HOME stops the game at the first ball in play with
+"Cover.cpp:453" (FUN_68018f46 asserts that FUN_6802e950 finds a fielder for the base). BBPRO.INI [Debug]
+DebugEnabled=1 + ShowPlayerLogic=1 draws "%s %s (%d/3)" (job, action, e.g. "BACKUP_HOME DO_LOGIC (0/3)",
+"RELAY CHASE_BALL") in small black text above each fielder; t_logic_edit.py reads them.
 
 ## numbers.inf (b0e7, BBSIM FUN_6800b2fd reads it whole, FUN_6800fa2b reads rows)
 
@@ -168,4 +179,5 @@ from the [Sounds] settings keys (SoundsOn, ActionVol, ...). Kept as `unused_valu
 ## Open
 
 - info.dat at_0x6a / at_0x6c meaning, the fence flag, cams at_0xc, the injury after-roll value, numbers.inf side.
-- Game-visible edit test (#11): shape.tbl done (t_shape_edit.py); open: a logic.dat job, an injury name.
+- Game-visible edit tests (#11): shape.tbl (t_shape_edit.py), logic.dat (t_logic_edit.py), injury names
+  (t_injury_edit.py) done.
