@@ -36,7 +36,21 @@ def sha(p):
 
 def game_pids():
     out = subprocess.run(['pgrep', '-af', 'BBPRO_98_work|winedbg'], capture_output=True, text=True).stdout
-    return [int(l.split()[0]) for l in out.splitlines() if GAME.search(l)]
+    mine = ancestors()
+    return [int(l.split()[0]) for l in out.splitlines() if GAME.search(l) and int(l.split()[0]) not in mine]
+
+
+def ancestors():
+    """This process and its parents: a shell whose command line mentions the game is not the game."""
+    out, pid = set(), os.getpid()
+    while pid > 1 and pid not in out:
+        out.add(pid)
+        try:
+            with open(f'/proc/{pid}/stat') as fh:
+                pid = int(fh.read().rsplit(')', 1)[1].split()[1])
+        except OSError:
+            break
+    return out
 
 
 def stop_game():

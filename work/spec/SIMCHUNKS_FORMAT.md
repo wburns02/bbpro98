@@ -69,6 +69,9 @@ Polygon (8, FUN_680a6381): u8 flags (bits 0-1 type: 0 always drawn, 1 back-face 
 never; 0x80; 0x10 shade; 0x08), u8 color, u8 color2 (0xf4 / 0xf5 = crowd, painted with info.dat's crowd colors),
 u8 x2 runtime (cleared by the loader FUN_680a7e26; nonzero leftovers kept as `_runtime`), u8 normal_vertex (0xff =
 null), u16 offset of the 0xff-terminated vertex index list.
+Seen in game (work/harness/t_shape_edit.py, 2026-10-08): color2 is the fill and color the outline (setting only color
+recolours edges, foul lines, bases and flags; color2 fills stands, walls and dirt). With flag 0x10 (color2 0) color
+is a texture frame, the scoreboards. The models are drawn by the ball-in-play cameras only, not the batting camera.
 
 Shipped byte order (the encoder reproduces it): header, levels; per level its part table, then the vertex lists its
 parts use first (first-use order), then per part its variants, per variant its polygon table followed by each
@@ -165,4 +168,4 @@ from the [Sounds] settings keys (SoundsOn, ActionVol, ...). Kept as `unused_valu
 ## Open
 
 - info.dat at_0x6a / at_0x6c meaning, the fence flag, cams at_0xc, the injury after-roll value, numbers.inf side.
-- Game-visible edit test (#11): e.g. an info.dat sky color or crowd colors, a logic.dat job, an injury name.
+- Game-visible edit test (#11): shape.tbl done (t_shape_edit.py); open: a logic.dat job, an injury name.
