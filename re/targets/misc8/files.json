@@ -1,6 +1,29 @@
 {
  "dir": "/mnt/nvme/bbpro98/targets_data/misc8",
- "files": ["HHA.DAT", "bb.cfg", "MLBPA97.apc", "MLBPA97.pyc", "MLBPA97.pyf", "BASIC_R.STS", "BASIC_S.STS", "_DEFAULT.STS", "MONTHLY.STS", "SITUATIN.STS", "VS_LEFT.STS"],
- "holdout": ["STATS2.STS", "VS_RIGHT.STS", "MLBPA97B.pyf"],
- "holdout_dir": "/mnt/nvme/bbpro98/targets_holdout/misc8"
+ "files": [
+  "HHA.DAT",
+  "bb.cfg",
+  "MLBPA97.apc",
+  "MLBPA97.pyc",
+  "MLBPA97.pyf",
+  "BASIC_R.STS",
+  "BASIC_S.STS",
+  "_DEFAULT.STS",
+  "MONTHLY.STS",
+  "SITUATIN.STS",
+  "VS_LEFT.STS"
+ ],
+ "holdout": [
+  "STATS2.STS",
+  "VS_RIGHT.STS",
+  "MLBPA97B.pyf"
+ ],
+ "holdout_dir": "/mnt/nvme/bbpro98/targets_holdout/misc8",
+ "coverage": [
+  "bb.cfg",
+  "*.pyf",
+  "*.pyc",
+  "HHA.DAT"
+ ],
+ "_coverage_note": "Off for .apc and .STS (Claude 2026-10-07): the printable runs left there are the PC0: tag plus the low length byte, and stale name padding after the NUL, which work/misc8.py keeps byte-exact as _ data."
 }

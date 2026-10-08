@@ -220,3 +220,15 @@ store only the changed u32 words. The snapshot is the state after the play; the 
 MLBPA97.NQ0 is a u16-versioned list of tagged tape files. The tap data lane won with a printable-run tokenizer; the
 voldatref edit test now falls back to a same-length string edit when a codec rejects growth (fixed-width fields), and
 coverage is off for the tap target.
+
+## 2026-10-07: small data files (work/misc8.py, work/spec/MISC8_FORMAT.md)
+
+bb.cfg is BBShell's shell settings block (DAT_68091610, FUN_68062620): current association, favorite team, both
+exhibition sides (team + association), a custom stadium override (0x34 flag, 0x35 file, 0x43 type) that game start
+uses instead of the home park, two 16-byte per-side control records (controller code, a 0..2 mode, a toggle, four
+0..3 levels, seven toggles; FUN_68017000 copies them into the side setup), option bytes 0x64..0x6d (0x6a and 0x6d go to
+GDI 0x3e9 / 0x3ea), shell music (0x6f), start screen (0x70) and print-to-file (0x78). HHA.DAT cells are sprite
+placements (shape, frame, x, y, width, height, a runtime rect, a flag) on a frames x variants grid per animation; the
+table's u32s are stale heap pointers. .STS holds 10 batting and 10 pitching stat ids (the leading 3, 0 are real
+columns, hidden when the grid flag at +0xf4 is set). .pyc/.pyf are rewritten in place without truncation, so an older
+list survives past the live one. The misc8 data lane won; its bb.cfg names were invented and its encoder read in.bin.
