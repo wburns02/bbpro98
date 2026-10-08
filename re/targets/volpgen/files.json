@@ -7,5 +7,9 @@
   "PGEND.DAT",
   "AGEPLYR.DAT",
   "SPRPLYR.DAT"
+ ],
+ "coverage": [
+  "PGENFRST.DAT",
+  "PGENLAST.DAT"
  ]
 }
