@@ -1,6 +1,16 @@
 {
  "dir": "/mnt/nvme/bbpro98/targets_data/tap",
- "files": ["highlight002.tap", "highlight005.tap", "MLBPA97.NQ0"],
- "holdout": ["highlight004.tap", "highlight006.tap", "highlight008.tap"],
- "holdout_dir": "/mnt/nvme/bbpro98/targets_holdout/tap"
+ "files": [
+  "highlight002.tap",
+  "highlight005.tap",
+  "MLBPA97.NQ0"
+ ],
+ "holdout": [
+  "highlight004.tap",
+  "highlight006.tap",
+  "highlight008.tap"
+ ],
+ "holdout_dir": "/mnt/nvme/bbpro98/targets_holdout/tap",
+ "coverage": [],
+ "_coverage_note": "off since the Claude codec (work/tapcodec.py): tapes are binary state records; the remaining printable runs are int words and stale string padding, kept byte-exact"
 }

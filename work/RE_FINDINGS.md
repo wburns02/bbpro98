@@ -206,3 +206,17 @@ ends with an empty end marker. FUN_68051c50 turns `\` into a newline at load. RO
 483-entry stat abbreviation / description arrays. The voltext code lane won with a byte-exact codec that read the index
 wrong and glued index bytes to the first string to satisfy coverage; voldatref.py coverage now accepts a run whose
 tail is a whole decoded string.
+
+## 2026-10-07: instant-replay tapes (work/tapcodec.py, work/spec/TAP_FORMAT.md)
+
+A .tap is u16 0x2b, an 80-byte caption, u16 frame count, u32 tape length, u32 checksum, then the tape. The checksum
+(FUN_680ac5f3) is CRC-16/XMODEM run through an unmasked 32-bit register; FUN_68079e75 rejects a tape that fails it, so
+any edit needs it recomputed. The tape is a 0x41b-byte snapshot (FUN_6807adde: inning state with R/H/E/LOB per team,
+both GDI team records with 32-color uniform palettes, game mode, stadium and association files, the game date, 14
+on-field persons with uniform numbers) and then one frame per tick: camera (global 0x680d5460 position and angles),
+ball flight path (n + 1 i32 triples when the flag is 1), and a 408-byte state record holding the ball, 9 fielders,
+5 offensive players and 6 umpires (x, y, z, heading, animation in 1/30 ft from home plate). Frame 0 is raw; later frames
+store only the changed u32 words. The snapshot is the state after the play; the caption is the situation before it.
+MLBPA97.NQ0 is a u16-versioned list of tagged tape files. The tap data lane won with a printable-run tokenizer; the
+voldatref edit test now falls back to a same-length string edit when a codec rejects growth (fixed-width fields), and
+coverage is off for the tap target.

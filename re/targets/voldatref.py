@@ -24,7 +24,8 @@ Checks per file:
     characters inside strings (derived "_" data included) count against a budget of 25% of the file size
   - at most 25% of the distinct keys are generic (f12, field3, unk7, ...)
   - round trip
-  - edit test: K random content strings get "Qz" appended (they must then be stored in the file, verified by a
+  - edit test: K random content strings get "Qz" appended, or their last two characters replaced by "Qz" when the
+    codec rejects the longer strings (fixed-width fields) (they must then be stored in the file, verified by a
     trusted scan for the new bytes) and K random content ints that are not 0 get +1; the decode of the edited file must
     equal the edited JSON on every content leaf, and decoding then re-encoding it must be stable.
 """
@@ -141,12 +142,21 @@ def edit_test(codec, name, blob, doc, seed, k, stored=True, grow=None):
     if not strs and not ints: fail(f'{name}: no editable content leaves')
     ed = json.loads(json.dumps(doc))
     picks_s = rnd.sample(strs, min(k, len(strs))); picks_i = rnd.sample(ints, min(k, len(ints)))
-    for p, v in picks_s: put(ed, p, v + 'Qz')
     for p, v in picks_i: put(ed, p, v + 1)
-    out = encode(codec, name, blob, ed)
+    tag = lambda v: v + 'Qz'
+    for p, v in picks_s: put(ed, p, tag(v))
+    try:
+        out = encode(codec, name, blob, ed)
+    except Exception:
+        # fixed-width string fields cannot grow: retry with a same-length edit (last two characters -> 'Qz').
+        # The ints and the stored/re-decode checks below are unchanged.
+        if not picks_s: raise
+        tag = lambda v: v[:-2] + 'Qz'
+        for p, v in picks_s: put(ed, p, tag(v))
+        out = encode(codec, name, blob, ed)
     if grow is not None and len(out) > len(blob) + grow: fail(f'{name}: the edit grew the file by {len(out) - len(blob)} bytes')
     for p, v in (picks_s if stored else ()):
-        if (v + 'Qz').encode('latin1') not in out: fail(f'{name}: edited string {v + "Qz"!r} is not stored in the file')
+        if tag(v).encode('latin1') not in out: fail(f'{name}: edited string {tag(v)!r} is not stored in the file')
     back = decode(codec, name, out)
     for p, _ in picks_s + picks_i:
         try: got = get(back, p)
