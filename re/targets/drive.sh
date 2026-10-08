@@ -34,8 +34,8 @@ last=""
 # and never touch the real ~/.kimi-code session index.
 # GLM_BACKEND=claude (2026-10-08 bake-off): headless Claude Code, CLAUDE_MODEL (claude-haiku-5-5, claude-sonnet-5-5),
 # subscription auth. Same jail; $HOME/.claude is empty but for the credentials file bound read-only; no user settings,
-# CLAUDE.md, hooks or MCP; the Hive and z.ai key dirs are masked. Egress is egress_anthropic.nft (Anthropic's range only),
-# not egress.nft, because the model's tools can read that token.
+# CLAUDE.md, hooks or MCP; the Hive and z.ai key dirs are masked. Egress is egress_anthropic.nft (Anthropic's range on 443
+# only, no DNS; names come from a pinned /etc/hosts), not egress.nft, because the model's tools can read that token.
 BACKEND=${GLM_BACKEND:-zai}; HIVE_MODEL=hive/zai-org/glm-5.3-flash; CLAUDE_MODEL=${CLAUDE_MODEL:-}
 [ "$BACKEND" != claude ] || [[ "$CLAUDE_MODEL" =~ ^claude-(haiku|sonnet)-[0-9a-z-]+$ ]] || { echo "bad CLAUDE_MODEL" >&2; exit 2; }
 KH=/mnt/nvme/bbpro98/tmp/kimihome/$TARGET.$LANE   # Claude-only: config.toml; never bound writable
@@ -65,6 +65,7 @@ glm_sandboxed() {
     --ro-bind "$RE_SRC" "$RE" --ro-bind "$WORK_SRC" "$H/bbpro98/work"
     --ro-bind "$H/bbpro98/BBPRO98_package" "$H/bbpro98/BBPRO98_package"
     --bind "$L" "$L" --ro-bind "$R" "$R"
+    --ro-bind /dev/null /run/bbpro98-lane-jail   # marker for t3ref.py's advisory path (/run is root-owned on the host)
   )
   local p; for p in "${EXTRA_RO[@]}"; do b+=(--ro-bind "$p" "$p"); done
   local cmd=(timeout 3600 "$H/.local/bin/glm" --yolo -p "$1")
@@ -77,8 +78,9 @@ glm_sandboxed() {
     for p in "${EXTRA_RO[@]}"; do if [ -d "$p" ]; then cmd+=(--add-dir "$p"); fi; done   # kimi rejects a file here; the bind still exposes it
     cmd+=(-p "$1")
   elif [ "$BACKEND" = claude ]; then
+    mkdir -p "${KS%/*}"; "$RE/hfiles/sandbox/anthropic_hosts.sh" "$KS.hosts" || return 2   # no DNS in the netns: pinned names
     b+=(--tmpfs "$H/.config/zai" --tmpfs "$H/.config/hivemodels" --dir "$H/.claude"
-        --ro-bind "$H/.claude/.credentials.json" "$H/.claude/.credentials.json")
+        --ro-bind "$H/.claude/.credentials.json" "$H/.claude/.credentials.json" --ro-bind "$KS.hosts" /etc/hosts)
     cmd=(timeout 3600 env DISABLE_AUTOUPDATER=1 CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 "$H/.local/bin/claude" -p
          --model "$CLAUDE_MODEL" --effort high --dangerously-skip-permissions --strict-mcp-config --setting-sources ""
          --no-session-persistence --output-format stream-json --verbose --add-dir "$RE" --add-dir "$H/bbpro98/work")

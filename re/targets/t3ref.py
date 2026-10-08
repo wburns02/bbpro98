@@ -141,9 +141,10 @@ def run(lane_dir, recfile, hold):
         open(f'{w}/runner_ai.py', 'wb').write(J.read_file(lane_dir, 'runner_ai.py', 200_000))
         shutil.copyfile(f'{HERE}/t3lib.py', f'{w}/t3lib.py')   # the records never go into w: the oracle stays here
         recs = t3lib.load(recfile)
-        # The advisory path is for lanes already inside drive.sh's jail, which has no user bus for systemd-run. It is
-        # refused wherever the bus exists (the host) and for the holdout, so the opt-in can never unjail lane code.
-        advisory = (os.environ.get('T3_LANE_ADVISORY') == '1' and not hold
+        # The advisory path is for lanes already inside drive.sh's jail, which has no user bus for systemd-run. It needs
+        # the marker drive.sh binds at /run/bbpro98-lane-jail (only root could create it on the host), no user bus,
+        # and not the holdout, so the opt-in can never unjail lane code on the host.
+        advisory = (os.environ.get('T3_LANE_ADVISORY') == '1' and not hold and os.path.exists('/run/bbpro98-lane-jail')
                     and not os.path.exists(f'/run/user/{os.getuid()}/bus'))
         if advisory:
             shutil.copyfile(f'{HERE}/t3run.py', f'{w}/t3run.py')

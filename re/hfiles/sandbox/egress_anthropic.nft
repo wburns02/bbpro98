@@ -1,10 +1,11 @@
 # Claude lanes (drive.sh GLM_BACKEND=claude, bakeoff/claude_jail.sh) hold a read-only copy of the subscription OAuth
-# credentials, which the model's own tools can read. So their netns reaches only pasta's DNS forwarder and Anthropic's
-# published range 160.79.104.0/23 on 443 (api.anthropic.com, platform.claude.com, claude.ai all resolve there):
-# a lane that reads the token has nowhere to send it but Anthropic. Everything else is rejected, IPv6 included.
+# credentials, which the model's own tools can read. So their netns reaches only Anthropic's published range
+# 160.79.104.0/23 on 443 (api.anthropic.com, platform.claude.com, claude.ai all resolve there): a lane that reads the
+# token has nowhere to send it but Anthropic. No DNS either: pasta's forwarder recurses, so query names would be an
+# exfiltration channel; the jail gets a pinned /etc/hosts from anthropic_hosts.sh instead. Everything else, IPv6
+# included, is rejected.
 table inet sbx {
   chain out { type filter hook output priority 0; policy drop;
-    ip daddr 169.254.1.1 udp dport 53 accept
     ip daddr 160.79.104.0/23 tcp dport 443 accept
     meta l4proto tcp reject with tcp reset
     reject
