@@ -125,7 +125,9 @@ def validate(name, blob, doc, coverage=True):
         fail(f'{name}: {len(lazy)}/{len(ks)} distinct keys are generic, e.g. {sorted(lazy)[:5]}')
 
 
-def edit_test(codec, name, blob, doc, seed, k):
+def edit_test(codec, name, blob, doc, seed, k, stored=True, grow=None):
+    """stored=False: the file enciphers its strings, so skip the plaintext presence check (re-decode still decides);
+    grow caps len(out) - len(blob) so the edits cannot ride along as an appended side blob."""
     rnd = random.Random(seed)
     leaves = list(content(doc))
     strs = [(p, v) for p, v in leaves if isinstance(v, str) and len(v) >= 3 and v.isprintable()]
@@ -136,7 +138,8 @@ def edit_test(codec, name, blob, doc, seed, k):
     for p, v in picks_s: put(ed, p, v + 'Qz')
     for p, v in picks_i: put(ed, p, v + 1)
     out = encode(codec, name, blob, ed)
-    for p, v in picks_s:
+    if grow is not None and len(out) > len(blob) + grow: fail(f'{name}: the edit grew the file by {len(out) - len(blob)} bytes')
+    for p, v in (picks_s if stored else ()):
         if (v + 'Qz').encode('latin1') not in out: fail(f'{name}: edited string {v + "Qz"!r} is not stored in the file')
     back = decode(codec, name, out)
     for p, _ in picks_s + picks_i:

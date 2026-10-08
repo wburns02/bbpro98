@@ -39,6 +39,7 @@ def wait_done(timeout=240):
             return True
     return False
 
+open(f'{OUT}/.mark', 'w').close()
 # main menu -> league management (skip when already on the schedule screen)
 if os.environ.get('SKIP_MENU') != '1':
     click(495, 677); time.sleep(2); click(495, 677); time.sleep(4)
@@ -51,6 +52,10 @@ for day in range(N):
     click(571, 565); time.sleep(8)     # OK
     ok = wait_done()
     print(f'day {day+1}: done={ok}', flush=True)
+    if ok and os.environ.get('SNAP_DAYS') == '1':   # per-day game.bki/bko + the box-score files written that day
+        subprocess.run(['bash', '-c', f'W=/mnt/nvme/bbpro98/work_install; D="{OUT}/day{day+1}"; mkdir -p "$D"; '
+                        f'cp -a "$W/game.bki" "$W/game.bko" "$D/"; find "$W/Stats" -maxdepth 1 -newer "{OUT}/.mark" '
+                        f'-iname "MLBPA97.[HN]*" -exec cp -a {{}} "$D/" \\;; touch "{OUT}/.mark"'])
     if not ok:
         shot(f'stuck_day{day+1}'); break
 # collect
