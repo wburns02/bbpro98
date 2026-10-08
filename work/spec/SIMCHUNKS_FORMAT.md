@@ -95,7 +95,7 @@ FastSim 52208 seek 0x66 for the rest):
 | 102 | s16 version, must be 6 |
 | 104 | s16 sky_color: 0 = the default 0x47 / 0x4f, else DAT_681ec12c (HOUSTON 66) |
 | 106 | s16 field_pattern: stored + 1 at stadium +0x82, the field palette load_game_palettes (BBSIM FUN_680303dd) picks: 0 fatrf.pal artificial turf (CINCINNA, MINNESOT, MONTREAL, PHILADEL, STLOUIS), 1 fglin.pal mow lines, 2 fgchx.pal checkered, 3 fgcrc.pal circles (BALTIMOR); +0x7e is the options override (0 = this default); FUN_68038070 = turf test for the field markings |
-| 108 | s16 at_0x6c: stadium +0x20 |
+| 108 | s16 wall_bounce: stadium +0x20; when build_ball_path (BBSIM FUN_680498d7) bounces the ball off the wall (FUN_6806d950) it keeps DAT_680b35ac[v] percent of its speed: 0 = 30, 1 = 15, 2 = 29 (higher values read past the 3-byte table). Shipped 1 or 2 (2 at ANAHEIM, BOSTON, CINCINNA, DETROIT, MILWAUKE, MINNESOT, MONTREAL, NEWYORKN, PHILADEL, SANDIEGO, STLOUIS) |
 | 110 | s16 color_cycle_frames (DAT_681cc090; FUN_68074849 steps every 1000 ticks) |
 | 112 | 2 x 2 s16 crowd_colors (FUN_6807491f: polygon color 0xf4 -> pair 1, 0xf5 -> pair 2) |
 | 120 | 4 x (s16 start, count, step) palette_cycles, rotated by FUN_6806d066 (KANSASCI 227, 3, 1: the fountains) |
@@ -184,6 +184,6 @@ from the [Sounds] settings keys (SoundsOn, ActionVol, ...). Kept as `unused_valu
 
 ## Open
 
-- info.dat at_0x6c meaning, the fence flag (the outline has no reader, so the flag is inert).
+- info.dat fence flag: the outline has no reader, so the flag is inert.
 - Game-visible edit tests (#11): shape.tbl (t_shape_edit.py), logic.dat (t_logic_edit.py), injury names
   (t_injury_edit.py) done.
