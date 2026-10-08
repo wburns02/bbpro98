@@ -170,3 +170,9 @@ Open: the obfuscated 2698-byte first table (likely play-by-play or lineup/game h
   (130..170 in the shipped file) are negative percents in game: likely a shipped bug.
 - The volpgen GLM winner passed the referee but had PGEND misaligned and SPRPLYR mis-split (coincidental ASCII decoded
   as strings to satisfy coverage). Claude rewrote those three layouts; files.json coverage now limited to the name pools.
+- 2026-10-07 MENU.REQ / DIAL.REQ (#6, Claude over the req GLM code lane): the requester loader BBShell FUN_680442b0
+  reads a 16-byte block (id, x, y, w, h, style, styleFlags; only x..h kept), two Dreqtext lists (u16 count + x, y,
+  color, font, text) into +0xb4 / +0xb0, a Dreqrect list (u16 count + x, y, w, h, bgColor, color, palette-remapped via
+  0x6808cc98) and the gadgets. Gadget kind u16 = class << 8 | type: class = record layout (1 edit, 2 slider, 4 labelled,
+  8 cell grid), type = concrete control class. Common words: flags +0x16, state +0x18, link id +8. The lane PASSed
+  with the rect list shifted by one u16 and guessed gadget names; work/reqcodec.py + work/spec/REQ_FORMAT.md replace it.
