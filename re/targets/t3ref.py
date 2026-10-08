@@ -7,7 +7,7 @@ usage: python3 t3ref.py <target_dir> <lane_dir> [-v]        score <lane>/runner_
 
 Contract for <lane>/runner_ai.py (stdlib + t3lib only, under 200 KB; runs in a bwrap jail, no network, no files):
   def replay(o, r): re-execute FUN_6804faa1 for one call. r = t3lib.inputs(record) (this pointer, the 0x100 bytes of
-  *this before the call, the game state and manager flag bytes, ...); o = the oracle: o.x(va, arg1=None) returns the
+  *this before the call, the game state and manager flag bytes, ...; never the after-call ret / post / RNG states); o = the oracle: o.x(va, arg1=None) returns the
   next probed getter's recorded value, o.pb(i) a PlayBalance read, o.other(t, gen, a) any other event. A call the
   function would not make, or a different getter / argument, raises t3lib.Mismatch and fails the record. The record
   passes when replay returns having consumed every top-level event.
@@ -15,7 +15,10 @@ Isolation: the records and the oracle live in this (host) process. The jail runs
 forwards each oracle call over a pipe, so the graded code never sees recorded events (dev or holdout) and never
 writes the result.
 Score: records ok out of all, and the deep subset (records past the two early exits). PASS = every dev record ok.
-targets: files.json {"dev": records.jsonl, "holdout": records.jsonl}
+targets: files.json {"dev": records.jsonl, "holdout": records.jsonl, "module": lane file stem (default runner_ai),
+         "ret_bits": 0 | 8 | 16 | 32 (when set, replay must also return the function's result: the low bits of eax)}
+Other simtrace targets reuse this referee unchanged: <module>.replay(o, r) with the same oracle (re/bakeoff/t3_extract.py
+NAME writes their records).
 """
 import collections, json, os, selectors, shutil, subprocess, sys, tempfile, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -89,7 +92,7 @@ def _int(v, none=False):
     return v
 
 
-def score(lane, recs):
+def score(lane, recs, ret_bits=0):
     """one record at a time: send its inputs, answer the shim's oracle calls from the host-side oracle, then judge"""
     res = {'n': len(recs), 'ok': 0, 'deep': 0, 'deep_ok': 0, 'fail': []}
     ierr = lane.recv().get('import_error')
@@ -106,6 +109,10 @@ def score(lane, recs):
                     cerr = m['done']
                     err = herr or (cerr if cerr is None or isinstance(cerr, str) else 'protocol: bad done')
                     if err is None and not finished(): err = 'replay returned before consuming every event'
+                    if err is None and ret_bits:
+                        rv, want = m.get('ret'), r['ret'] & ((1 << ret_bits) - 1)
+                        if type(rv) is not int or rv & ((1 << ret_bits) - 1) != want:
+                            err = f'return {rv!r}, recorded {want} (low {ret_bits} bits of eax)'
                     break
                 if herr is not None:
                     lane.send({'m': 1}); continue
@@ -135,10 +142,10 @@ def score(lane, recs):
     return res
 
 
-def run(lane_dir, recfile, hold):
+def run(lane_dir, recfile, hold, module='runner_ai', ret_bits=0):
     w = tempfile.mkdtemp(prefix='t3ref.', dir='/mnt/nvme/bbpro98/tmp' if os.path.isdir('/mnt/nvme/bbpro98/tmp') else None)
     try:
-        open(f'{w}/runner_ai.py', 'wb').write(J.read_file(lane_dir, 'runner_ai.py', 200_000))
+        open(f'{w}/{module}.py', 'wb').write(J.read_file(lane_dir, f'{module}.py', 200_000))
         shutil.copyfile(f'{HERE}/t3lib.py', f'{w}/t3lib.py')   # the records never go into w: the oracle stays here
         recs = t3lib.load(recfile)
         # The advisory path is for lanes already inside drive.sh's jail, which has no user bus for systemd-run. It needs
@@ -148,12 +155,12 @@ def run(lane_dir, recfile, hold):
                     and not os.path.exists(f'/run/user/{os.getuid()}/bus'))
         if advisory:
             shutil.copyfile(f'{HERE}/t3run.py', f'{w}/t3run.py')
-            cmd, env = [sys.executable, '-I', '-B', f'{w}/t3run.py', w], None
+            cmd, env = [sys.executable, '-I', '-B', f'{w}/t3run.py', w, module], None
         else:
-            cmd, env = J.jail_cmd(f'{HERE}/t3run.py', w, [], name='t3run.py', max_size=100_000, writable=False)
+            cmd, env = J.jail_cmd(f'{HERE}/t3run.py', w, ['/w', module], name='t3run.py', max_size=100_000, writable=False)
         lane = Lane(cmd, env, w)
         try:
-            return score(lane, recs)
+            return score(lane, recs, ret_bits)
         finally:
             lane.close()
     finally:
@@ -167,11 +174,15 @@ def main():
     files = json.load(open(f'{tgt}/files.json'))
     hold = '--holdout' in a
     try:
-        res = run(lane, files['holdout' if hold else 'dev'], hold)
+        mod = files.get('module', 'runner_ai')
+        if not (mod.isidentifier() and mod not in ('t3lib', 't3run')): raise RefError('bad module name in files.json')
+        rb = files.get('ret_bits', 0)
+        if rb not in (0, 8, 16, 32): raise RefError('bad ret_bits in files.json')
+        res = run(lane, files['holdout' if hold else 'dev'], hold, mod, rb)
     except RefError as e:
         print(f'error: {J.err(e)}'); print('FAIL'); sys.exit(1)
     if res.get('import_error'):
-        print('runner_ai.py did not import' + ('' if hold else f": {res['import_error']}"))
+        print(f'{mod}.py did not import' + ('' if hold else f": {res['import_error']}"))
     print(f"records {res['n']} ok {res['ok']} | deep (past the early exits) {res['deep']} ok {res['deep_ok']}")
     if '--audit' in a:
         k = collections.Counter(m.split(',')[0][:60] for _, _, m in res['fail'])

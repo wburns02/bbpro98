@@ -14,6 +14,8 @@ Checks, per traced function:
   catch      the catch / error roll and the error kind; catch_adj the fielding table load
   pitch      pitch execution: control and movement rolls, velocity roll, scatter box, failed-movement outcome
   runner_ai  the runner AI update: every getter and RNG roll, and the runner's first 0x20 bytes after the call
+  launch     the ball launch: the cos-table speed (returned and passed on), heading flip, and the ball's 0x20 bytes after
+  throw_speed  the throw speed from the arm rating and PB 0x2f0-0x2f5, and its return value
 A model replays the record's events through a Tape (exact order, arguments and PB values); 'skipped' means a nested
 record was dropped by its cap or the record overflowed.
 Exits 1 if any check has a mismatch.
@@ -1119,6 +1121,55 @@ def model_fatigue(r, stamina_ret):
     return None
 
 
+def model_throw_speed(r):
+    """FUN_6805d960(fielder, arm rating): fielders past FUN_68026310 (u16 at this+0xc above 0x1067) use PB 0x2f3-0x2f5,
+    the rest PB 0x2f0-0x2f2: speed = rating * PB[scale] / 100 + PB[base] (16-bit), capped at PB[max]"""
+    t = Tape(r)
+    base = 0x2f3 if t.x(0x68026310) & 0xff else 0x2f0
+    v = s16v(s16v(cdiv(r['arg'] * t.pb(base + 1), 100)) + s16v(t.pb(base)))
+    if t.pb(base + 2) < v: v = s16v(t.pb(base + 2))
+    t.done()
+    if v & 0xffff != r['ret'] & 0xffff: raise Mismatch(f'throw speed {v}, recorded {s16v(r["ret"])}')
+
+
+LAUNCH_COS = struct.unpack('<1025H', dll_data(0x6809de80, 0x802))   # DAT_6809de80: cos table, 16384 = 1.0
+
+
+def fs_cos(a):
+    """FUN_6807cb88(short a): cosine of a 16-bit angle (0x10000 = full turn), rounded to the 4096-entry half-wave table;
+    FUN_6807cbbe is fs_cos(a - 0x4000)"""
+    v = (s16v(a) >> 4) + ((s16v(a) >> 3) & 1)
+    return LAUNCH_COS[abs(v)] if abs(v) < 0x400 else -LAUNCH_COS[0x800 - abs(v)]
+
+
+def model_launch(r):
+    """FUN_6803b82c(ball): launch velocity. local_c = speed (ball+0x56) * cos(pitch angle ball+6) / 0x4000 (64-bit
+    product, C division), made positive by turning the heading (ball+0xa) half way; returned and passed to
+    FUN_6807c661. Also checks the ball's first 0x20 bytes after the call: heading, flags word &= ~0x30, and the
+    position (s16 x, y, z at +0) << 6 copied to +0x10 as i32 (FUN_6803a5cd + FUN_68014b50)."""
+    t, b = Tape(r), r['obj']
+    t.x(0x68005ec0, 0x30)
+    t.x(0x6803a5cd)
+    t.x(0x68014b50, (r['self'] + 0x1c) & 0xffffffff)
+    p = bytearray(b[:0x20])
+    v = s32(cdiv(s16(b, 0x56) * s16v(fs_cos(s16(b, 6))), 0x4000))
+    if v < 0:
+        v = -v
+        struct.pack_into('<h', p, 0x0a, s16v(s16(b, 0x0a) - 0x8000))
+    t.x(0x6807c661, v & 0xffffffff)
+    t.x(0x68014b50)                                        # FUN_68011090's stack temporary: arg not comparable
+    t.done()
+    if v & 0xffffffff != r['ret'] & 0xffffffff: raise Mismatch(f'launch speed {v}, recorded {s32(r["ret"])}')
+    struct.pack_into('<H', p, 0x0c, struct.unpack_from('<H', b, 0x0c)[0] & ~0x30)
+    vec = [s32(s16(b, k) << 6) for k in (0, 2, 4)]
+    struct.pack_into('<3i', p, 0x10, *vec)
+    struct.pack_into('<i', p, 0x1c, vec[0])                # +0x1c holds the same vector (the 0x20 bytes end in it)
+    post = bytes(r['post'])
+    if bytes(p) != post:
+        d = next(i for i in range(0x20) if p[i] != post[i])
+        raise Mismatch(f'ball byte {d:#x}: model {p[d]:#x}, after the call {post[d]:#x}')
+
+
 # runner_ai: FUN_6804faa1, the runner AI update (this = runner P; its helpers work on P+8). From the 2026-10-08 model
 # bake-off (re/bakeoff, Haiku 5.5 lane t3raih: 2500/2500 dev and holdout); merged with the flags-word write below.
 RA_TAB = 0x680d3f28   # DAT_680d3f28: 64 eight-byte action entries by code; the first word is the entry's step count
@@ -1382,6 +1433,7 @@ def main():
             if f == 'steal' and not r['over']: note('steal', guard(model_steal, r), r)
             if f == 'lead' and not r['over']: note('lead', guard(model_lead, r), r)
             if f == 'runner_ai' and not r['over']: note('runner_ai', guard(model_runner_ai, r), r)
+            if f in ('launch', 'throw_speed') and not r['over']: note(f, guard(globals()['model_' + f], r), r)
             if f in V2_MODELS and not r['over'] and 'model_' + f in globals():
                 note(f, guard(globals()['model_' + f], r), r)
             if f == 'inj_check': note('inj_check', model_inj_check(r), r)

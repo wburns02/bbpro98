@@ -1,0 +1,1 @@
+{"dev": "/mnt/nvme/bbpro98/targets_data/t4tspd/records.jsonl", "holdout": "/mnt/nvme/bbpro98/targets_holdout/t4tspd/records.jsonl", "module": "tspd", "ret_bits": 16}

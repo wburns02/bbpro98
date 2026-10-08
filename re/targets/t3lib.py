@@ -2,7 +2,7 @@
 model runs against. Python 3 stdlib only; the referee copies this file next to the lane's runner_ai.py in its jail.
 
   load(path)        -> list of record dicts (one JSON line each, see re/bakeoff/t3_extract.py)
-  inputs(rec)       -> what replay() gets: the record without its events and its after-call bytes
+  inputs(rec)       -> what replay() gets: the record without its events and after-call values (post, ret, rm1, ri1)
   make_oracle(rec)  -> (oracle, finished): replay(oracle, inputs(rec)) re-executes the function; finished() says whether
                        every top-level event was consumed
   top_level(rec)    -> the top-level events (nested getter spans collapsed, as sim_model.Tape does)
@@ -25,8 +25,11 @@ def load(path):
     return out
 
 
+AFTER = ('ev', 'post', 'ret', 'rm1', 'ri1')   # what the call produced: never shown to the model
+
+
 def inputs(rec):
-    return {k: v for k, v in rec.items() if k not in ('ev', 'post')}
+    return {k: v for k, v in rec.items() if k not in AFTER}
 
 
 def top_level(rec):
