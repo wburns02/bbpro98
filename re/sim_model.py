@@ -13,6 +13,7 @@ Checks, per traced function:
   offman     the offensive manager's rolls and the flags it sets (steal 2nd/3rd, hit-and-run, bunt, squeeze)
   catch      the catch / error roll and the error kind; catch_adj the fielding table load
   pitch      pitch execution: control and movement rolls, velocity roll, scatter box, failed-movement outcome
+  runner_ai  the runner AI update: every getter and RNG roll, and the runner's first 0x20 bytes after the call
 A model replays the record's events through a Tape (exact order, arguments and PB values); 'skipped' means a nested
 record was dropped by its cap or the record overflowed.
 Exits 1 if any check has a mismatch.
@@ -1118,6 +1119,213 @@ def model_fatigue(r, stamina_ret):
     return None
 
 
+# runner_ai: FUN_6804faa1, the runner AI update (this = runner P; its helpers work on P+8). From the 2026-10-08 model
+# bake-off (re/bakeoff, Haiku 5.5 lane t3raih: 2500/2500 dev and holdout); merged with the flags-word write below.
+RA_TAB = 0x680d3f28   # DAT_680d3f28: 64 eight-byte action entries by code; the first word is the entry's step count
+RA_COUNT = [1, 3, 1, 19, 10, 16, 1, 12, 4, 4, 9, 7, 1, 12, 10, 16, 1, 12, 3, 3, 1, 4, 2, 2, 2, 2, 12, 2, 2, 1, 7, 7, 8,
+            8, 8, 7, 14, 18, 17, 8, 8, 8, 8, 1, 12, 1, 11, 11, 7, 7, 7, 10, 7, 10, 10, 10, 10, 7, 8, 4, 4, 4, 1, 1]   # HHA.DAT
+
+
+def ra_bit(v):
+    """a getter's return as the code tests it (its low byte)"""
+    return (v & 0xff) != 0
+
+
+def ra_count(ptr):
+    """FUN_6802b420: the first word of the table entry at ptr"""
+    i = (ptr - RA_TAB) // 8
+    return RA_COUNT[i] if 0 <= i < len(RA_COUNT) else 0
+
+
+class RaRunner:
+    """the runner's first 0x100 bytes, updated as the function writes them; ax() is a getter call through the tape,
+    with the one side effect on P the trace proves: FUN_68002c40(v) sets the P+8 flags word (P+0xc) to v"""
+
+    def __init__(self, t, b):
+        self.t, self.b = t, bytearray(b)
+
+    def ax(self, va, arg1=None):
+        v = self.t.x(va, arg1)
+        if va == 0x68002c40: self.put16(0x0c, arg1)
+        return v
+
+    def u16(self, off): return struct.unpack_from('<H', self.b, off)[0]
+    def s16(self, off): return struct.unpack_from('<h', self.b, off)[0]
+    def i32(self, off): return struct.unpack_from('<i', self.b, off)[0]
+    def u32(self, off): return struct.unpack_from('<I', self.b, off)[0]
+    def s8(self, off): return s8(self.b[off])
+    def put8(self, off, v): self.b[off] = v & 0xff
+    def put16(self, off, v): struct.pack_into('<H', self.b, off, v & 0xffff)
+    def put32(self, off, v): struct.pack_into('<I', self.b, off, v & 0xffffffff)
+    def add16(self, off, v): self.put16(off, self.s16(off) + v)
+
+
+def ra_set_action(P, code, p3, p4, p5):
+    """FUN_6802a6b1 on P+8: action code, its table entry, the flags word (p3), p4, and the step counter (p5, or the
+    entry's count - 1 when p5 is 0 and flag bit 1 is clear)"""
+    if code >= 0x40: return
+    P.put32(0x0e, code); P.put32(0x12, RA_TAB + code * 8); P.put16(0x16, 0)
+    P.ax(0x68002c40, p3)
+    P.put32(0x1a, p4)
+    if not ra_bit(P.ax(0x680030c0, 1)) or p5 != 0: P.put16(0x18, p5)
+    else: P.put16(0x18, ra_count(RA_TAB + code * 8) - 1)
+
+
+def ra_reset_action(P):
+    """FUN_6802aa9f on P+8: back to action 0x41 with no table entry"""
+    P.put32(0x0e, 0x41); P.put32(0x12, 0); P.put16(0x16, 0); P.put16(0x18, 0)
+    P.put32(0x1a, P.ax(0x68002ce0, 0))
+
+
+def ra_end_of_entry(P, last):
+    """the step counter ran off the entry: flag 0x20 ends the action (clear 0x20, flags 4), else flag 2 loops it to
+    `last`, else flags 8"""
+    if not ra_bit(P.ax(0x680030c0, 0x20)):
+        if not ra_bit(P.ax(0x680030c0, 2)): P.ax(0x68002c40, 8)
+        else: P.put16(0x18, last)
+    else:
+        P.ax(0x68005ec0, 0x20); P.ax(0x68002c40, 4)
+
+
+def ra_advance_step(P):
+    """FUN_6802a8b7 on P+8: steps P+0x18 through the action's entry (forward, or backward under flag 1), then resets
+    the action when flag 8 is set"""
+    if ra_bit(P.ax(0x680030c0, 0x100)) or P.u32(0x12) == 0 or ra_bit(P.ax(0x680030c0, 4)): return
+    if not ra_bit(P.ax(0x680030c0, 1)):
+        if P.u16(0x18) < ra_count(P.u32(0x12)) - 1: P.add16(0x18, 1)
+        else: ra_end_of_entry(P, 0)
+    elif P.s16(0x18) == 0: ra_end_of_entry(P, ra_count(P.u32(0x12)) - 1)
+    else: P.add16(0x18, -1)
+    if ra_bit(P.ax(0x680030c0, 8)): ra_reset_action(P)
+
+
+def ra_tracking_step(P):
+    """the jump timer P+0x87 from CSplitterWnd::IsTracking (probe 6800f780, three reads)"""
+    v = s16v(4 - s16v(s32(P.ax(0x6800f780)) >> 4))
+    v = s16v(v - s16v(s32(P.ax(0x6800f780))))
+    q = s32(P.ax(0x6800f780))
+    P.put16(0x87, s16v((cdiv(400, q) if q else 0) + v))
+
+
+def ra_rng5(P):
+    """FUN_68082999(&DAT_680a64b0, 5): the runner RNG (gen 0), mod 5"""
+    return P.t.take('M', 0, 5, 'runner rng mod(5)')[5] & 0xff
+
+
+def ra_bcond(P, local_8):
+    """the 'else if' test of the 0x30-0x32 case (not the tracking arm's test), getters in code order"""
+    if local_8 == 0 or P.i32(0x7e) != 3: return True
+    if s32(P.ax(0x6800f780)) == P.s8(0x86): return False
+    if ra_bit(P.ax(0x680030c0, 0x200)) and s32(P.ax(0x6800f780)) != 0: return False
+    if ra_bit(P.ax(0x68009a20, 0x408)) and ra_bit(P.ax(0x6800f8f0)): return False
+    return True
+
+
+def ra_countdown(P, cap, t, flag):
+    """flags 0x10 / 0x80: the delay byte P+0x78 counts down; at 0 it rerolls (rng mod 5) and the runner takes another
+    step (P+0x7e up to cap) or the flag is dropped"""
+    c = P.b[0x78]
+    P.put8(0x78, c - 1)
+    if c: return
+    P.put8(0x78, ra_rng5(P))
+    if P.i32(0x7e) < cap:
+        P.put32(0x7e, P.i32(0x7e) + 1)
+        ra_set_action(P, t, 0, P.ax(0x68002ce0, 0), 0)
+    elif flag == 0x10:
+        P.ax(0x68002c40, 1); P.ax(0x68005ec0, 0x10)
+    else:
+        P.ax(0x68005ec0, 0x80)
+
+
+def ra_flags_chain(P, t, tc, local_8):
+    """the flag-driven step of the 0x30-0x32 case: t the action code, tc the tracking arm's code"""
+    if ra_bit(P.ax(0x680030c0, 0x20)):
+        P.ax(0x68005ec0, 0x91)
+        if P.i32(0x7e) < 1: P.ax(0x68005ec0, 0x20)
+        else: ra_set_action(P, t, 1, P.ax(0x68002ce0, 0), 0)
+        return
+    if ra_bit(P.ax(0x680030c0, 0x10)):
+        ra_countdown(P, P.i32(0x82), t, 0x10); return
+    if ra_bit(P.ax(0x680030c0, 1)):
+        if P.i32(0x7e) < 3:
+            P.put32(0x7e, P.i32(0x7e) + 1)
+            ra_set_action(P, t, 0, P.ax(0x68002ce0, 0), 0); return
+        if not ra_bit(P.ax(0x68050b50)) or local_8 == 0:
+            P.ax(0x68005ec0, 1); return
+        if s32(P.ax(0x6800f780)) == 0:
+            P.put16(0x87, 1)
+            st = P.i32(0x79)
+            if st == 3 or (st == 2 and P.ax(0x6800f680) == 0) or (st == 4 and P.ax(0x6800f680) == 1): P.add16(0x87, 1)
+        else:
+            ra_tracking_step(P)
+        P.put32(0x7e, P.i32(0x7e) + 1)
+        ra_set_action(P, tc, 0, P.ax(0x68002ce0, 0), 0)
+        return
+    if ra_bit(P.ax(0x680030c0, 2)):
+        if P.i32(0x7e) < 1: P.ax(0x68005ec0, 2)
+        else: ra_set_action(P, t, 1, P.ax(0x68002ce0, 0), 0)
+        return
+    if ra_bit(P.ax(0x680030c0, 0x80)): ra_countdown(P, 3, t, 0x80)
+
+
+def model_runner_ai(r):
+    """FUN_6804faa1(runner): exact replay of every getter and the RNG roll, then P's first 0x20 bytes after the call
+    (r['post']) must equal the model's"""
+    t = Tape(r)
+    P = RaRunner(t, r['obj'])
+    if ra_bit(P.ax(0x6800f8f0)):                                # OnClose gate (CWnd 0x680a2158 flag bit 2)
+        act = P.ax(0x6800a260)                                  # action code (P+0xe)
+        ra_advance_step(P)
+        st = P.i32(0x79)                                        # base: 2, 3 or 4 (first, second, third)
+        if st in (2, 3, 4): _ra_body(P, act, st)
+    t.done()
+    post = bytes(r['post'])
+    if bytes(P.b[:len(post)]) != post:
+        d = next(i for i in range(len(post)) if P.b[i] != post[i])
+        raise Mismatch(f'runner byte {d:#x}: model {P.b[d]:#x}, after the call {post[d]:#x}')
+
+
+def _ra_body(P, act, st):
+    if st == 4:
+        t, tc, local_8, l14, l20 = 0x32, 0x35, 1, 9, -9
+    else:
+        t, tc = (0x31, 0x34) if st == 3 else (0x30, 0x33)
+        l14, l20 = (-0xf, -0xf) if st == 3 else (-9, 9)
+        local_8 = 1
+        g = 0x6800f640 if st == 3 else 0x6800f600
+        if P.ax(g) != 0:
+            P.ax(g)
+            local_8 = 1 if P.ax(0x68038e30) == 4 else 0
+    bv = P.ax(0x68009610) & 0xff                                # the 0x68143ee0 test's index for the mflags reads
+    if not ra_bit(P.ax(0x6800f270, bv)): local_8 = 0
+    if ra_bit(P.ax(0x68009a20, 0x608)): P.put32(0x82, 3)
+    if act in (0x30, 0x31, 0x32):
+        if not ra_bit(P.ax(0x68033f70)):
+            if not ra_bit(P.ax(0x6800f320)):
+                sg = -1 if ra_bit(P.ax(0x6800f2f0)) else 1
+                P.add16(0x64, sg * l14); P.add16(0x66, sg * l20)
+            else:
+                if ra_bit(P.ax(0x6800f2f0)): P.put32(0x7e, P.i32(0x7e) - 1)
+                ra_set_action(P, t, 4, P.ax(0x68002ce0, 0), 0)
+                P.ax(0x68005ec0, 3)
+        elif ra_bcond(P, local_8):
+            ra_flags_chain(P, t, tc, local_8)
+        else:
+            ra_tracking_step(P)
+            P.put32(0x7e, P.i32(0x7e) + 1)
+            ra_set_action(P, tc, 0, P.ax(0x68002ce0, 0), 0)
+    elif act in (0x33, 0x34, 0x35):
+        P.ax(0x68005ec0, 0x81)
+        if ra_bit(P.ax(0x6800f320)): ra_set_action(P, tc, 0, P.ax(0x68002ce0, 0), 3)
+        bv = P.ax(0x68009610) & 0xff
+        l24 = s32(P.ax(0x6802fc40, bv))
+        l28 = cdiv(s32(l24 * (l14 * 2)), 100) or (-1 if l14 < 1 else 1)
+        l2c = cdiv(s32(l24 * (l20 * 2)), 100) or (-1 if l20 < 1 else 1)
+        P.add16(0x64, l28); P.add16(0x66, l2c)
+    elif act == 0x41:
+        ra_set_action(P, t, 4, P.ax(0x68002ce0, 0), 0)
+
+
 V2_MODELS = ('def_mgr', 'def_strategy', 'def_ratings', 'replace_p', 'relief_chk', 'relief_pick', 'throw')
 
 
@@ -1173,6 +1381,7 @@ def main():
             if f in ('catch', 'catch_adj'): note(f, guard(globals()['model_' + f], r), r)
             if f == 'steal' and not r['over']: note('steal', guard(model_steal, r), r)
             if f == 'lead' and not r['over']: note('lead', guard(model_lead, r), r)
+            if f == 'runner_ai' and not r['over']: note('runner_ai', guard(model_runner_ai, r), r)
             if f in V2_MODELS and not r['over'] and 'model_' + f in globals():
                 note(f, guard(globals()['model_' + f], r), r)
             if f == 'inj_check': note('inj_check', model_inj_check(r), r)
