@@ -92,3 +92,39 @@ def test_stats_file_valid(built):
     assert len(mine) == 1
     words = struct.unpack_from('<17H', mine[0], 6)                  # stats.BAT order: ab h1b h2b h3b hr ...
     assert words[4] == 356
+
+
+def test_short_rosters_padded():
+    """1875: Keokuk and the Philadelphia Centennials keep too few players of their own to field a lineup; the build
+    pads them with generated players so every team has nine distinct starters (pitcher's slot NONE) and a pitcher."""
+    if not all(os.path.exists(p) for p in NEEDED) or not os.path.isdir(SCRATCH):
+        pytest.skip('Lahman DB or game install absent')
+    try:
+        B.load_template('T14_77')
+    except (OSError, SystemExit, KeyError):
+        pytest.skip('T14_77 template absent')
+    root = tempfile.mkdtemp(prefix='lahbuild-', dir=SCRATCH)
+    try:
+        for sub in ('Assn', 'Stats'):
+            os.mkdir(os.path.join(root, sub))
+        for f in ('MLBPA96E.PYR', '_DEFAULT.ASN', '_DEFAULT.PYR'):
+            os.symlink(os.path.join(INSTALL, 'Assn', f), os.path.join(root, 'Assn', f))
+        log = []
+        out = B.build(1875, root, log=log.append)
+        asn = AsnFile(open(out['ASN'], 'rb').read())
+        _, recs = RT.read_pyr(out['PYR'])
+    finally:
+        shutil.rmtree(root)
+    padded = [l for l in log if 'generated)' in l]
+    assert any(' KEO ' in l for l in padded) and any(' PH3 ' in l for l in padded)
+    pos = {struct.unpack_from('<H', r, 0)[0]: r[68] for r in recs}
+    assert len(asn.recs['r']) == 14
+    for _, p in asn.recs['r']:
+        ids = struct.unpack_from('<126H', p, 0x2a)
+        active = [x for x in ids[:25] if x]
+        order, align, rot = ids[77:86], ids[95:104], [x for x in ids[113:119] if x]
+        assert all(x in pos for x in active)
+        assert sum(pos[x] != 1 for x in active) >= B.MIN_HIT and rot and all(pos[x] == 1 for x in rot)
+        starters = [x for x in order if x != B.NONE]
+        assert len(starters) == 8 and len(set(starters)) == 8 and set(starters) <= set(active)
+        assert set(x for x in align[:8]) == set(starters)

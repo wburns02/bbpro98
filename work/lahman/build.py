@@ -15,6 +15,7 @@ Game files (templates, the install's MLBPA96E.PYR, _DEFAULT.ASN and _DEFAULT.PYR
 the repository.
 """
 import argparse
+from collections import ChainMap
 import datetime
 import glob
 import os
@@ -78,6 +79,7 @@ POS9 = ('C', '1B', '2B', '3B', 'SS', 'LF', 'CF', 'RF')
 SCARCE = ('C', 'SS', '2B', 'CF', '3B', 'RF', 'LF', '1B')
 NONE = 0xFFFF
 ACTIVE, RESERVE = 25, 15
+MIN_HIT, MIN_PIT = 9, 1         # floor of an active roster: a lineup (eight fielders and a DH) and one pitcher
 
 
 # ---------------------------------------------------------------- Lahman extras (read-only SQL)
@@ -323,6 +325,21 @@ class FillerSeason:
 RT_POS = {v: k for k, v in RT.POS_CODE.items()}
 
 
+class MixSeason:
+    """A real team's Season plus the generated players padding it (keyed by int record id; Lahman ids are str)."""
+
+    def __init__(self, season, fs):
+        self.season, self.fs = season, fs
+        self.bat, self.pit, self.app = (ChainMap(fs.bat, season.bat), ChainMap(fs.pit, season.pit),
+                                        ChainMap(fs.app, season.app))
+
+    def primary(self, p):
+        return (self.fs if p in self.fs.recs else self.season).primary(p)
+
+    def games_at(self, p):
+        return (self.fs if p in self.fs.recs else self.season).games_at(p)
+
+
 # ---------------------------------------------------------------- stats DAT
 
 def clamp16(v):
@@ -537,13 +554,31 @@ def build(year, install, db=DB, name=None, log=print):
                 q[0x7d:0x7d + 44] = stock_t[pick][0x7d:0x7d + 44]
             active, reserve, over = choose_roster(rosters.get(tid, []), season)
             free += over
-            order, align = lineup(active, season, dh)
-            rot, pen = staff(active, season)
-            conv = lambda xs: [add_real(x) if x not in (0, NONE) else x for x in xs]
+            # A team whose players mostly count for another club (1870s, short-lived franchises) is padded with
+            # generated players up to a playable lineup.
+            fs_recs = {}
+            want_h = MIN_HIT - sum(season.primary(p) != 'P' for p in active)
+            want_p = MIN_PIT - sum(season.primary(p) == 'P' for p in active)
+            while want_h > 0 or want_p > 0:
+                r = next(fillers)
+                if r[68] == 1 and want_p > 0:
+                    want_p -= 1
+                elif r[68] != 1 and want_h > 0:
+                    want_h -= 1
+                else:
+                    continue
+                nid = add_generated(r)
+                fs_recs[nid] = new_recs[-1]
+                active.append(nid)
+            mix = MixSeason(season, FillerSeason(fs_recs)) if fs_recs else season
+            order, align = lineup(active, mix, dh)
+            rot, pen = staff(active, mix)
+            conv = lambda xs: [add_real(x) if isinstance(x, str) else x for x in xs]
             active, reserve, order, align, rot, pen = (conv(active), conv(reserve), conv(order), conv(align),
                                                        conv(rot), conv(pen))
-            log('  %s %-28s %-24s act %d res %d over %d rot %d pen %d' % (
-                abbrev, t['name'], park[:24], len(active), len(reserve), len(over), len(rot), len(pen)))
+            log('  %s %-28s %-24s act %d res %d over %d rot %d pen %d%s' % (
+                abbrev, t['name'], park[:24], len(active), len(reserve), len(over), len(rot), len(pen),
+                ' (+%d generated)' % len(fs_recs) if fs_recs else ''))
         asn.rewrite('t', off, bytes(q))
         asn.rewrite('r', roff, r_record(rp, active, reserve, order, align, rot, pen))
     for tid in plan['dropped']:
