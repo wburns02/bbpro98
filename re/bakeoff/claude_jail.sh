@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Run headless Claude Code (subscription auth) inside the same jail drive.sh gives GLM lanes, for the 2026-10-08 model
 # bake-off: claude_jail.sh <model> <workdir|-> [claude args...]. Prompt on stdin.
-#  - bwrap + pasta netns with re/hfiles/sandbox/egress.nft (internet only: no loopback, LAN, tailnet, link-local).
+#  - bwrap + pasta netns with re/hfiles/sandbox/egress_anthropic.nft: Anthropic's 160.79.104.0/23 on 443 and pasta's
+#    DNS only, because the model's tools can read the bound token.
 #  - $HOME is a tmpfs: no user CLAUDE.md, rules, memory, hooks, settings or MCP; only ~/.claude/.credentials.json is
 #    bound, read-only (a token refresh cannot be written back, so it never forks the host session's refresh token).
 #  - workdir (if given) is the only writable host path; RO_PATHS (newline-separated "src[:dst]") are bound read-only.
@@ -24,7 +25,7 @@ done <<< "${RO_PATHS:-}"
 cd=/tmp
 if [ "$W" != - ]; then b+=(--bind "$W" "$W"); cd=$W; fi
 pasta --config-net --ipv4-only --no-map-gw --dns-forward 169.254.1.1 -t none -u none -T none -U none --quiet -- \
-  bash -c 'nft -f "$1" && shift && exec "$@"' _ "$RE/hfiles/sandbox/egress.nft" \
+  bash -c 'nft -f "$1" && shift && exec "$@"' _ "$RE/hfiles/sandbox/egress_anthropic.nft" \
 bwrap "${b[@]}" --chdir "$cd" --unshare-user --uid 1000 --gid 1000 --unshare-pid --unshare-ipc --unshare-uts \
   --die-with-parent --new-session --clearenv --setenv HOME "$H" --setenv PATH "$H/.local/bin:/usr/bin" \
   --setenv LANG C.UTF-8 --setenv TERM dumb --setenv DISABLE_AUTOUPDATER 1 --setenv CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC 1 \

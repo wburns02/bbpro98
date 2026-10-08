@@ -20,7 +20,9 @@ def fail(msg):
     raise RefError(msg)
 
 
-def jail(codec, workdir, args, *, name='codec.py', max_size, timeout, fsize=268435456, mem='8G', writable=True):
+def jail_cmd(codec, workdir, args, *, name='codec.py', max_size, fsize=268435456, mem='8G', writable=True):
+    """(cmd, env) for running codec as /w/name in the jail; jail() runs it to completion, a referee that talks to the
+    lane over pipes (t3ref.py) Popens it"""
     st = os.lstat(codec)
     if not stat.S_ISREG(st.st_mode) or st.st_size > max_size:
         fail(f'{name} must be a regular file under {max_size} bytes')
@@ -35,6 +37,11 @@ def jail(codec, workdir, args, *, name='codec.py', max_size, timeout, fsize=2684
            '/usr/bin/python3', '-I', name] + list(args)
     env = {'PATH': '/usr/bin', 'XDG_RUNTIME_DIR': f'/run/user/{os.getuid()}',
            'DBUS_SESSION_BUS_ADDRESS': f'unix:path=/run/user/{os.getuid()}/bus'}
+    return cmd, env
+
+
+def jail(codec, workdir, args, *, name='codec.py', max_size, timeout, fsize=268435456, mem='8G', writable=True):
+    cmd, env = jail_cmd(codec, workdir, args, name=name, max_size=max_size, fsize=fsize, mem=mem, writable=writable)
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env, stdin=subprocess.DEVNULL)
     except subprocess.TimeoutExpired:

@@ -33,8 +33,9 @@ last=""
 # config holds ONLY the Hive provider and its models (no z.ai/OpenRouter/OAuth keys), so lanes never see other keys
 # and never touch the real ~/.kimi-code session index.
 # GLM_BACKEND=claude (2026-10-08 bake-off): headless Claude Code, CLAUDE_MODEL (claude-haiku-5-5, claude-sonnet-5-5),
-# subscription auth. Same jail and egress filter; $HOME/.claude is empty but for the credentials file bound read-only;
-# no user settings, CLAUDE.md, hooks or MCP; the Hive and z.ai key dirs are masked.
+# subscription auth. Same jail; $HOME/.claude is empty but for the credentials file bound read-only; no user settings,
+# CLAUDE.md, hooks or MCP; the Hive and z.ai key dirs are masked. Egress is egress_anthropic.nft (Anthropic's range only),
+# not egress.nft, because the model's tools can read that token.
 BACKEND=${GLM_BACKEND:-zai}; HIVE_MODEL=hive/zai-org/glm-5.3-flash; CLAUDE_MODEL=${CLAUDE_MODEL:-}
 [ "$BACKEND" != claude ] || [[ "$CLAUDE_MODEL" =~ ^claude-(haiku|sonnet)-[0-9a-z-]+$ ]] || { echo "bad CLAUDE_MODEL" >&2; exit 2; }
 KH=/mnt/nvme/bbpro98/tmp/kimihome/$TARGET.$LANE   # Claude-only: config.toml; never bound writable
@@ -67,7 +68,7 @@ glm_sandboxed() {
   )
   local p; for p in "${EXTRA_RO[@]}"; do b+=(--ro-bind "$p" "$p"); done
   local cmd=(timeout 3600 "$H/.local/bin/glm" --yolo -p "$1")
-  local pin=
+  local pin= egress=egress.nft
   if [ "$BACKEND" = hive ]; then
     [ -e "$KS" ] && rm -r -- "$KS"; mkdir -m 700 -p "$KS"   # rm -r never follows symlinks the lane left behind
     b+=(--bind "$KS" "$H/.kimi-code" --ro-bind "$KH/config.toml" "$H/.kimi-code/config.toml"
@@ -83,9 +84,10 @@ glm_sandboxed() {
          --no-session-persistence --output-format stream-json --verbose --add-dir "$RE" --add-dir "$H/bbpro98/work")
     for p in "${EXTRA_RO[@]}"; do cmd+=(--add-dir "$p"); done
     pin=$1   # prompt on stdin: --add-dir is variadic and would swallow a trailing prompt argument
+    egress=egress_anthropic.nft   # the lane can read the OAuth token: its netns reaches Anthropic and nothing else
   fi
   pasta --config-net --ipv4-only --no-map-gw --dns-forward 169.254.1.1 -t none -u none -T none -U none --quiet -- \
-    bash -c 'nft -f "$1" && shift && exec "$@"' _ "$RE/hfiles/sandbox/egress.nft" \
+    bash -c 'nft -f "$1" && shift && exec "$@"' _ "$RE/hfiles/sandbox/$egress" \
   bwrap "${b[@]}" --chdir "$L" --unshare-user --uid 1000 --gid 1000 --unshare-pid --unshare-ipc --unshare-uts \
     --die-with-parent --new-session --clearenv --setenv HOME "$H" --setenv PATH "$H/.local/bin:$H/bin:/usr/bin" \
     --setenv LANG C.UTF-8 --setenv TERM dumb \
