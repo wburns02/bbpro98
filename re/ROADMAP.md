@@ -26,6 +26,7 @@ final verification. Fable/Opus only when a lane stalls 2-3 rounds.
 | PlayBalance (872 sim knobs) | yes | via PB.INI overlay, effect verified (SB 8.9x) | re/pb_params.tsv |
 | Standard media: BMP, WAV, AVI (Cinepak), TTF, ICO | standard tools | standard tools | none needed |
 | DMP.DAT motion paths (66 slots x up to 64 keyframes; 10 body points = 5 rigid segments, catch/throw/tag event bits from Sync.cpp) | yes, code-cited + holdout | yes, rebuild from JSON incl. keyframe add/remove | work/dmp.py; format work/spec/DMP_FORMAT.md (GLM code lane, round 5) |
+| League archives Archive/*.ARC (AR96: title + ASN/PYR/DAT entries, crc32, PKWARE DCL implode) | yes, explode == C blast on all streams | yes: byte-identical repack of untouched entries; edited entries re-imploded (verified by C blast), all 6 DCL modes | work/arccodec.py (Claude, after harness drafts failed) |
 | Code hook framework (mods): detour, register-level midhook, call-site redirect, verified patch; per-module, relocation-safe, all-or-nothing | n/a | yes: a mod DLL listed in bbfix.ini [mods] hooks any BBShell/BBSIM/FastSim/... function; A/B on 8 sim days: steal mod zero SB 2 vs 89 off, max 523 (5.9x), pass 71 | src-latest/bbmod.h (SDK), src-latest/bbfix.c, src-latest/mods/steal.c, src-latest/test/hktest.py, re/hookab.sh + re/hookab_score.py |
 
 ## Open, by wave
@@ -35,7 +36,7 @@ final verification. Fable/Opus only when a lane stalls 2-3 rounds.
 | 6 | UI layout: DIAL.REQ, MENU.REQ (screens, gadgets, columns) | container + gadget record sizes known (Claude, 114/114); field meanings open. Lanes running: re/targets/req | round-trip + edit (move a gadget) + Wine screenshot diff | L |
 | 4 | H-file 2698-byte first table semantics (now plaintext: league, team names, stadium codes, ...) | field layout | diff across sim days vs ASN/box-score truth | S |
 | 7a | Chunk semantics (lanes running: re/targets/chunks, 126 chunks + 8 held-out stadiums): HS ('DAT:' tables, 28 stadia), MI/STA: stadium info, GID: fence geometry, WT, XT; SIM.DAT @C cameras, MI injuries, PB strings, UN, MS, OL; HMI MIDI music (HMIMIDIP, 13 chunks: standard HMP, convert with hmp2mid) | layouts unknown | per-chunk round-trip + game-visible edit | S-M |
-| 8 | SIM.DAT chunk semantics, INJURY.DAT, pgen*.dat, HHA.DAT, bb.cfg, .apc/.pyc/.pyf, ARC, hilights .tap, STS writer | unknown or reader-only | per-format: round-trip + cross-check against decoded ASN/H/DAT truth | S-M each |
+| 8 | HHA.DAT, bb.cfg, .apc/.pyc/.pyf, hilights .tap, STS writer (ARC done; SIM.DAT chunks in #7a; INJURY.DAT does not exist, injuries = SIM.DAT MI chunk; pgen*.dat in #5a volpgen) | unknown or reader-only | per-format: round-trip + cross-check against decoded ASN/H/DAT truth | S-M each |
 | 10 | Function labels (M1-M3), sim formulas (M9-M11), RNG + seed (M12) | ~1350/3800 P1 labelled; RNG not located | xref consistency; formula predicts logged pitch outcomes; seeded replay is deterministic | L |
 | 11 | Automated in-game test harness | partial (probe_screen.sh, simdays.py) | itself the referee for 6 and 9 | M |
 
