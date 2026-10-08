@@ -2,8 +2,8 @@
 
 Codec: `work/misc8.py` (decode/encode JSON, picks the layout by file name, rebuilds every byte from the JSON). It
 round-trips all 14 sample files (11 visible, 3 holdout) byte for byte and passes `re/targets/voldatref.py` visible and
-`--holdout`. Coverage is on for bb.cfg, HHA.DAT and the player lists; off for .apc and .STS, whose leftover printable
-runs are the `PC0:` tag plus the low length byte, and stale name padding (kept byte-exact as `_` data).
+`--holdout`. Coverage is off for .STS only: its leftover printable runs are
+stale name padding, kept byte-exact as `_name_tail`. (The referee exempts chunk-tag runs such as `PC0:,`.)
 
 The misc8 data lane (`re/targets/misc8/lanes/data`) won round 1. Its .STS, .apc and player-list containers were right;
 its bb.cfg names were invented and its encoder copied bytes from in.bin. Claude remapped bb.cfg from BBShell, the HHA

@@ -19,6 +19,7 @@ cannot read), optional "coverage" (fnmatch patterns of
 the files the coverage check applies to; default all)}.
 Checks per file:
   - coverage: every run of >= 4 printable characters ending at a NUL in the file appears inside some decoded string
+    (chunk tags "XXX:" alone or with one printable length byte are exempt)
     (or ends with one whole decoded string of >= 4 characters: the run started inside binary data)
   - no byte dumps: int lists of > 8 items all within 0..255, hex/base64-like strings > 32 chars and control
     characters inside strings (derived "_" data included) count against a budget of 25% of the file size
@@ -40,6 +41,7 @@ GENERIC = re.compile(r'^(f|w|b|c|v|word|byte|col|field|unk|unknown|val|value|s|d
 HEXLIKE = re.compile(r'^[0-9a-fA-F]{33,}$|^[A-Za-z0-9+/=]{48,}$')
 CTRL = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]')
 PRINT = re.compile(rb'[\x20-\x7e]{4,}\x00')
+CHUNKTAG = re.compile(r'^[A-Za-z0-9]{3}:.?$')   # a 4-byte chunk tag ("PC0:", "WeC:", "IDX:") plus a printable length byte
 isint = lambda v: isinstance(v, int) and not isinstance(v, bool)
 HSEED = random.SystemRandom().randrange(1 << 30)   # holdout edits are unpredictable even though this file is readable
 
@@ -120,6 +122,7 @@ def validate(name, blob, doc, coverage=True):
     missing = []
     for m in (PRINT.finditer(blob) if coverage else ()):
         s = m.group()[:-1].decode('latin1')
+        if CHUNKTAG.match(s): continue
         # a run may start inside the binary index (ROSTEXT: offset words print as 'AJA' before 'Historical data'):
         # accept it when its tail is exactly one decoded string of >= 4 characters
         if s not in allstr and not any(s.endswith(t) for t in tails.get(s[-4:], ())): missing.append(s)
