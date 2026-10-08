@@ -2,7 +2,8 @@
 Claude-owned: GLM must not edit it.
 
 usage: python3 voldatref.py <target_dir> <lane_dir> [-v]         score <lane>/voldat.py on the target's files
-       python3 voldatref.py <target_dir> <lane_dir> --holdout     same files, unseen random edits (more of them)
+       python3 voldatref.py <target_dir> <lane_dir> --holdout     files.json "holdout" files if listed (else the same
+                                                                   files), unseen random edits (more of them)
        python3 voldatref.py <target_dir> <lane_dir> --audit X     text summary of each decode for the audit
 
 Contract for <lane>/voldat.py (runs in a bwrap jail: no network, no files but its tempdir):
@@ -13,6 +14,8 @@ Contract for <lane>/voldat.py (runs in a bwrap jail: no network, no files but it
       CONTENT and must be editable.
       encode: rebuild the file from edited.json (in.bin may be read for nothing but preserving "_" data the JSON
       carries anyway); encode(x, decode(x)) == x byte for byte.
+files.json: {"dir", "files", optional "holdout" (unseen files for --holdout), optional "coverage" (fnmatch patterns of
+the files the coverage check applies to; default all)}.
 Checks per file:
   - coverage: every run of >= 4 printable characters ending at a NUL in the file appears inside some decoded string
   - no byte dumps: int lists of > 8 items all within 0..255, hex/base64-like strings > 32 chars and control
@@ -23,7 +26,7 @@ Checks per file:
     trusted scan for the new bytes) and K random content ints that are not 0 get +1; the decode of the edited file must
     equal the edited JSON on every content leaf, and decoding then re-encoding it must be stable.
 """
-import sys, os, json, tempfile, random, re
+import sys, os, json, tempfile, random, re, fnmatch
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import jailutil as J
 from jailutil import fail, safe_read
@@ -103,12 +106,12 @@ def dumps_budget(x):
     return n
 
 
-def validate(name, blob, doc):
+def validate(name, blob, doc, coverage=True):
     if not isinstance(doc, dict) or not doc: fail(f'{name}: decode output must be a non-empty JSON object')
     strs = [v for _, v in content(doc) if isinstance(v, str)]
     allstr = '\x00'.join(strs)
     missing = []
-    for m in PRINT.finditer(blob):
+    for m in (PRINT.finditer(blob) if coverage else ()):
         s = m.group()[:-1].decode('latin1')
         if s not in allstr: missing.append(s)
     if missing: fail(f'{name}: {len(missing)} strings of the file are not in the decoded content, e.g. {missing[:3]}')
@@ -156,11 +159,11 @@ def main():
         return
     hold = '--holdout' in sys.argv
     ok_all, results = True, []
-    for i, name in enumerate(cfg['files']):
+    for i, name in enumerate(cfg.get('holdout', cfg['files']) if hold else cfg['files']):
         try:
             blob = safe_read(f'{cfg["dir"]}/{name}', 4 << 20)
             doc = decode(codec, name, blob)
-            validate(name, blob, doc)
+            validate(name, blob, doc, any(fnmatch.fnmatch(name, p) for p in cfg.get('coverage', ['*'])))
             if encode(codec, name, blob, doc) != blob: fail(f'{name}: encode(decode(x)) != x')
             for r in range(3 if hold else 1):
                 edit_test(codec, name, blob, doc, (9000 if hold else 100) + 31 * i + r, 6 if hold else 3)
