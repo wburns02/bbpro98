@@ -167,7 +167,8 @@ DebugEnabled=1 + ShowPlayerLogic=1 draws "%s %s (%d/3)" (job, action, e.g. "BACK
 ## numbers.inf (b0e7, BBSIM FUN_6800b2fd reads it whole, FUN_6800fa2b reads rows)
 
 756 rows x 8. Row = (animation - 0x15) * 28 + side * 14 + frame, animation = FUN_6800adb0() (0x15..0x2f), side =
-player +0x8d, frame < 14. Row: s16 font (index into DAT_680b8370), s16 glyph_frame (digit glyph = glyph_frame +
+player +0x8d = batting side, 0 left / 1 right (FUN_6800b807 copies bats from roster +0x26, the pgen 1 L / 2 R / 3 S
+less 1; a switch hitter takes the side opposite the pitcher's throws +0x7d), frame < 14. Row: s16 font (index into DAT_680b8370), s16 glyph_frame (digit glyph = glyph_frame +
 digit * 3 * k, +1 / +2 for the left / right digit of a two-digit number), s16 x, s16 y. Unused rows are
 (-1, 0, 0, 0), null in the JSON.
 
@@ -183,6 +184,6 @@ from the [Sounds] settings keys (SoundsOn, ActionVol, ...). Kept as `unused_valu
 
 ## Open
 
-- info.dat at_0x6c meaning, the fence flag, numbers.inf side.
+- info.dat at_0x6c meaning, the fence flag (the outline has no reader, so the flag is inert).
 - Game-visible edit tests (#11): shape.tbl (t_shape_edit.py), logic.dat (t_logic_edit.py), injury names
   (t_injury_edit.py) done.

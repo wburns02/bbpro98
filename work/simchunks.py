@@ -496,9 +496,9 @@ def enc_logic(doc):
 
 
 # numbers.inf: BBSIM FUN_6800b2fd reads it whole, FUN_6800fa2b reads rows. Uniform number placement: row =
-# (animation - 0x15) * 28 + side * 14 + frame, animation from FUN_6800adb0 (0x15..0x2f), side = player +0x8d, frame
-# < 14. Row: font (index into DAT_680b8370), first glyph frame (digit glyph = frame + digit * 3 * k, +1 / +2 for the
-# left / right digit of two), x, y. Unused rows (-1, 0, 0, 0) are null.
+# (animation - 0x15) * 28 + side * 14 + frame, animation from FUN_6800adb0 (0x15..0x2f), side = player +0x8d (batting
+# side, 0 L / 1 R), frame < 14. Row: font (index into DAT_680b8370), first glyph frame (digit glyph = frame +
+# digit * 3 * k, +1 / +2 for the left / right digit of two), x, y. Unused rows (-1, 0, 0, 0) are null.
 def dec_numbers(d):
     if len(d) != 756 * 8:
         _fail('numbers.inf is 756 rows of 8 bytes')
