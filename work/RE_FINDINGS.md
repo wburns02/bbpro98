@@ -298,3 +298,16 @@ list survives past the live one. The misc8 data lane won; its bb.cfg names were 
 - Strings are written strcpy style (string + NUL, stale tail kept), like the game.
 - In game: the Association Data requester's label gadget is 149 px wide (a longer label is clipped) and its caption's
   right neighbour is the name gadget at x=228 (a longer caption is overdrawn). Same-width text draws cleanly.
+
+## 2026-10-07: Win32 resources of the game binaries (work/rsrc.py, work/spec/RSRC_FORMAT.md)
+
+- The 3D game's control panels (batting Normal/Contact/Power/Bunt/"Manager Menu", steal and fielding options) are
+  FPS_Ctrl.dll STRING resources (ids 1100-1515), not SIM.DAT bpi.str. The in-game popup menus (Pause, Game Options,
+  Replay, CAMS, Lineup, Exit Stadium) and dialogs are BBSIM.dll / FastSim.dll MENU and DIALOG resources.
+- rsrc.py rebuilds the resource section byte for byte for all 20 PE files with resources: MS linker layout, Borland
+  (Preview.EXE: data right after the name strings, no 16-alignment) and IExpress (WEBPOST/WINTDIST: "PADDING" filler
+  between data, page-aligned VirtualSize, unaligned DataDirectory size).
+- Growth past the section moves .reloc up behind .rsrc; the game loaded such a grown FPS_Ctrl.dll and drew the edited
+  "Skipper Menu" (t_sim_edits.py PASS).
+- Tesseract reads the 3D panels' yellow-on-gray text only after a colour key (keep r,g > 0.6, b < 0.4); ingame.py
+  ocr steps take `"key": "yellow"`.
