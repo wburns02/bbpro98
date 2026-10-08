@@ -25,12 +25,12 @@ final verification. Fable/Opus only when a lane stalls 2-3 rounds.
 | Shell PCX (59, inside the VOLs) + PLX palettes | yes: standard 8-bit PCX, no embedded palette (BB0.PAL); MU0/MU1.PLX = raw 768-byte RGB | standard tools | none needed |
 | PlayBalance (872 sim knobs) | yes | via PB.INI overlay, effect verified (SB 8.9x) | re/pb_params.tsv |
 | Standard media: BMP, WAV, AVI (Cinepak), TTF, ICO | standard tools | standard tools | none needed |
+| DMP.DAT motion paths (66 slots x up to 64 keyframes; 10 body points = 5 rigid segments, catch/throw/tag event bits from Sync.cpp) | yes, code-cited + holdout | yes, rebuild from JSON incl. keyframe add/remove | work/dmp.py; format work/spec/DMP_FORMAT.md (GLM code lane, round 5) |
 | Code hook framework (mods): detour, register-level midhook, call-site redirect, verified patch; per-module, relocation-safe, all-or-nothing | n/a | yes: a mod DLL listed in bbfix.ini [mods] hooks any BBShell/BBSIM/FastSim/... function; A/B on 8 sim days: steal mod zero SB 2 vs 89 off, max 523 (5.9x), pass 71 | src-latest/bbmod.h (SDK), src-latest/bbfix.c, src-latest/mods/steal.c, src-latest/test/hktest.py, re/hookab.sh + re/hookab_score.py |
 
 ## Open, by wave
 | # | Item | Gap | Referee (mechanical) | Size |
 |---|---|---|---|---|
-| 1b | DMP.DAT (10 frames, not DBM layout) | unknown | imgref | S |
 | 5a | VOL DAT entries (18: AGEPLYR, ASNEW, ASNEWS, ASSERTXT, BOXTEXT, MENU, PGEND, PGENFRST, PGENLAST, ...) | layouts unknown (some plain text) | per-file round-trip + game-visible edit | S-M |
 | 6 | UI layout: DIAL.REQ, MENU.REQ (screens, gadgets, columns) | container + gadget record sizes known (Claude, 114/114); field meanings open. Lanes running: re/targets/req | round-trip + edit (move a gadget) + Wine screenshot diff | L |
 | 4 | H-file 2698-byte first table semantics (now plaintext: league, team names, stadium codes, ...) | field layout | diff across sim days vs ASN/box-score truth | S |
@@ -39,7 +39,7 @@ final verification. Fable/Opus only when a lane stalls 2-3 rounds.
 | 10 | Function labels (M1-M3), sim formulas (M9-M11), RNG + seed (M12) | ~1350/3800 P1 labelled; RNG not located | xref consistency; formula predicts logged pitch outcomes; seeded replay is deterministic | L |
 | 11 | Automated in-game test harness | partial (probe_screen.sh, simdays.py) | itself the referee for 6 and 9 | M |
 
-Order: wave 1 done 2026-10-07 (DBM, VOL, cipher, c-tree, shell BMX/FNX, chunk graphics). #2 league and #3 stats done 2026-10-07. Now: #4, #1b. Wave 2 = #2, #3, #5, #7 (independent, one target each, 1-2 lanes). Wave 3 = #6, #8, #9,
+Order: wave 1 done 2026-10-07 (DBM, VOL, cipher, c-tree, shell BMX/FNX, chunk graphics). #2 league and #3 stats done 2026-10-07. #1b DMP done 2026-10-07. Now: #4. Wave 2 = #2, #3, #5, #7 (independent, one target each, 1-2 lanes). Wave 3 = #6, #8, #9,
 #10, #11 (#9 and #11 unlock arbitrary logic changes; #6 unlocks arbitrary screen changes).
 
 ## Budget per target
