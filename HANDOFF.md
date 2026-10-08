@@ -54,3 +54,13 @@ bblaunch.exe starts Baseball.exe suspended and injects bbfix.dll. Official v1.1 
 - Verified: unit test `src-latest/test/hktest.py` (own Wine prefix) and in-game A/B `re/hookab.sh ARM MODE DAYS` +
   `re/hookab_score.py` (zero SB 2 vs 89, max 523). The work copy runs the new bbfix.dll with no mods enabled; the live
   install still has the previous bbfix.dll (no behavior difference without a [mods] section).
+
+## Update 2026-10-08: mods-capable bbfix.dll shipped to live
+- Live now runs the #9 hook-engine bbfix.dll (sha256 18031a3d..., the exact binary every #11 in-game test ran on;
+  same code as src-latest/bbfix.c @47d9e23, built as bbfix_new.dll). Installed with work/patches/install_live.sh
+  from /mnt/nvme/bbpro98/build/bbfix.dll; the 10/6 build is kept as build/bbfix_20261006.dll and the previous live
+  copy as /mnt/nvme/bbpro98_backups/bbfix_live_pre_mods_20261008.dll. Live bbfix.ini has no [mods] section, so
+  behavior is unchanged until a mod is listed (`[mods] load=mods\x.dll`).
+- Verified on the live install (private Xvfb :97): main menu, Association Data, League Statistics with the 12 wide
+  columns (OBP, SLG, Pro, Iso).
+- Tape fields: the 29 at_0x names are in work/spec/TAP_NAMES.json (5891c58).
