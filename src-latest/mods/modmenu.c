@@ -263,6 +263,7 @@ static HWND text_out(HWND p, int x, int y, int w, int h, int id, DWORD extra) {
 /* the window's client area is CW x CH; placed centred over owner (or the desktop), clamped to the screen's origin */
 static HWND make_win(const char *cls, const char *title, int cw, int ch, HWND owner, void *param) {
     RECT r = {0, 0, cw, ch}, o;
+    HWND win;
     int w, h, x, y;
     AdjustWindowRectEx(&r, WS_POPUP | WS_CAPTION | WS_SYSMENU, FALSE, WS_EX_DLGMODALFRAME | WS_EX_TOPMOST);
     w = r.right - r.left;
@@ -272,8 +273,15 @@ static HWND make_win(const char *cls, const char *title, int cw, int ch, HWND ow
     y = o.top + (o.bottom - o.top - h) / 2;
     if (x < 0) x = 0;
     if (y < 0) y = 0;
-    return CreateWindowExA(WS_EX_DLGMODALFRAME | WS_EX_TOPMOST, cls, title, WS_POPUP | WS_CAPTION | WS_SYSMENU, x, y,
-                           w, h, owner, 0, hinst, param);
+    win = CreateWindowExA(WS_EX_DLGMODALFRAME | WS_EX_TOPMOST, cls, title, WS_POPUP | WS_CAPTION | WS_SYSMENU, x, y,
+                          w, h, owner, 0, hinst, param);
+    /* shown only after WM_CREATE has built the controls; a popup without WS_VISIBLE is never mapped */
+    if (win) {
+        ShowWindow(win, SW_SHOW);
+        UpdateWindow(win);
+        SetForegroundWindow(win);
+    }
+    return win;
 }
 
 static int is_ours(HWND h) {
@@ -478,9 +486,9 @@ static void build_menu(MenuState *st) {
     HWND h = st->w.hwnd;
     char list[1024];
     btn(h, "Create a Player", 20, 16, 180, 28, IDC_CREATE);
-    lbl(h, "New player, free agent in any association", 210, 21, 190, 20);
+    lbl(h, "New player, free agent in any association", 210, 15, 190, 30);
     btn(h, "League News", 20, 52, 180, 28, IDC_NEWS);
-    lbl(h, "Stories, standings, previews, awards, scouting", 210, 57, 190, 20);
+    lbl(h, "Stories, standings, previews, awards, scouting", 210, 51, 190, 30);
     btn(h, "Build a Season", 20, 88, 180, 28, IDC_BUILD);
     lbl(h, "Any MLB season from 1871 to 2019", 210, 93, 190, 20);
     lbl(h, "Loaded game mods:", 20, 130, 200, 18);
@@ -563,7 +571,7 @@ static const char *const RKEY[2][5] = {{"contact", "power", "speed", "arm", "fie
 static const char *const PSLOT[7] = {"FB", "CB", "SI", "SL", "CU", "SC", "KN"};
 static const char *const PLAB[7] = {"Fastball", "Curveball", "Sinker", "Slider", "Changeup", "Screwball", "Knuckleball"};
 static const struct { int v; const char *t; } GRADE[] = {
-    {20, "20 poor"}, {25, "25"}, {30, "30 well below"}, {35, "35"}, {40, "40 below average"}, {45, "45"},
+    {20, "20 poor"}, {25, "25"}, {30, "30 well below"}, {35, "35"}, {40, "40 below avg"}, {45, "45"},
     {50, "50 average"}, {55, "55"}, {60, "60 plus"}, {65, "65"}, {70, "70 plus-plus"}, {75, "75"}, {80, "80 elite"}};
 
 static void kv_put(KVB *b, const char *k, const char *fmt, ...) {
@@ -772,26 +780,26 @@ static void build_create(CreateState *st) {
     lbl(h, "Archetype", 10, 133, 80, 20);
     st->arch = combo(h, 95, 130, 220, IDC_ARCH);
     st->blurb = lbl(h, "", 10, 158, 620, 34);
-    lbl(h, "Rating", 10, 196, 115, 18);
-    lbl(h, "Now", 130, 196, 72, 18);
-    lbl(h, "Ceiling", 210, 196, 72, 18);
-    st->phdr[0] = lbl(h, "Pitch", 330, 196, 105, 18);
-    st->phdr[1] = lbl(h, "Now", 440, 196, 72, 18);
-    st->phdr[2] = lbl(h, "Ceiling", 520, 196, 72, 18);
+    lbl(h, "Rating", 10, 196, 95, 18);
+    lbl(h, "Now", 110, 196, 95, 18);
+    lbl(h, "Ceiling", 210, 196, 95, 18);
+    st->phdr[0] = lbl(h, "Pitch", 320, 196, 95, 18);
+    st->phdr[1] = lbl(h, "Now", 420, 196, 95, 18);
+    st->phdr[2] = lbl(h, "Ceiling", 525, 196, 95, 18);
     for (i = 0; i < 5; i++) {
         y = 218 + 26 * i;
-        st->rlab[i] = lbl(h, "", 10, y + 3, 115, 20);
-        st->rnow[i] = combo(h, 130, y, 72, 0);
+        st->rlab[i] = lbl(h, "", 10, y + 3, 95, 20);
+        st->rnow[i] = combo(h, 110, y, 95, 0);
         fill_grades(st->rnow[i], 0);
-        st->rceil[i] = combo(h, 210, y, 72, 0);
+        st->rceil[i] = combo(h, 210, y, 95, 0);
         fill_grades(st->rceil[i], 0);
     }
     for (i = 0; i < 7; i++) {
         y = 218 + 26 * i;
-        st->plab[i] = lbl(h, PLAB[i], 330, y + 3, 105, 20);
-        st->pnow[i] = combo(h, 440, y, 72, 0);
+        st->plab[i] = lbl(h, PLAB[i], 320, y + 3, 95, 20);
+        st->pnow[i] = combo(h, 420, y, 95, 0);
         fill_grades(st->pnow[i], 1);
-        st->pceil[i] = combo(h, 520, y, 72, 0);
+        st->pceil[i] = combo(h, 525, y, 95, 0);
         fill_grades(st->pceil[i], 1);
     }
     st->w.msg = text_out(h, 10, 402, 620, 80, 0, 0);
@@ -927,6 +935,8 @@ static void on_arch(Win *w, MMResp *r, const char *err) {
     }
     mm_free(r);
     refill_arch(st);
+    SetWindowTextA(w->msg, "Pick the association, name, position and ratings, then Create. The player joins the "
+                           "association's free agents.");
 }
 
 static void on_create_done(Win *w, MMResp *r, const char *err) {
@@ -1184,7 +1194,8 @@ static LRESULT CALLBACK build_proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
         btn(h, "Build", 235, 9, 90, 26, IDC_GO);
         lbl(h, "Builds the season's teams, players and schedule from the Lahman database. It appears in the "
                "association list when it is done.", 10, 44, 400, 32);
-        st->w.msg = text_out(h, 10, 80, 400, 136, 0, 0);
+        st->w.msg = text_out(h, 10, 80, 400, 136, 0, WS_HSCROLL | ES_AUTOHSCROLL);
+        SendMessageA(st->w.msg, WM_SETFONT, (WPARAM)mono_font, 0);
         btn(h, "Close", 320, 224, 90, 26, IDC_CLOSE);
         st->w.status = lbl(h, "", 10, 229, 300, 20);
         return 0;
@@ -1231,6 +1242,19 @@ static int is_combo(HWND h) {
     return h && GetClassNameA(h, cls, sizeof cls) && !strcmp(cls, "ComboBox");
 }
 
+/* The game's skin library (ODASL.dll) subclasses every window created on the UI thread from a WH_CBT hook, and its
+   subclassed EDIT answers WM_NCHITTEST with HTMENU, so a click never focuses a text box. While the menu is open this
+   hook (installed later, so called first) hides our windows and their controls from it. */
+static HHOOK cbt_hook;
+
+static LRESULT CALLBACK cbt_proc(int code, WPARAM wp, LPARAM lp) {
+    if (code == HCBT_CREATEWND) {
+        HWND h = (HWND)wp, p = ((CBT_CREATEWNDA *)lp)->lpcs->hwndParent;
+        if (is_ours(h) || (p && is_ours(GetAncestor(p, GA_ROOT)))) return 0;
+    }
+    return CallNextHookEx(cbt_hook, code, wp, lp);
+}
+
 /* runs the Mods window on the game's UI thread until its windows are all closed. Esc closes the active window (not
    while a combo box is open); Enter in the link list opens the link */
 static void run_menu(void) {
@@ -1245,9 +1269,12 @@ static void run_menu(void) {
     open_windows = 0;
     st = calloc(1, sizeof *st);
     if (!st) return;
+    cbt_hook = SetWindowsHookExA(WH_CBT, cbt_proc, 0, GetCurrentThreadId());
     mods = make_win("BBModMenu", "Baseball Pro '98 Mods", 420, 300, owner, st);
     if (!mods) {
         free(st);
+        if (cbt_hook) UnhookWindowsHookEx(cbt_hook);
+        cbt_hook = 0;
         return;
     }
     if (owner) EnableWindow(owner, FALSE);
@@ -1275,6 +1302,8 @@ static void run_menu(void) {
         DispatchMessageA(&m);
     }
     EnumThreadWindows(GetCurrentThreadId(), close_ours_cb, 0);
+    if (cbt_hook) UnhookWindowsHookEx(cbt_hook);
+    cbt_hook = 0;
     if (owner) {
         EnableWindow(owner, TRUE);
         SetForegroundWindow(owner);

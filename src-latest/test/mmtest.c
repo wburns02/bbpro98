@@ -2,7 +2,9 @@
    send <spooldir> <op> [k v ...]: sends the request, polls for the answer (MMTEST_TIMEOUT_MS, default 20 s) and prints
      ID <id>, H <key>=<value> per header, then BODY and the body. Exit 2 on timeout (after mm_cancel), 3 when the send
      fails (prints SEND <code>), 4 on a bad answer.
-   clean <text>: prints mm_clean(text) in brackets. */
+   clean <text>: prints mm_clean(text) in brackets.
+   visible: makes a window with make_win and prints VISIBLE 1 when it is shown (a top-level popup without WS_VISIBLE
+     and no ShowWindow is never mapped, so the menu would open invisibly). */
 #include "../mods/modmenu.c"
 
 static void tlog(const char *f, ...) { (void)f; }
@@ -35,6 +37,21 @@ int main(int argc, char **argv) {
         wrs("[");
         wrs(out);
         wrs("]\n");
+        return 0;
+    }
+    if (argc == 2 && !strcmp(argv[1], "visible")) {
+        WNDCLASSA c;
+        HWND h;
+        memset(&c, 0, sizeof c);
+        c.lpfnWndProc = DefWindowProcA;
+        c.hInstance = GetModuleHandleA(0);
+        c.lpszClassName = "MMTestWin";
+        hinst = c.hInstance;
+        RegisterClassA(&c);
+        h = make_win("MMTestWin", "test", 200, 100, 0, 0);
+        snprintf(line, sizeof line, "VISIBLE %d\n", h && IsWindowVisible(h) ? 1 : 0);
+        wrs(line);
+        if (h) DestroyWindow(h);
         return 0;
     }
     if (argc < 4 || strcmp(argv[1], "send")) {

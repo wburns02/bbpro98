@@ -152,6 +152,10 @@ def main():
     r = run(['clean', 'a\tb\nc'])
     check(6, 'clean drops control characters', r.stdout == b'[abc]\n', 'out %r' % r.stdout)
 
+    # 8 (run first, numbered last): make_win shows its window
+    r = run(['visible'])
+    check(8, 'window shown', r.stdout == b'VISIBLE 1\n', 'out %r err %r' % (r.stdout, r.stderr[-200:]))
+
     # 7. the real bridge, when it imports
     sys.path.insert(0, os.path.join(ROOT, 'news'))
     try:

@@ -209,6 +209,11 @@ def test_render_maps_typography_and_replaces_what_latin1_lacks():
     assert out == b'status=ok\r\n\r\n"Hi" - it\'s... a b ? caf\xe9'
 
 
+def test_render_maps_nav_arrows_and_bullets():
+    out = modbridge.render([('status', 'ok')], '← Newer · Older → • x')
+    assert out == b'status=ok\r\n\r\n<- Newer \xb7 Older -> * x'
+
+
 # each op through process_spool
 
 def test_ping(bridge):

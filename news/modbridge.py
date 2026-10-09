@@ -50,7 +50,7 @@ REQ_RE = re.compile(r'q([0-9a-f]{8})\.req')
 NEWS_RE = re.compile(r'/news/[\x21-\x7e]*')
 NUMBER_RE = re.compile(r'-?[0-9.,]+%?')
 TYPOGRAPHY = str.maketrans({'—': '-', '–': '-', '‘': "'", '’': "'", '“': '"', '”': '"',
-                            '…': '...', ' ': ' ', ' ': ' ', ' ': ' ', ' ': ' ', ' ': ' '})
+                            '…': '...', '←': '<-', '→': '->', '•': '*', ' ': ' ', ' ': ' ', ' ': ' ', ' ': ' ', ' ': ' '})
 HIDDEN = ('head', 'style', 'script')
 HEADINGS = ('h1', 'h2', 'h3', 'h4')
 UNDERLINES = {'h1': '=', 'h2': '-'}
