@@ -82,6 +82,7 @@ def association(asn_path):
             if 1 <= tid <= MAX_TEAM:
                 div_of[tid] = (leagues.get(p[1], ''), league._cstr(p, league.D_NAME[0], league.D_NAME[1] - 1))
     wl = {key: (p[1], p[2]) for key, p in mem.get('xs', []) if 1 <= key <= MAX_TEAM and len(p) >= 3}
+    rosters = {key: league._roster_of(p) for key, p in mem.get('r', []) if 1 <= key <= MAX_TEAM}
     teams = {}
     for key, p in mem.get('t', []):
         if not 1 <= key <= MAX_TEAM:
@@ -91,7 +92,7 @@ def association(asn_path):
         teams[key] = {'tid': key, 'name': league._cstr(p, 0x12, league.NAME_FIELD - 1),
                       'abbrev': league._cstr(p, *league.T_ABBREV), 'city': league._cstr(p, *league.T_CITY8),
                       'stadium': league._cstr(p, *league.T_STADIUM), 'manager': league._cstr(p, *league.T_MANAGER),
-                      'league': lg, 'division': dv, 'w': w, 'l': l}
+                      'league': lg, 'division': dv, 'w': w, 'l': l, 'roster': rosters.get(key, [])}
     games = []
     for _, p in mem.get('s', []):
         if len(p) >= 17 and p[6] in teams and p[10] in teams and p[15] == 0:
@@ -155,9 +156,10 @@ def match_game(assoc, box):
             and (g['away_runs'], g['home_runs']) == (a['runs'], h['runs'])]
 
 
-def season_lines(dat_path):
-    """This season's (scope 1) lines from a Stats DAT file: {'bat': {id: {...}}, 'pit': {id: {...}}} with stats.BAT /
-    stats.PIT field names plus 'h'. Ids >= 100 are players, < 100 teams. Members found by name (bt.dat, pt.dat)."""
+def season_lines(dat_path, scope=1):
+    """One season's lines from a Stats DAT file: {'bat': {id: {...}}, 'pit': {id: {...}}} with stats.BAT / stats.PIT
+    field names plus 'h'. scope 1 is this season, 3 last season. Ids >= 100 are players, < 100 teams. Members found
+    by name (bt.dat, pt.dat)."""
     with open(dat_path, 'rb') as fh:
         d = fh.read()
     _, by_mem, members, *_ = ctree.parse(d)
@@ -169,7 +171,7 @@ def season_lines(dat_path):
             if len(p) != size or p[0] == 0xFF:
                 continue
             u = _u16s(p)
-            if u[0] == 1 and u[1] == 2:
+            if u[0] == scope and u[1] == 2:
                 line = dict(zip(fields, u[3:]))
                 line['h'] = line['h1b'] + line['h2b'] + line['h3b'] + line['hr']
                 out[kind][u[2]] = line

@@ -11,9 +11,9 @@ import hive      # noqa: E402
 import watch     # noqa: E402
 
 TEAMS = {1: {'tid': 1, 'name': 'Ash', 'abbrev': 'ASH', 'city': 'X', 'stadium': 'Ash Park', 'manager': 'M',
-             'league': 'AL', 'division': 'East', 'w': 0, 'l': 0},
+             'league': 'AL', 'division': 'East', 'w': 0, 'l': 0, 'roster': [100]},
          2: {'tid': 2, 'name': 'Birch', 'abbrev': 'BIR', 'city': 'X', 'stadium': 'Birch Field', 'manager': 'M',
-             'league': 'AL', 'division': 'East', 'w': 0, 'l': 0}}
+             'league': 'AL', 'division': 'East', 'w': 0, 'l': 0, 'roster': [200]}}
 
 
 def game(day, slot, away, home, ar, hr, played=True):
@@ -47,7 +47,7 @@ def world(tmp_path, monkeypatch):
     monkeypatch.setattr(gamedata, 'association', lambda path: {'name': '1998 Test', 'teams': TEAMS,
                                                               'games': [dict(g) for g in st['games']]})
     monkeypatch.setattr(gamedata, 'names', lambda path: {100: 'Al Winner', 200: 'Bo Loser'})
-    monkeypatch.setattr(gamedata, 'season_lines', lambda path: {'bat': {}, 'pit': {}})
+    monkeypatch.setattr(gamedata, 'season_lines', lambda path, scope=1: {'bat': {}, 'pit': {}})
     monkeypatch.setattr(gamedata, 'boxscore', lambda path: st['boxes'][str(path)])
     st['boxfile'] = boxfile
     return gd, tmp_path / 'data', st
@@ -124,3 +124,49 @@ def test_model_used_until_the_budget_runs_out(world):
     got = sorted((s['day'], s['source'], s.get('reason')) for s in stories(data))
     assert got == [(1, 'template', 'budget'), (2, 'glm', None)]     # newest game gets the last call
     assert len(calls) == 3
+
+
+def test_season_preview_once_and_awards_only_after_the_last_game(world):
+    gd, data, st = world
+    out = data / '30L1998'
+    w = watch.Watcher(str(gd), str(data), None, None, log=lambda s: None)
+    w.scan()
+    prev = json.loads((out / 'preview.json').read_text())
+    assert (prev['kind'], prev['source'], prev['reason']) == ('preview', 'template', 'off')
+    assert not (out / 'awards.json').exists()                  # game 3 is unplayed
+    (out / 'preview.json').write_text('{"kept": true}')
+    st['games'][2].update(played=True, away_runs=2, home_runs=1)
+    w.seen.clear()
+    w.scan()
+    assert json.loads((out / 'preview.json').read_text()) == {'kept': True}
+    awards = json.loads((out / 'awards.json').read_text())
+    assert (awards['kind'], awards['source'], awards['reason']) == ('awards', 'template', 'off')
+    assert awards['facts']['leagues'][0]['champions'] == [{'division': 'East', 'team': 'Ash', 'record': '3-0'}]
+
+
+def test_preview_reads_last_season_and_the_season_is_read_this_season(world, monkeypatch):
+    gd, data, st = world
+    (gd / 'Stats' / '30L1998.DAT').write_bytes(b'dat')
+    (gd / 'Assn' / '30L1998.PYR').write_bytes(b'pyr')      # names come from the PYR file, when there is one
+    calls = []
+
+    def lines(path, scope=1):
+        calls.append((os.path.basename(path), scope))
+        if scope != 3:
+            return {'bat': {}, 'pit': {}}
+        return {'bat': {100: {'ab': 120, 'h': 40, 'h2b': 0, 'h3b': 0, 'hr': 12, 'rbi': 50, 'bb': 0, 'so': 0, 'r': 0,
+                              'sb': 0}}, 'pit': {}}
+
+    monkeypatch.setattr(gamedata, 'season_lines', lines)
+    watch.Watcher(str(gd), str(data), None, None, log=lambda s: None).scan()
+    assert calls == [('30L1998.DAT', 1), ('30L1998.DAT', 3)]     # this season for the table, last for the preview
+    preview = json.loads((data / '30L1998' / 'preview.json').read_text())
+    ash = next(t for d in preview['facts']['divisions'] for t in d['teams'] if t['name'] == 'Ash')
+    assert ash['hitter'] == {'name': 'Al Winner', 'avg': '.333', 'hr': 12, 'rbi': 50}
+
+
+def test_no_preview_for_an_association_without_teams(world, monkeypatch):
+    gd, data, st = world
+    monkeypatch.setattr(gamedata, 'association', lambda path: {'name': '1998 Empty', 'teams': {}, 'games': []})
+    watch.Watcher(str(gd), str(data), None, None, log=lambda s: None).scan()
+    assert not (data / '30L1998' / 'preview.json').exists()

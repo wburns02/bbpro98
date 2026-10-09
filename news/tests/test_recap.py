@@ -216,6 +216,16 @@ def test_numbers_ok_checks_number_words_case_insensitively_and_hyphenated():
     assert not recap.numbers_ok('twenty runs', NO_THREE)
 
 
+def test_numbers_ok_lets_number_words_inside_names_from_the_facts_through():
+    f = dict(NO_THREE, stadium='Three Rivers Stadium', pitcher='Bob Five')
+    assert recap.numbers_ok('Pittsburgh won at Three Rivers Stadium.', f)
+    assert recap.numbers_ok('Pittsburgh won at Three Rivers.', f)
+    assert recap.numbers_ok('Bob Five pitched.', f)
+    assert not recap.numbers_ok('Pittsburgh scored three at Three Rivers.', f)
+    assert not recap.numbers_ok('Five pitched three innings.', f)
+    assert not recap.numbers_ok('Bob Five pitched seven innings.', f)
+
+
 def test_numbers_ok_matches_ordinals_and_digits_whole():
     assert not recap.numbers_ok('a 10th-inning homer', NO_THREE)
     assert recap.numbers_ok('a 10th-inning homer', {'innings': 10})
