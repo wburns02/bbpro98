@@ -26,12 +26,12 @@ Open questions
 - Does any feature need to appear inside the game window, or is a companion window fine.
 - Per-game vs per-day vs per-season call cadence, and a daily token cap.
 
-Dependencies: stats decode (in progress, see work/NOTES_stats_format.md).
+Dependencies: none left. Stats DAT, ASN, box scores (H files) and play-by-play (game.bko, tapes) all have codecs in work/.
 
-## Import real historical data from Lahman (captured 2026-10-06, not started)
+## Import real historical data from Lahman (captured 2026-10-06, DONE 2026-10-08: work/lahman/, every season 1871-2019)
 Will: import real historical data from Lahman's database into the game. Not to be actioned now.
 Notes: handoff says Lahman files were downloaded on the Mac and a rating-model fit exists (contact~AVG, power~HR, speed~SB, endurance~GS). Write path options: PYR (starting ratings, round-trip writer pyr_io.py exists) for rosters/ratings, and Stats DAT (format now decoded, see work/NOTES_stats_format.md) for historical stat lines. Open questions: which seasons, how to map Lahman playerID to game ids 100+i, and whether the game accepts more than the 1997 roster size.
 
-## Click into active/retired players from the Career data screen (captured 2026-10-06, not started)
+## Click into active/retired players from the Career data screen (captured 2026-10-06, DONE 2026-10-08: src-latest/mods/playercard.c)
 Will: be able to click a player in the Career data screen (active and retired) and open their detail. Not to be actioned now.
 Related to the panel-widening work in BBShell.dll (stats grid hit-testing).

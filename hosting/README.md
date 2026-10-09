@@ -22,6 +22,7 @@ Every listener binds to 127.0.0.1. The tunnel is the only way in, and Access sit
 | `run-game.sh` | `/mnt/data/bbpro98/bin/` | starts `bblaunch.exe`, waits for the prefix's wineserver |
 | `index.html` | web dir, next to symlinks to `/usr/share/novnc/*` | opens noVNC with autoconnect and scaling |
 | `cloudflared.yml.example` | `~/.cloudflared/bbpro98.yml` | tunnel ingress to 127.0.0.1:6152 |
+| `deploy.sh` | stays here | pushes changed game code and new seasons to the host |
 
 Paths in the units assume `/mnt/data/bbpro98/{prefix,web,bin}`; edit them for another host.
 
@@ -37,6 +38,17 @@ Paths in the units assume `/mnt/data/bbpro98/{prefix,web,bin}`; edit them for an
 6. Create the Access application (self-hosted, the hostname, an allow policy for your own email), then the
    proxied CNAME `<hostname> -> <tunnel-id>.cfargotunnel.com`. Access first, DNS second: in the other order the
    game is public for the minutes in between, and noVNC here has no password.
+
+## Updating the hosted copy
+
+```
+HOST=user@host hosting/deploy.sh --dry-run --mods /mnt/nvme/bbpro98/build/pc --seasons <build.py --install root>
+```
+
+Drop `--dry-run` to apply. Game code (top-level DLLs, EXEs, VOLs, `PB.INI`, `mods/*.dll`) is replaced when its
+content differs, and only then is the game restarted. New seasons are added; a season already on the host is never
+overwritten, because it holds the games played in the browser. The host's `bbfix.ini` is never touched; edit it
+there to turn a mod on.
 
 ## Gotchas
 
