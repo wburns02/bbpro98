@@ -12,6 +12,7 @@ import datetime
 import os
 import pathlib
 import re
+import stat
 import subprocess
 import sys
 import textwrap
@@ -320,9 +321,22 @@ def _season(game, year):
     assn = os.path.join(game, 'Assn')
     pat = re.compile(r'[0-9]{1,2}L%d\.ASN' % year, re.I)
     for f in sorted(os.listdir(assn)):
-        if pat.fullmatch(f):
+        if pat.fullmatch(f) and not os.path.islink(os.path.join(assn, f)):
             return os.path.splitext(f)[0].upper(), os.path.join(assn, f)
     return None, None
+
+
+def _leftovers(game, year):
+    """True when Assn/ or Stats/ holds anything named for a <n>L<year> season (any extension), or either directory
+    is a symlink. build.py writes those names with the host's permissions, so it never runs over one."""
+    pat = re.compile(r'[0-9]{1,2}L%d\.[A-Za-z]+' % year, re.I)
+    for sub in ('Assn', 'Stats'):
+        path = os.path.join(game, sub)
+        if os.path.islink(path):
+            return True
+        if os.path.isdir(path) and any(pat.fullmatch(f) for f in os.listdir(path)):
+            return True
+    return False
 
 
 def _tail(*outputs):
@@ -451,6 +465,9 @@ def _build(ctx, req):
         return [('status', 'error')], 'Pick a year from 1871 to 2019.'
     year = int(year)
     stem, asn = _season(ctx.game, year)
+    if stem is None and _leftovers(ctx.game, year):
+        return [('status', 'error')], ('Files for a %d season are already in the game without its association. '
+                                       'Remove them, then build again.' % year)
     if stem is None:
         if not _BUILD.acquire(blocking=False):
             return [('status', 'busy')], BUSY_TEXT
@@ -481,8 +498,25 @@ def handle(ctx, req):
 
 
 def _read(path):
-    with open(path, 'rb') as fh:
-        return fh.read(MAX_REQUEST + 1)
+    """Up to MAX_REQUEST + 1 bytes of a request; b'' (a bad request) unless it is a regular file. The game side can
+    write the spool, so never follow a symlink and never block on a FIFO or device."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:             # ELOOP: a symlink
+        return b''
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return b''
+        chunks, left = [], MAX_REQUEST + 1
+        while left > 0:
+            chunk = os.read(fd, left)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            left -= len(chunk)
+        return b''.join(chunks)
+    finally:
+        os.close(fd)
 
 
 def _remove(path):
@@ -494,7 +528,9 @@ def _remove(path):
 
 def _respond(spool, rid, header, body):
     tmp = os.path.join(spool, 'r%s.tmp' % rid)
-    with open(tmp, 'wb') as fh:
+    _remove(tmp)                # a name the game side planted (a symlink) goes, and O_EXCL never writes through one
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+    with os.fdopen(fd, 'wb') as fh:
         fh.write(render(header, body))
     os.replace(tmp, os.path.join(spool, 'r%s.rsp' % rid))
 
@@ -548,6 +584,20 @@ def process_spool(ctx, spool, wait=True):
             t.join()
 
 
+def spool_ok(game):
+    """True when Mods and Mods/spool under game are real directories, not symlinks: the game side can write there,
+    and the bridge removes and writes files in the spool with the host's permissions."""
+    path = game
+    for part in ('Mods', 'spool'):
+        path = os.path.join(path, part)
+        try:
+            if not stat.S_ISDIR(os.lstat(path).st_mode):
+                return False
+        except FileNotFoundError:
+            return False
+    return True
+
+
 def housekeep(spool, now=None):
     """Removes replies (r*.rsp) and temporary files (*.tmp) older than STALE seconds by mtime. Work files are kept."""
     now = time.time() if now is None else now
@@ -570,6 +620,10 @@ def serve(ctx, poll):
     due = 0.0
     while True:
         try:
+            if not spool_ok(ctx.game):
+                sys.stderr.write('modbridge: %s is not a plain directory; not answering\n' % spool)
+                time.sleep(HOUSEKEEP_EVERY)
+                continue
             if time.monotonic() >= due:
                 housekeep(spool)
                 due = time.monotonic() + HOUSEKEEP_EVERY

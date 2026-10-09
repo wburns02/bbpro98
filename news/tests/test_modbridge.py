@@ -534,3 +534,48 @@ def test_news_through_the_real_server_with_a_string_data_dir(bridge):
     head, body = ask(ctx, spool, 'op=news\npath=/news/TEST77/')
     assert body != 'Something went wrong.'
     assert head['http'] in ('200', '404')
+
+
+def test_a_planted_reply_symlink_is_never_written_through(bridge, tmp_path):
+    ctx, spool = bridge
+    victim = tmp_path / 'victim.txt'
+    victim.write_text('keep')
+    os.symlink(victim, os.path.join(spool, 'r%08x.tmp' % 0xfeed0001))
+    write_request(spool, '%08x' % 0xfeed0001, 'op=ping')
+    modbridge.process_spool(ctx, spool)
+    assert victim.read_text() == 'keep'
+    assert reply(spool, '%08x' % 0xfeed0001)[0]['status'] == 'ok'
+
+
+def test_a_fifo_or_symlinked_request_is_a_bad_request_and_never_blocks(bridge, tmp_path):
+    ctx, spool = bridge
+    os.mkfifo(os.path.join(spool, 'q%08x.req' % 0xfeed0002))
+    secret = tmp_path / 'secret'
+    secret.write_text('op=ping\n')
+    os.symlink(secret, os.path.join(spool, 'q%08x.req' % 0xfeed0003))
+    modbridge.process_spool(ctx, spool)
+    for rid in (0xfeed0002, 0xfeed0003):
+        head, body = reply(spool, '%08x' % rid)
+        assert head['status'] == 'error' and body == 'Bad request.'
+
+
+def test_spool_ok_refuses_a_symlinked_spool(tmp_path):
+    game = tmp_path / 'game'
+    (game / 'Mods').mkdir(parents=True)
+    elsewhere = tmp_path / 'elsewhere'
+    elsewhere.mkdir()
+    os.symlink(elsewhere, game / 'Mods' / 'spool')
+    assert not modbridge.spool_ok(str(game))
+    os.remove(game / 'Mods' / 'spool')
+    (game / 'Mods' / 'spool').mkdir()
+    assert modbridge.spool_ok(str(game))
+
+
+def test_build_refuses_over_leftover_or_planted_season_files(bridge, site, monkeypatch, tmp_path):
+    ctx, spool = bridge
+    game = site[0]
+    calls = fake_build(monkeypatch, game)
+    os.symlink(tmp_path / 'victim', game / 'Assn' / '16L1927.PYR')
+    head, body = ask(ctx, spool, 'op=build\nyear=1927')
+    assert head['status'] == 'error' and 'already in the game without' in body
+    assert calls == []
