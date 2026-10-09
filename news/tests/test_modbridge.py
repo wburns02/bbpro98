@@ -576,6 +576,55 @@ def test_spool_ok_refuses_a_symlinked_spool(tmp_path):
     assert modbridge.spool_ok(str(game))
 
 
+def test_a_symlinked_spool_is_never_worked_through(bridge, tmp_path):
+    ctx, spool = bridge
+    elsewhere = tmp_path / 'elsewhere'
+    elsewhere.mkdir()
+    (elsewhere / 'keep.tmp').write_bytes(b'x')
+    (elsewhere / 'r00000009.rsp').write_bytes(b'x')
+    old = time.time() - 10000
+    for name in ('keep.tmp', 'r00000009.rsp'):
+        os.utime(elsewhere / name, (old, old))
+    write_request(str(elsewhere), 'feed0004', 'op=ping')
+    os.rename(spool, spool + '.old')
+    os.symlink(elsewhere, spool)
+    with pytest.raises(OSError):
+        modbridge.housekeep(spool)
+    with pytest.raises(OSError):
+        modbridge.process_spool(ctx, spool)
+    assert sorted(os.listdir(elsewhere)) == ['keep.tmp', 'qfeed0004.req', 'r00000009.rsp']
+
+
+def test_a_spool_swapped_after_it_is_opened_keeps_the_reply_inside(bridge, tmp_path):
+    ctx, spool = bridge
+    elsewhere = tmp_path / 'elsewhere'
+    elsewhere.mkdir()
+    write_request(spool, 'feed0005', 'op=ping')
+    dfd = modbridge.open_dir(spool)
+    try:
+        os.rename(spool, spool + '.old')
+        os.symlink(elsewhere, spool)
+        modbridge._answer(ctx, dfd, 'feed0005')
+    finally:
+        os.close(dfd)
+    assert os.listdir(elsewhere) == []
+    assert os.listdir(spool + '.old') == ['rfeed0005.rsp']
+
+
+def test_make_spool_never_creates_through_a_symlinked_mods(tmp_path):
+    game = tmp_path / 'game'
+    game.mkdir()
+    elsewhere = tmp_path / 'elsewhere'
+    elsewhere.mkdir()
+    os.symlink(elsewhere, game / 'Mods')
+    with pytest.raises(OSError):
+        modbridge.make_spool(str(game))
+    assert os.listdir(elsewhere) == []
+    os.remove(game / 'Mods')
+    modbridge.make_spool(str(game))
+    assert modbridge.spool_ok(str(game))
+
+
 def test_build_refuses_over_leftover_or_planted_season_files(bridge, site, monkeypatch, tmp_path):
     ctx, spool = bridge
     game = site[0]

@@ -1,0 +1,8 @@
+[Unit]
+Description=BBPRO98 hosted: answers the in-game Mods menu (modmenu.dll) through the spool in the game's Mods/spool
+[Service]
+ExecStart=/usr/bin/python3 /mnt/data/bbpro98/news/news/modbridge.py --game /mnt/data/bbpro98/prefix/drive_c/Sierra/BBPRO_98 --data /mnt/data/bbpro98/news-data --backup /mnt/data/bbpro98/backup/create --db /mnt/data/bbpro98/lahman/lahmansbaseballdb.sqlite --templates /mnt/data/bbpro98/lahman/templates
+Restart=always
+RestartSec=3
+[Install]
+WantedBy=default.target

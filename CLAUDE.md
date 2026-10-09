@@ -43,3 +43,23 @@ Public repo (MIT) of tools and research for FPS Baseball Pro '98. Python codecs 
   Claim Free Agent is greyed out unless the selected team is Human; claims go through when the league plays a day.
 - Hosted game sandbox: with no audio device the menu music fails at once and the shell retries tracks in a busy loop
   that ignores clicks. hosting/run-game.sh gives the sandbox ALSA's null device; never drop that line.
+- Lahman builds: template-generated players (roster pads) come out with K 0 and CO near 28 and pitch to a 9+ ERA.
+  build.py rates every pad from a blank season (league-average ratings, donor arsenal) and pads pitchers to MIN_PIT
+  10 with GS 0.5 so real starters lead the rotation. Never copy a template player verbatim onto a roster.
+- League aging: stock rules age a career league (MLBPA97 28.5 in 1997 to 31.1 by 2007). Peak ratings never fall,
+  spring training pulls current back to peak, and retirement is age-only past 35. mods\aging.dll (src-latest/mods)
+  lowers peak with age and retires by age and ability. New players (FUN_68040da0) top the pool up to 55 per team,
+  at least 3 per team, so inflow only grows once retirements pull the pool under 55 per team. Any multi-season check
+  must measure league age and per-team roster and pitcher counts each offseason (seasonloop "seasons" prints
+  demographics per rollover), not just one season's stats.
+- In-game Mods menu: mods\modmenu.dll takes over the main menu's WWW SITE button (EZShell 0x6a006370) and talks to
+  news/modbridge.py only through files in <game>/Mods/spool (the hosted game's sandbox has no network). Requests are
+  written as .tmp then renamed to .req, claimed by renaming to .work, answered as .rsp; never read a half-written file.
+  Without the bridge running the menu times out with a message; it never blocks the game. work/patches/mods_button.py
+  relabels the button art (WEB*.BMP, originals kept as .orig).
+- Hosted bridge trust boundary: the game sandbox writes the whole Wine prefix, so any directory under it can be
+  swapped for a symlink between a check and a use. modbridge holds the spool by descriptor (open_dir walks from /
+  with O_NOFOLLOW) and does every list, read, rename, write and remove relative to it; never go back to path strings.
+- Windows a mod creates on the game's UI thread get skinned by ODASL.dll's WH_CBT hook, and its subclassed EDIT
+  answers WM_NCHITTEST with HTMENU, so text boxes never take focus. modmenu installs its own thread CBT hook first
+  and skips the chain for its classes. Top-level popups also need ShowWindow; without WS_VISIBLE they never map.

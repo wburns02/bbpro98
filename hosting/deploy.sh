@@ -73,6 +73,10 @@ news=$(rsync -rl --checksum --itemize-changes "${DRY[@]}" -e ssh --include='*.py
 news+=${news:+$'\n'}$(rsync -rl --checksum --itemize-changes "${DRY[@]}" -e ssh \
           "$REPO/work/ctree.py" "$REPO/work/hdecode.py" "$REPO/work/league.py" "$REPO/work/stats.py" \
           "$HOST:$NEWS/work/" | grep '^<f' || true)
+# The Lahman season builder, run by the in-game Mods menu's bridge (news/modbridge.py) for Build a Season.
+[ ${#DRY[@]} -eq 0 ] && ssh "$HOST" "mkdir -p '$NEWS/work/lahman'"
+news+=${news:+$'\n'}$(rsync -rl --checksum --itemize-changes "${DRY[@]}" -e ssh --include='*.py' --exclude='*' \
+          "$REPO/work/lahman/" "$HOST:$NEWS/work/lahman/" | grep '^<f' || true)
 # Full team names for Lahman-built associations (work/lahman/teamnames.py writes it; it is not in the repo).
 NAMES=${NAMES:-/mnt/nvme/bbpro98/teamnames.json}
 if [ -f "$NAMES" ]; then
@@ -82,9 +86,9 @@ fi
 if [ -n "$news" ]; then
   echo "$news"
   if [ ${#DRY[@]} -eq 0 ]; then
-    ssh "$HOST" 'systemctl --user restart bbpro98-news-web bbpro98-news-watch bbpro98-create && systemctl --user is-active bbpro98-news-web bbpro98-news-watch bbpro98-create'
+    ssh "$HOST" 'systemctl --user restart bbpro98-news-web bbpro98-news-watch bbpro98-create bbpro98-bridge && systemctl --user is-active bbpro98-news-web bbpro98-news-watch bbpro98-create bbpro98-bridge'
   else
-    echo "dry run: the news and create units would restart"
+    echo "dry run: the news, create and bridge units would restart"
   fi
 fi
 

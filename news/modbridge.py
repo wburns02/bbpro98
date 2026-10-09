@@ -497,11 +497,43 @@ def handle(ctx, req):
         return [('status', 'error')], 'Something went wrong.'
 
 
-def _read(path):
+def open_dir(path):
+    """A descriptor for directory path, opened one component at a time from / with O_NOFOLLOW, so a symlink anywhere
+    on the path raises OSError (ELOOP). The game side can write everything under the Wine prefix, so the bridge holds
+    the spool by descriptor and works relative to it: renaming or swapping a directory afterwards never redirects it."""
+    fd = os.open('/', os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for part in [p for p in os.path.abspath(path).split(os.sep) if p]:
+            nxt = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = nxt
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+def make_spool(game):
+    """Creates Mods/spool under game when missing, never through a symlink (mkdirat does not follow one)."""
+    fd = open_dir(game)
+    try:
+        for part in ('Mods', 'spool'):
+            try:
+                os.mkdir(part, dir_fd=fd)
+            except FileExistsError:
+                pass
+            nxt = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = nxt
+    finally:
+        os.close(fd)
+
+
+def _read(dfd, name):
     """Up to MAX_REQUEST + 1 bytes of a request; b'' (a bad request) unless it is a regular file. The game side can
     write the spool, so never follow a symlink and never block on a FIFO or device."""
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=dfd)
     except OSError:             # ELOOP: a symlink
         return b''
     try:
@@ -519,66 +551,75 @@ def _read(path):
         os.close(fd)
 
 
-def _remove(path):
+def _remove(dfd, name):
     try:
-        os.remove(path)
+        os.remove(name, dir_fd=dfd)
     except FileNotFoundError:
         pass
 
 
-def _respond(spool, rid, header, body):
-    tmp = os.path.join(spool, 'r%s.tmp' % rid)
-    _remove(tmp)                # a name the game side planted (a symlink) goes, and O_EXCL never writes through one
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+def _respond(dfd, rid, header, body):
+    tmp = 'r%s.tmp' % rid
+    _remove(dfd, tmp)           # a name the game side planted (a symlink) goes, and O_EXCL never writes through one
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644, dir_fd=dfd)
     with os.fdopen(fd, 'wb') as fh:
         fh.write(render(header, body))
-    os.replace(tmp, os.path.join(spool, 'r%s.rsp' % rid))
+    os.replace(tmp, 'r%s.rsp' % rid, src_dir_fd=dfd, dst_dir_fd=dfd)
 
 
-def _answer(ctx, spool, rid):
-    """Claims request rid, answers it and removes its work file. A request another worker has claimed is skipped."""
-    work = os.path.join(spool, 'q%s.work' % rid)
+def _answer(ctx, dfd, rid):
+    """Claims request rid in the spool held by dfd, answers it and removes its work file. A request another worker
+    has claimed is skipped."""
+    work = 'q%s.work' % rid
     try:
-        os.rename(os.path.join(spool, 'q%s.req' % rid), work)
+        os.rename('q%s.req' % rid, work, src_dir_fd=dfd, dst_dir_fd=dfd)
     except FileNotFoundError:
         return
     try:
-        req = parse_request(_read(work))
+        req = parse_request(_read(dfd, work))
         if req is None:
             header, body = [('status', 'error')], 'Bad request.'
         else:
             header, body = handle(ctx, req)
-        _respond(spool, rid, header, body)
+        _respond(dfd, rid, header, body)
         op = req['op'] if req is not None and req['op'] in OPS else '-'
         sys.stderr.write('modbridge: %s %s %s\n' % (rid, op, dict(header)['status']))
     finally:
-        _remove(work)
+        _remove(dfd, work)
 
 
-def _slot(ctx, spool, rid):
+def _slot(ctx, dfd, rid):
     try:
-        _answer(ctx, spool, rid)
+        _answer(ctx, dfd, rid)
     finally:
+        os.close(dfd)
         _SLOTS.release()
 
 
 def process_spool(ctx, spool, wait=True):
     """Claims and answers every pending request in spool once, each in its own worker thread, at most MAX_WORKERS at a
-    time; a request that finds every slot taken waits for the next call. With wait the workers are joined first."""
+    time; a request that finds every slot taken waits for the next call. With wait the workers are joined first.
+    Raises OSError when the spool path holds a symlink (open_dir)."""
     threads = []
-    for name in sorted(os.listdir(spool)):
-        m = REQ_RE.fullmatch(name)
-        if m is None:
-            continue
-        if not _SLOTS.acquire(blocking=False):
-            break
-        t = threading.Thread(target=_slot, args=(ctx, spool, m.group(1)), daemon=True)
-        try:
-            t.start()
-        except BaseException:
-            _SLOTS.release()
-            raise
-        threads.append(t)
+    dfd = open_dir(spool)
+    try:
+        for name in sorted(os.listdir(dfd)):
+            m = REQ_RE.fullmatch(name)
+            if m is None:
+                continue
+            if not _SLOTS.acquire(blocking=False):
+                break
+            own = os.dup(dfd)       # each worker closes its own descriptor
+            t = threading.Thread(target=_slot, args=(ctx, own, m.group(1)), daemon=True)
+            try:
+                t.start()
+            except BaseException:
+                os.close(own)
+                _SLOTS.release()
+                raise
+            threads.append(t)
+    finally:
+        os.close(dfd)
     if wait:
         for t in threads:
             t.join()
@@ -599,23 +640,30 @@ def spool_ok(game):
 
 
 def housekeep(spool, now=None):
-    """Removes replies (r*.rsp) and temporary files (*.tmp) older than STALE seconds by mtime. Work files are kept."""
+    """Removes replies (r*.rsp) and temporary files (*.tmp) older than STALE seconds by mtime. Work files are kept.
+    Works through open_dir, so it never removes anything outside the spool."""
     now = time.time() if now is None else now
-    for name in os.listdir(spool):
-        if not (name.endswith('.tmp') or (name.startswith('r') and name.endswith('.rsp'))):
-            continue
-        path = os.path.join(spool, name)
-        try:
-            if now - os.path.getmtime(path) > STALE:
-                os.remove(path)
-        except FileNotFoundError:
-            pass
+    dfd = open_dir(spool)
+    try:
+        for name in os.listdir(dfd):
+            if not (name.endswith('.tmp') or (name.startswith('r') and name.endswith('.rsp'))):
+                continue
+            try:
+                if now - os.stat(name, dir_fd=dfd, follow_symlinks=False).st_mtime > STALE:
+                    os.remove(name, dir_fd=dfd)
+            except FileNotFoundError:
+                pass
+    finally:
+        os.close(dfd)
 
 
 def serve(ctx, poll):
     """Answers the game's spool until interrupted, housekeeping it every HOUSEKEEP_EVERY seconds."""
     spool = os.path.join(ctx.game, 'Mods', 'spool')
-    os.makedirs(spool, exist_ok=True)
+    try:
+        make_spool(ctx.game)
+    except OSError:     # a symlink on the path; the loop below reports it until it is a plain directory
+        traceback.print_exc()
     sys.stderr.write('modbridge: spool %s\n' % spool)
     due = 0.0
     while True:
