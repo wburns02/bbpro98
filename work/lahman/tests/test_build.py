@@ -96,7 +96,9 @@ def test_stats_file_valid(built):
 
 def test_short_rosters_padded():
     """1875: Keokuk and the Philadelphia Centennials keep too few players of their own to field a lineup; the build
-    pads them with generated players so every team has nine distinct starters (pitcher's slot NONE) and five pitchers."""
+    pads them with generated players so every team has nine distinct starters (pitcher's slot NONE) and MIN_PIT pitchers,
+    a full rotation and a bullpen. A pad is rated, not copied: the template's generated pitchers carry a strikeout byte of
+    0 and control near 28."""
     if not all(os.path.exists(p) for p in NEEDED) or not os.path.isdir(SCRATCH):
         pytest.skip('Lahman DB or game install absent')
     try:
@@ -118,14 +120,18 @@ def test_short_rosters_padded():
     padded = [l for l in log if 'generated)' in l]
     assert any(' KEO ' in l for l in padded) and any(' PH3 ' in l for l in padded)
     pos = {struct.unpack_from('<H', r, 0)[0]: r[68] for r in recs}
+    rec = {struct.unpack_from('<H', r, 0)[0]: r for r in recs}
     assert len(asn.recs['r']) == 14
     for _, p in asn.recs['r']:
         ids = struct.unpack_from('<126H', p, 0x2a)
         active = [x for x in ids[:25] if x]
         order, align, rot = ids[77:86], ids[95:104], [x for x in ids[113:119] if x]
         assert all(x in pos for x in active)
-        assert sum(pos[x] != 1 for x in active) >= B.MIN_HIT and sum(pos[x] == 1 for x in active) >= 5
-        assert rot and all(pos[x] == 1 for x in rot)
+        assert sum(pos[x] != 1 for x in active) >= B.MIN_HIT and sum(pos[x] == 1 for x in active) >= B.MIN_PIT
+        assert len(rot) == 5 and all(pos[x] == 1 for x in rot)
+        pen = [x for x in ids[120:126] if x]
+        assert pen and all(pos[x] == 1 for x in pen)
+        assert all(rec[x][RT.K_ATTR] > 0 for x in active if pos[x] == 1)
         starters = [x for x in order if x != B.NONE]
         assert len(starters) == 8 and len(set(starters)) == 8 and set(starters) <= set(active)
         assert set(x for x in align[:8]) == set(starters)

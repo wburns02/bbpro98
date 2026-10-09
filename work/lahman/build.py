@@ -82,7 +82,7 @@ ACTIVE, RESERVE = 25, 15
 # Floor of an active roster: a lineup (eight fielders and a DH) and five pitchers. The shell fills a five-man
 # rotation before it builds the batting order and takes position players for it when pitchers run out; a team left
 # with fewer than eight fielders gets a 0 in its order and LINEUP.DLL dereferences it (crash at LINEUP+0x116e0).
-MIN_HIT, MIN_PIT = 9, 5
+MIN_HIT, MIN_PIT = 9, 10
 
 
 # ---------------------------------------------------------------- Lahman extras (read-only SQL)
@@ -313,13 +313,15 @@ def r_record(old, active, reserve, order, align, rotation, pen):
 # ---------------------------------------------------------------- filler teams (template-generated players)
 
 class FillerSeason:
-    """Duck-types the Season calls lineup/staff/choose_roster make, for generated players keyed by PYR record."""
+    """Duck-types the Season calls lineup/staff/choose_roster make, for generated players keyed by PYR record. A pad
+    (generated players filling out a real team) ranks behind every real starter: its pitchers count half a start."""
 
-    def __init__(self, recs):
+    def __init__(self, recs, pad=False):
         self.recs = recs
         self.bat, self.pit, self.app = {}, {}, {}
         for i, r in recs.items():
-            self.pit[i] = {'IPouts': r[RT.CUR + RT.EN] * 10, 'GS': r[RT.CUR + RT.EN]} if r[68] == 1 else {}
+            gs = 0.5 if pad else r[RT.CUR + RT.EN]
+            self.pit[i] = {'IPouts': r[RT.CUR + RT.EN] * 10, 'GS': gs} if r[68] == 1 else {}
             self.bat[i] = {'AB': 100 + r[RT.CUR + RT.CH], 'H': r[RT.CUR + RT.CH], 'HR': r[RT.CUR + RT.PH] // 10}
             self.app[i] = {'X': {'G_all': 1}}
 
@@ -331,6 +333,21 @@ class FillerSeason:
 
 
 RT_POS = {v: k for k, v in RT.POS_CODE.items()}
+
+
+class BlankSeason:
+    """A season with no lines for anyone: Model.rate on it gives a player with no major-league sample, every fitted
+    rating at its league mean (zero z-scores, the 1996 raw means) and the nearest donor's arsenal and attributes."""
+
+    def __init__(self, year, pos):
+        self.year, self.pos = year, pos
+        self.bat, self.pit, self.fld, self.app = {}, {}, {}, {}
+
+    def primary(self, pid):
+        return self.pos
+
+    def games_at(self, pid):
+        return {}
 
 
 class MixSeason:
@@ -463,11 +480,14 @@ def build(year, install, db=DB, name=None, log=print):
         return nid
 
     def add_generated(r):
+        """A template player, rated as a league-average player with no sample. Copied as the game generated him he
+        has control near 28 and a strikeout byte of 0: in 1884 such pads threw a quarter of the innings at a 9.6 ERA."""
         nid = 100 + len(new_recs)
-        rec = bytearray(r)
-        struct.pack_into('<H', rec, 0, nid)
-        struct.pack_into('<I', rec, 26, shift_year(struct.unpack_from('<I', r, 26)[0], year - tmpl_year))
-        new_recs.append(bytes(rec))
+        born = RT.from_serial(shift_year(struct.unpack_from('<I', r, 26)[0], year - tmpl_year))
+        person = {'birth_year': born.year, 'birth_month': born.month, 'birth_day': born.day,
+                  'first': RT.cstr(r[30:47]), 'last': RT.cstr(r[47:64]),
+                  'bats': {1: 'L', 2: 'R', 3: 'B'}.get(r[65], 'R'), 'throws': 'L' if r[66] == 1 else 'R'}
+        new_recs.append(model.rate(BlankSeason(year, RT_POS.get(r[68], '1B')), None, person, nid, 0))
         return nid
 
     # ---- association record
@@ -575,6 +595,16 @@ def build(year, install, db=DB, name=None, log=print):
             fs_recs = {}
             want_h = MIN_HIT - sum(season.primary(p) != 'P' for p in active)
             want_p = MIN_PIT - sum(season.primary(p) == 'P' for p in active)
+            # Room for the pads on the 25-man roster: the least-used non-catchers go to the reserve list.
+            for _ in range(len(active) + max(0, want_h) + max(0, want_p) - ACTIVE):
+                drop = next((p for p in reversed(active)
+                             if season.primary(p) != 'P' and not season.games_at(p).get('C', 0)), None)
+                if drop is None:
+                    break
+                active.remove(drop)
+                reserve.insert(0, drop)
+            free += reserve[RESERVE:]
+            reserve = reserve[:RESERVE]
             while want_h > 0 or want_p > 0:
                 r = next(fillers)
                 if r[68] == 1 and want_p > 0:
@@ -586,7 +616,7 @@ def build(year, install, db=DB, name=None, log=print):
                 nid = add_generated(r)
                 fs_recs[nid] = new_recs[-1]
                 active.append(nid)
-            mix = MixSeason(season, FillerSeason(fs_recs)) if fs_recs else season
+            mix = MixSeason(season, FillerSeason(fs_recs, pad=True)) if fs_recs else season
             order, align = lineup(active, mix, dh)
             rot, pen = staff(active, mix)
             conv = lambda xs: [add_real(x) if isinstance(x, str) else x for x in xs]
