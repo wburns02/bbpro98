@@ -378,3 +378,270 @@ def test_main_needs_a_data_directory(monkeypatch, tmp_path):
         server.main([])
     with pytest.raises(SystemExit):
         server.main(['--data', str(tmp_path / 'missing')])
+
+
+def preview_file(**over):
+    """A preview.json in the shape the watcher writes: two divisions, the second one unnamed."""
+    base = {
+        'headline': 'Yankees favored in a crowded East', 'body': 'The season opens April 6.\nFour clubs have a shot.',
+        'source': 'glm', 'kind': 'preview', 'created': '2026-10-09T14:03:11',
+        'facts': {
+            'association': '1998 Major Leagues', 'teams': 3, 'games': 162, 'opening_day': 'April 6',
+            'divisions': [
+                {'league': 'American League', 'division': 'East', 'teams': [
+                    {'name': 'New York Yankees', 'manager': 'Joe Torre', 'stadium': 'Yankee Stadium',
+                     'hitter': {'name': 'Bernie Williams', 'avg': '.339', 'hr': 30, 'rbi': 98},
+                     'pitcher': {'name': 'David Cone', 'w': 17, 'l': 6, 'era': '3.55', 'so': 200}},
+                    {'name': 'Boston Red Sox', 'manager': 'Jimy Williams', 'stadium': 'Fenway Park',
+                     'hitter': None, 'pitcher': None}]},
+                {'league': '', 'division': '', 'teams': [
+                    {'name': 'Seattle Mariners', 'manager': 'Lou Piniella', 'stadium': 'Kingdome',
+                     'hitter': {'name': 'Ken Griffey', 'avg': '.304', 'hr': 56, 'rbi': 146},
+                     'pitcher': {'name': 'Randy Johnson', 'w': 19, 'l': 4, 'era': '2.28', 'so': 213}}]},
+            ],
+        },
+    }
+    base.update(over)
+    return base
+
+
+def awards_file(**over):
+    """An awards.json in the shape the watcher writes: an American and a National League, no Cy Young in the second."""
+    base = {
+        'headline': 'Gonzalez and Clemens take the American League', 'body': 'Texas and Toronto each had a winner.',
+        'source': 'template', 'kind': 'awards', 'created': '2026-10-09T14:03:11',
+        'facts': {
+            'association': '1998 Major Leagues',
+            'leagues': [
+                {'league': 'American League',
+                 'champions': [{'division': 'East', 'team': 'New York Yankees', 'record': '114-48'},
+                               {'division': 'Central', 'team': 'Cleveland Indians', 'record': '89-73'}],
+                 'mvp': [{'name': 'Juan Gonzalez', 'team': 'TEX', 'avg': '.318', 'hr': 45, 'rbi': 157, 'r': 110,
+                          'sb': 3, 'runs_created': 129}],
+                 'cy_young': [{'name': 'Roger Clemens', 'team': 'TOR', 'w': 20, 'l': 6, 'era': '2.65', 'so': 271,
+                               'sv': 0, 'ip': '233.2'},
+                              {'name': 'Mike Mussina', 'team': 'BAL', 'w': 19, 'l': 9, 'era': '3.15', 'so': 222,
+                               'sv': 0, 'ip': '245.1'}]},
+                {'league': 'National League',
+                 'champions': [{'division': 'West', 'team': 'San Diego Padres', 'record': '98-64'}],
+                 'mvp': [{'name': 'Sammy Sosa', 'team': 'CHC', 'avg': '.308', 'hr': 66, 'rbi': 158, 'r': 134,
+                          'sb': 18, 'runs_created': 150}],
+                 'cy_young': []},
+            ],
+        },
+    }
+    base.update(over)
+    return base
+
+
+MAKERS = {'preview': preview_file, 'awards': awards_file}
+
+
+@pytest.fixture
+def season(seeded):
+    """seeded, plus both season files for 30L1998."""
+    write(seeded.root / '30L1998' / 'preview.json', preview_file())
+    write(seeded.root / '30L1998' / 'awards.json', awards_file())
+    return seeded
+
+
+def test_preview_page_has_the_story_layout_and_every_table_value(season):
+    status, headers, body = season.get('/news/30L1998/preview')
+    html = body.decode()
+    assert status == 200 and headers['content-type'] == HTML
+    assert '<title>Yankees favored in a crowded East</title>' in html
+    assert ('<p class="nav"><a href="/news/30L1998/">&larr; 1998 Major Leagues</a> &middot; '
+            '<a href="/news/">All leagues</a></p>') in html
+    assert '<h1>Yankees favored in a crowded East</h1>' in html
+    assert '<p class="dateline">Season preview</p><p class="byline">Staff writer</p>' in html
+    assert '<p>The season opens April 6.</p><p>Four clubs have a shot.</p>' in html
+    assert '<caption>American League East</caption>' in html
+    assert '<caption>Teams</caption>' in html
+    assert ('<th class="t">Team</th><th class="t">Manager</th><th class="t">Top hitter</th>'
+            '<th class="t">Top pitcher</th>') in html
+    assert ('<tr><td class="t">New York Yankees</td><td class="t">Joe Torre</td>'
+            '<td class="t">Bernie Williams, 30 HR, 98 RBI</td>'
+            '<td class="t">David Cone, 17-6, 3.55 ERA</td></tr>') in html
+    assert ('<tr><td class="t">Boston Red Sox</td><td class="t">Jimy Williams</td><td class="t"></td>'
+            '<td class="t"></td></tr>') in html
+    assert ('<tr><td class="t">Seattle Mariners</td><td class="t">Lou Piniella</td>'
+            '<td class="t">Ken Griffey, 56 HR, 146 RBI</td>'
+            '<td class="t">Randy Johnson, 19-4, 2.28 ERA</td></tr>') in html
+
+
+def test_awards_page_has_a_section_per_league_and_every_table_value(season):
+    status, headers, body = season.get('/news/30L1998/awards')
+    html = body.decode()
+    assert status == 200 and headers['content-type'] == HTML
+    assert '<title>Gonzalez and Clemens take the American League</title>' in html
+    assert '<p class="dateline">Season awards</p><p class="byline">Wire report</p>' in html
+    assert '<p>Texas and Toronto each had a winner.</p>' in html
+    assert html.index('<section><h2>American League</h2>') < html.index('<section><h2>National League</h2>')
+    assert ('<th class="t">Player</th><th class="t">Team</th><th>AVG</th><th>HR</th><th>RBI</th><th>R</th>'
+            '<th>SB</th><th>RC</th>') in html
+    assert ('<tr><td class="t">Juan Gonzalez</td><td class="t">TEX</td><td>.318</td><td>45</td><td>157</td>'
+            '<td>110</td><td>3</td><td>129</td></tr>') in html
+    assert ('<th class="t">Pitcher</th><th class="t">Team</th><th>W</th><th>L</th><th>ERA</th><th>IP</th>'
+            '<th>SO</th><th>SV</th>') in html
+    assert ('<tr><td class="t">Roger Clemens</td><td class="t">TOR</td><td>20</td><td>6</td><td>2.65</td>'
+            '<td>233.2</td><td>271</td><td>0</td></tr>') in html
+    assert ('<tr><td class="t">Mike Mussina</td><td class="t">BAL</td><td>19</td><td>9</td><td>3.15</td>'
+            '<td>245.1</td><td>222</td><td>0</td></tr>') in html
+    assert '<th class="t">Division</th><th class="t">Team</th><th>Record</th>' in html
+    assert '<tr><td class="t">East</td><td class="t">New York Yankees</td><td>114-48</td></tr>' in html
+    assert '<tr><td class="t">West</td><td class="t">San Diego Padres</td><td>98-64</td></tr>' in html
+    assert html.count('<caption>MVP</caption>') == 2
+    assert html.count('<caption>Cy Young</caption>') == 1
+    assert html.count('<caption>Division champions</caption>') == 2
+
+
+def test_one_league_awards_are_headed_the_league(season):
+    one = {'association': '1998 Major Leagues', 'leagues': [
+        {'league': '', 'champions': [{'division': 'West', 'team': 'Oakland Athletics', 'record': '74-88'}],
+         'mvp': [], 'cy_young': [{'name': 'Kenny Rogers', 'team': 'OAK', 'w': 12, 'l': 9, 'era': '3.96', 'so': 163,
+                                  'sv': 0, 'ip': '193.0'}]}]}
+    write(season.root / '30L1998' / 'awards.json', awards_file(headline='One league', facts=one))
+    html = season.get('/news/30L1998/awards')[2].decode()
+    assert '<section><h2>The league</h2>' in html
+    assert '<caption>Cy Young</caption>' in html and '<caption>Division champions</caption>' in html
+    assert '<caption>MVP</caption>' not in html
+    assert '<h2>American League</h2>' not in html
+
+
+def test_season_pages_with_no_data_have_no_tables_and_need_no_meta(site):
+    write(site.root / 'ORPHAN' / 'awards.json', awards_file(headline='', facts={'leagues': []}))
+    write(site.root / 'LONELY' / 'preview.json', preview_file(headline='', facts={'divisions': []}))
+    status, _, body = site.get('/news/ORPHAN/awards')
+    html = body.decode()
+    assert status == 200
+    assert '<title>Season awards</title>' in html and '&larr; ORPHAN</a>' in html
+    assert '<table' not in html and '<section>' not in html
+    html = site.get('/news/LONELY/preview')[2].decode()
+    assert '<title>Season preview</title>' in html and '&larr; LONELY</a>' in html
+    assert '<table' not in html
+
+
+@pytest.mark.parametrize('odd', [None, 'Bernie Williams', ['Bernie Williams']])
+def test_hitter_and_pitcher_that_are_not_objects_are_empty_cells(season, odd):
+    doc = preview_file()
+    yankees = doc['facts']['divisions'][0]['teams'][0]
+    yankees['hitter'], yankees['pitcher'] = odd, odd
+    write(season.root / '30L1998' / 'preview.json', doc)
+    html = season.get('/news/30L1998/preview')[2].decode()
+    assert ('<tr><td class="t">New York Yankees</td><td class="t">Joe Torre</td><td class="t"></td>'
+            '<td class="t"></td></tr>') in html
+    assert 'None' not in html and 'Bernie' not in html
+
+
+def test_missing_fields_in_a_hitter_or_pitcher_are_blank_not_none(season):
+    doc = preview_file()
+    yankees = doc['facts']['divisions'][0]['teams'][0]
+    yankees['hitter'], yankees['pitcher'] = {'name': 'Bernie Williams'}, {'name': 'David Cone'}
+    write(season.root / '30L1998' / 'preview.json', doc)
+    html = season.get('/news/30L1998/preview')[2].decode()
+    assert 'Bernie Williams,  HR,  RBI' in html and 'David Cone, -,  ERA' in html
+    assert 'None' not in html
+
+
+def test_names_and_headlines_are_escaped_on_both_season_pages(season):
+    doc = preview_file(headline='<script>alert(1)</script>')
+    doc['facts']['association'] = '<b>Lg</b>'
+    doc['facts']['divisions'][0]['teams'][0]['name'] = '<script>x</script>'
+    write(season.root / '30L1998' / 'preview.json', doc)
+    awards = awards_file(headline='<img src=x onerror=alert(1)>')
+    awards['facts']['leagues'][0]['league'] = '<script>y</script>'
+    awards['facts']['leagues'][0]['mvp'][0]['name'] = '<img src=y onerror=alert(2)>'
+    write(season.root / '30L1998' / 'awards.json', awards)
+    preview_html = season.get('/news/30L1998/preview')[2].decode()
+    awards_html = season.get('/news/30L1998/awards')[2].decode()
+    for html in (preview_html, awards_html):
+        assert '<script' not in html and '<img' not in html and '<b>' not in html
+    assert '&lt;script&gt;alert(1)&lt;/script&gt;' in preview_html and '&lt;script&gt;x&lt;/script&gt;' in preview_html
+    assert '&lt;b&gt;Lg&lt;/b&gt;' in preview_html
+    assert '&lt;img src=x onerror=alert(1)&gt;' in awards_html
+    assert '&lt;script&gt;y&lt;/script&gt;' in awards_html and '&lt;img src=y onerror=alert(2)&gt;' in awards_html
+
+
+@pytest.mark.parametrize('name', ['preview', 'awards'])
+def test_missing_season_file_is_404(seeded, name):
+    status, headers, body = seeded.get('/news/30L1998/' + name)
+    assert status == 404 and b'Not found' in body
+    assert_secure(headers, body)
+
+
+@pytest.mark.parametrize('name', ['preview', 'awards'])
+@pytest.mark.parametrize('content', ['{"headline": ', '[1, 2]', '"preview"', 'null'])
+def test_corrupt_or_non_object_season_file_is_404(seeded, name, content):
+    write(seeded.root / '30L1998' / (name + '.json'), content)
+    assert seeded.get('/news/30L1998/' + name)[0] == 404
+
+
+@pytest.mark.parametrize('name, kind', [
+    ('preview', 'awards'), ('preview', 'Preview'), ('preview', ''), ('preview', None),
+    ('awards', 'preview'), ('awards', 'Awards'), ('awards', None),
+])
+def test_season_file_of_another_kind_is_404(seeded, name, kind):
+    doc = MAKERS[name]()
+    doc['kind'] = kind
+    write(seeded.root / '30L1998' / (name + '.json'), doc)
+    assert seeded.get('/news/30L1998/' + name)[0] == 404
+
+
+def test_season_file_without_a_kind_is_404(seeded):
+    doc = preview_file()
+    del doc['kind']
+    write(seeded.root / '30L1998' / 'preview.json', doc)
+    assert seeded.get('/news/30L1998/preview')[0] == 404
+
+
+@pytest.mark.parametrize('path', ['/news/30L1998/preview/', '/news/30L1998/awards/', '/news/30L1998/preview/x'])
+def test_season_paths_take_no_trailing_slash_variant(season, path):
+    status, headers, body = season.get(path)
+    assert status == 404 and b'Not found' in body
+    assert_secure(headers, body)
+
+
+@pytest.mark.parametrize('path, status', [
+    ('/news/30L1998/preview', 200), ('/news/30L1998/awards', 200), ('/news/30L1998/', 200),
+    ('/news/MLBPA97/preview', 404), ('/news/MLBPA97/awards', 404),
+])
+def test_season_pages_carry_the_security_headers(season, path, status):
+    got, headers, body = season.get(path)
+    assert got == status
+    assert_secure(headers, body)
+
+
+def test_league_page_links_awards_before_preview_above_the_standings(season):
+    html = season.get('/news/30L1998/')[2].decode()
+    assert ('<aside class="side"><section class="season"><h2>Season</h2><ul>'
+            '<li><a href="/news/30L1998/awards">Season awards</a></li>'
+            '<li><a href="/news/30L1998/preview">Season preview</a></li>'
+            '</ul></section><section><div class="table-wrap"><table><caption>American League East</caption>') in html
+
+
+@pytest.mark.parametrize('files, links', [
+    (('preview',), ['Season preview']),
+    (('awards',), ['Season awards']),
+    (('awards', 'preview'), ['Season awards', 'Season preview']),
+])
+def test_league_page_lists_only_the_season_files_that_exist(seeded, files, links):
+    for name in files:
+        write(seeded.root / '30L1998' / (name + '.json'), MAKERS[name]())
+    html = seeded.get('/news/30L1998/')[2].decode()
+    for label in ('Season awards', 'Season preview'):
+        assert (label in html) == (label in links)
+    assert ('class="season"' in html) == bool(links)
+
+
+def test_league_page_has_no_season_section_without_either_file(seeded):
+    html = seeded.get('/news/30L1998/')[2].decode()
+    assert 'class="season"' not in html and '<h2>Season</h2>' not in html
+
+
+def test_season_section_is_on_the_first_page_only(season):
+    for i in range(31):
+        write(season.root / '30L1998' / 'recaps' / ('%016x.json' % i), story('%016x' % i, slot=i))
+    html1 = season.get('/news/30L1998/')[2].decode()
+    html2 = season.get('/news/30L1998/?page=2')[2].decode()
+    assert season.keys('/news/30L1998/?page=2')
+    assert 'class="season"' in html1 and 'class="season"' not in html2

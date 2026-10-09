@@ -1,5 +1,6 @@
-"""Read-only web pages for the news sidecar: the league news and game stories the watcher writes into a data directory,
-served under /news. The Cloudflare tunnel forwards the prefix unchanged, behind a login this server never sees.
+"""Read-only web pages for the news sidecar: the league news, game stories and season previews and awards the watcher
+writes into a data directory, served under /news. The Cloudflare tunnel forwards the prefix unchanged, behind a login
+this server never sees.
 Standard library only. The server reads the data directory and never writes to it.
 """
 import argparse
@@ -333,7 +334,8 @@ def _association(data_dir, assn, qs):
         lead.append('<p class="empty">No stories on this page.</p>')
     lead.extend(_story_row(assn, key, rec) for key, rec in shown)
     lead.append(_pager(assn, page, len(stories)))
-    side = _standings_html(meta.get('standings')) + _leaders_html(meta.get('leaders'))
+    season = _season_links(data_dir, assn) if page == 1 else ''
+    side = season + _standings_html(meta.get('standings')) + _leaders_html(meta.get('leaders'))
     body = (_masthead(name, _through(meta)) + _nav()
             + '<div class="grid"><section class="lead">%s</section><aside class="side">%s</aside></div>'
             % (''.join(lead), side))
@@ -349,13 +351,22 @@ def _decision(label, p):
             % ((label, esc(p.get('name')), esc(p.get('team'))) + stats))
 
 
+def _byline_html(rec):
+    source = rec.get('source')
+    byline = BYLINES.get(source) if isinstance(source, str) else None
+    return '<p class="byline">%s</p>' % esc(byline) if byline else ''
+
+
+def _league_nav(assn, facts):
+    league = _text(facts.get('association')) or assn
+    return ('<p class="nav"><a href="/news/%s/">&larr; %s</a> &middot; <a href="/news/">All leagues</a></p>'
+            % (esc(assn), esc(league)))
+
+
 def _story_page(assn, key, rec):
     facts = _d(rec.get('facts'))
     headline = _text(rec.get('headline'))
-    league = _text(facts.get('association')) or assn
     stadium = _text(_d(facts.get('home')).get('stadium'))
-    source = rec.get('source')
-    byline = BYLINES.get(source) if isinstance(source, str) else None
     away, home = _d(facts.get('away')), _d(facts.get('home'))
     box = _table('Box score', ('Team', 'R', 'H'), [[s.get('name'), s.get('runs'), s.get('hits')] for s in (away, home)])
     bats = [[b.get('team'), b.get('name'), b.get('ab'), b.get('h'), b.get('hr'), b.get('rbi'), b.get('bb'), b.get('r')]
@@ -364,11 +375,10 @@ def _story_page(assn, key, rec):
     lines = ''.join(_decision(label, _d(decisions.get(role)))
                     for label, role in (('W', 'win'), ('L', 'loss'), ('S', 'save')))
     parts = [
-        '<p class="nav"><a href="/news/%s/">&larr; %s</a> &middot; <a href="/news/">All leagues</a></p>'
-        % (esc(assn), esc(league)),
+        _league_nav(assn, facts),
         '<article class="story-page"><h1>%s</h1>' % esc(headline),
         '<p class="dateline">%s</p>' % esc(SEP.join(x for x in (_when(rec), stadium) if x)),
-        '<p class="byline">%s</p>' % esc(byline) if byline else '',
+        _byline_html(rec),
         _paras_html(_paragraphs(rec.get('body'))),
         box,
         _table('Notable batters', ('Team', 'Batter', 'AB', 'H', 'HR', 'RBI', 'BB', 'R'), bats, text=2) if bats else '',
@@ -381,6 +391,89 @@ def _story_page(assn, key, rec):
 def _story(data_dir, assn, key):
     rec = _read_obj(data_dir / assn / 'recaps' / (key + '.json'))
     return _story_page(assn, key, rec) if rec is not None else _not_found()
+
+
+def _season_file(data_dir, assn, which):
+    """The season preview or awards (which: 'preview' or 'awards') as an object of that kind, else None."""
+    rec = _read_obj(data_dir / assn / (which + '.json'))
+    return rec if rec is not None and rec.get('kind') == which else None
+
+
+def _season_page(assn, rec, label, below):
+    """A season page in the game story layout: the body, then the markup in below."""
+    headline = _text(rec.get('headline'))
+    parts = [
+        _league_nav(assn, _d(rec.get('facts'))),
+        '<article class="story-page"><h1>%s</h1>' % esc(headline),
+        '<p class="dateline">%s</p>' % esc(label),
+        _byline_html(rec),
+        _paras_html(_paragraphs(rec.get('body'))),
+        ''.join(below),
+        '</article>',
+    ]
+    return _page_reply(200, headline or label, ''.join(parts))
+
+
+def _hitter_text(hitter):
+    if not isinstance(hitter, dict):
+        return ''
+    return '%s, %s HR, %s RBI' % (_text(hitter.get('name')), _text(hitter.get('hr')), _text(hitter.get('rbi')))
+
+
+def _pitcher_text(pitcher):
+    if not isinstance(pitcher, dict):
+        return ''
+    return '%s, %s-%s, %s ERA' % (_text(pitcher.get('name')), _text(pitcher.get('w')), _text(pitcher.get('l')),
+                                  _text(pitcher.get('era')))
+
+
+def _preview_page(assn, rec):
+    tables = []
+    for div in _dicts(_d(rec.get('facts')).get('divisions')):
+        league, division = _text(div.get('league')).strip(), _text(div.get('division')).strip()
+        caption = ' '.join(x for x in (league, division) if x) or 'Teams'
+        rows = [[t.get('name'), t.get('manager'), _hitter_text(t.get('hitter')), _pitcher_text(t.get('pitcher'))]
+                for t in _dicts(div.get('teams'))]
+        tables.append(_table(caption, ('Team', 'Manager', 'Top hitter', 'Top pitcher'), rows, text=4))
+    return _season_page(assn, rec, 'Season preview', tables)
+
+
+def _awards_page(assn, rec):
+    sections = []
+    for lg in _dicts(_d(rec.get('facts')).get('leagues')):
+        tables = []
+        mvp = [[m.get('name'), m.get('team'), m.get('avg'), m.get('hr'), m.get('rbi'), m.get('r'), m.get('sb'),
+                m.get('runs_created')] for m in _dicts(lg.get('mvp'))]
+        cy = [[p.get('name'), p.get('team'), p.get('w'), p.get('l'), p.get('era'), p.get('ip'), p.get('so'),
+               p.get('sv')] for p in _dicts(lg.get('cy_young'))]
+        champs = [[c.get('division'), c.get('team'), c.get('record')] for c in _dicts(lg.get('champions'))]
+        if mvp:
+            tables.append(_table('MVP', ('Player', 'Team', 'AVG', 'HR', 'RBI', 'R', 'SB', 'RC'), mvp, text=2))
+        if cy:
+            tables.append(_table('Cy Young', ('Pitcher', 'Team', 'W', 'L', 'ERA', 'IP', 'SO', 'SV'), cy, text=2))
+        if champs:
+            tables.append(_table('Division champions', ('Division', 'Team', 'Record'), champs, text=2))
+        league = _text(lg.get('league')).strip() or 'The league'
+        sections.append('<section><h2>%s</h2>%s</section>' % (esc(league), ''.join(tables)))
+    return _season_page(assn, rec, 'Season awards', sections)
+
+
+def _season(data_dir, assn, which):
+    """The season preview or awards page; 404 when its file is missing, unreadable or of another kind."""
+    rec = _season_file(data_dir, assn, which)
+    if rec is None:
+        return _not_found()
+    return _preview_page(assn, rec) if which == 'preview' else _awards_page(assn, rec)
+
+
+def _season_links(data_dir, assn):
+    """The Season box for the side column: awards above preview, each only when its file exists. '' for neither."""
+    links = ['<li><a href="/news/%s/%s">%s</a></li>' % (esc(assn), which, label)
+             for which, label in (('awards', 'Season awards'), ('preview', 'Season preview'))
+             if _season_file(data_dir, assn, which) is not None]
+    if not links:
+        return ''
+    return '<section class="season"><h2>Season</h2><ul>%s</ul></section>' % ''.join(links)
 
 
 def _status(data_dir):
@@ -440,6 +533,8 @@ def route(data_dir, target):
         return _association(data_dir, assn, qs)
     if len(rest) == 2 and KEY_RE.fullmatch(rest[1]):
         return _story(data_dir, assn, rest[1])
+    if len(rest) == 2 and rest[1] in ('preview', 'awards'):
+        return _season(data_dir, assn, rest[1])
     return _not_found()
 
 
