@@ -1,5 +1,6 @@
 """The create-a-player form: a small HTTP service on 127.0.0.1 that nginx serves under /create/, behind the site's
-PIN gate. A visitor picks an association and a player's name, position, hand, age and scouting grades;
+PIN gate. A visitor builds a player in three steps: his association, name, position, hands, age, an archetype and a
+mode; then his Now and Ceiling grades (and a pitcher's arsenal); then a baseball card to check before he is signed.
 create.add_player writes him into that association's free agent pool, and the ledger in the data directory lists who
 was made. Standard library only. Pages are server.py's; the POST is checked for its origin, length and type before it
 is read.
@@ -18,6 +19,7 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 
 import create
 import gamedata
+import scout
 import server
 import watch
 
@@ -42,11 +44,27 @@ THROWS_PAIRS = (('L', 'Left'), ('R', 'Right'))
 GRADE_LABELS = {20: '20 poor', 25: '25', 30: '30 well below', 35: '35', 40: '40 below average', 45: '45',
                 50: '50 average', 55: '55', 60: '60 plus', 65: '65', 70: '70 plus-plus', 75: '75', 80: '80 elite'}
 GRADE_PAIRS = tuple((str(g), GRADE_LABELS[g]) for g in create.GRADES)
-GRADE_NAMES = {'contact': 'Contact', 'power': 'Power', 'speed': 'Speed', 'arm': 'Arm', 'fielding': 'Fielding',
-               'stamina': 'Stamina', 'control': 'Control', 'strikeout': 'Strikeout', 'stuff': 'Stuff'}
+ARSENAL_PAIRS = (('none', 'Not thrown'),) + GRADE_PAIRS
+ROLE_LABELS = {'hit': 'hitter', 'pit': 'pitcher'}
+MODE_TEXT = (
+    ('realistic', 'Realistic: the budget is %d Now and %d Ceiling points for hitters and %d and %d for pitchers, '
+                  'counting only grades above 50; a ceiling can sit at most %d above Now at 22 or under, %d at 23 to 26, '
+                  '%d at 27 to 30 and none from 31.' % (create.BUDGET['hit'][0], create.BUDGET['hit'][1],
+                                                        create.BUDGET['pit'][0], create.BUDGET['pit'][1],
+                                                        create.max_gap(22), create.max_gap(23), create.max_gap(27))),
+    ('sandbox', 'Sandbox: no budget or age limits.'),
+)
+WHO_FIELDS = ('assn', 'first', 'last', 'pos', 'bats', 'throws', 'age', 'archetype', 'mode')
+ROW_PREFIXES = ('now_', 'ceil_', 'p_')      # the fields that sit beside a rating row; other messages go above the rows
 NAV = '<p class="nav"><a href="/create/">Create a player</a> &middot; <a href="/">Back to the game</a></p>'
 FORM_CSS = '.field { margin: 0.6em 0; } .field label { display: block; } .error { font-weight: 700; } ' \
-           '.note { font-style: italic; }'
+           '.note { font-style: italic; } .mode { display: block; }'
+CARD_CSS = '.card { border: 2px solid #234; border-radius: 6px; max-width: 34em; margin: 1em 0; padding: 0.8em; } ' \
+           '.card h2 { margin: 0; } .rating { display: flex; gap: 0.6em; align-items: center; margin: 0.3em 0; } ' \
+           '.rating .name { width: 9em; } .rating .nums { width: 6em; text-align: right; } ' \
+           '.bar { position: relative; flex: 1; height: 0.8em; background: #eee; } ' \
+           '.bar span { position: absolute; top: 0; left: 0; height: 100%; } ' \
+           '.bar .ceil { background: #bcd; } .bar .now { background: #234; }'
 _LOCK = threading.Lock()    # one create at a time: the cap count, the write and the ledger go together
 
 
@@ -125,9 +143,97 @@ def _field(text, control, error=''):
     return '<div class="field"><label>%s %s</label>%s</div>' % (server.esc(text), control, msg)
 
 
-def _grades(legend, names, value, error):
-    fields = ''.join(_field(GRADE_NAMES[n], _select(n, GRADE_PAIRS, value(n, '50')), error(n)) for n in names)
-    return '<fieldset><legend>%s</legend>%s</fieldset>' % (server.esc(legend), fields)
+def _section(legend, body):
+    return '<fieldset><legend>%s</legend>%s</fieldset>' % (server.esc(legend), body)
+
+
+def _row(text, controls, messages):
+    """One rating's row: its name, its controls, and the messages for them beside it."""
+    msgs = ''.join('<p class="error">%s</p>' % server.esc(m) for m in messages if m)
+    return '<div class="field"><span>%s</span> %s%s</div>' % (server.esc(text), ' '.join(controls), msgs)
+
+
+def _grade_rows(names, values, errors):
+    """A Now select, and for every rating but strikeout a Ceiling select, one row per rating."""
+    rows = []
+    for r in names:
+        controls = ['Now %s' % _select('now_' + r, GRADE_PAIRS, values.get('now_' + r, '50'))]
+        messages = [errors.get('now_' + r, '')]
+        if r != 'strikeout':
+            controls.append('Ceiling %s' % _select('ceil_' + r, GRADE_PAIRS, values.get('ceil_' + r, '50')))
+            messages.append(errors.get('ceil_' + r, ''))
+        rows.append(_row(create.RATING_LABELS[r], controls, messages))
+    return ''.join(rows)
+
+
+def _arsenal_rows(values, errors):
+    """Seven rows in slot order, each with a Now and a Ceiling select whose first option is 'Not thrown'."""
+    rows = []
+    for slot in create.PITCH_SLOTS:
+        field = 'p_' + slot
+        controls = ['Now %s' % _select(field + '_now', ARSENAL_PAIRS, values.get(field + '_now', 'none')),
+                    'Ceiling %s' % _select(field + '_ceil', ARSENAL_PAIRS, values.get(field + '_ceil', 'none'))]
+        rows.append(_row(create.PITCH_LABELS[slot], controls, [errors.get(field, '')]))
+    return ''.join(rows)
+
+
+def _read_grade(value):
+    """The grade a posted value reads as, or None; the budget line counts only real grades."""
+    return int(value) if value.isdigit() and int(value) in create.GRADES else None
+
+
+def _budget_text(values):
+    """Realistic mode's budget for the values given: the points Now and Ceiling spend against their maximums, and the
+    most a ceiling can sit above Now at this age. A grade that does not read counts as 50, so it spends nothing."""
+    pos = values.get('pos', '')
+    names = create.ROLE_RATINGS[create.role(pos)]
+    now = {r: _read_grade(values.get('now_' + r, '')) or 50 for r in names}
+    ceiling = {r: _read_grade(values.get('ceil_' + r, '')) or 50 for r in names if r != 'strikeout'}
+    pitches = {}
+    if create.role(pos) == 'pit':
+        for slot in create.PITCH_SLOTS:
+            n = _read_grade(values.get('p_%s_now' % slot, 'none'))
+            c = _read_grade(values.get('p_%s_ceil' % slot, 'none'))
+            if n is not None and c is not None:
+                pitches[slot] = (n, c)
+    b = create.budget({'pos': pos, 'now': now, 'ceiling': ceiling, 'pitches': pitches})
+    text = 'Now: %d of %d points; Ceiling: %d of %d points.' % (b['now'], b['now_max'], b['ceiling'], b['ceiling_max'])
+    age = values.get('age', '')
+    if age.isdigit():
+        text += ' At %d a ceiling can be at most %d above Now.' % (int(age), create.max_gap(int(age)))
+    return text
+
+
+def _hidden(values, fields):
+    return ''.join('<input type="hidden" name="%s" value="%s">' % (server.esc(f), server.esc(values.get(f, '')))
+                   for f in fields)
+
+
+def _form_fields(pos):
+    """Every field a form for this position carries: step one's, then each grade of the role, then the arsenal. The
+    preview passes on only these, never whatever else was posted."""
+    names = create.ROLE_RATINGS[create.role(pos)]
+    fields = list(WHO_FIELDS)
+    fields += ['now_' + r for r in names] + ['ceil_' + r for r in names if r != 'strikeout']
+    if create.role(pos) == 'pit':
+        fields += ['p_%s_%s' % (slot, k) for slot in create.PITCH_SLOTS for k in ('now', 'ceil')]
+    return fields
+
+
+def _archetype_default(chosen, pos):
+    """The archetype the select starts on: the one posted, else the first of the posted position's role (a browser starts
+    on the first position, a pitcher)."""
+    if chosen:
+        return chosen
+    role = create.role(pos or 'P')
+    return next(k for k, a in create.ARCHETYPES.items() if a['role'] == role)
+
+
+def _mode_field(chosen, error=''):
+    radios = ''.join('<label class="mode"><input type="radio" name="mode" value="%s"%s> %s</label>'
+                     % (m, ' checked' if m == chosen else '', server.esc(t)) for m, t in MODE_TEXT)
+    msg = '<p class="error">%s</p>' % server.esc(error) if error else ''
+    return '<fieldset><legend>Mode</legend>%s%s</fieldset>' % (radios, msg)
 
 
 def _created(data, labels):
@@ -140,8 +246,9 @@ def _created(data, labels):
     return '<h2>Created players</h2><ul>%s</ul>' % items
 
 
-def _form(srv, values, errors, notice=''):
-    """The form page's body, with the values and messages given and the created players below it."""
+def _who_page(srv, values, errors, notice=''):
+    """Step one: the association, the player's name, position, hands, age, archetype and mode, with the created players
+    below. values are the posted or default values; errors maps a field to its message."""
     assns = watch.associations(srv.game)
     labels = _labels(assns)
     stems = sorted(assns, key=lambda s: (labels[s], s))
@@ -152,6 +259,9 @@ def _form(srv, values, errors, notice=''):
     def error(field):
         return errors.get(field, '')
 
+    archetypes = [(k, '%s (%s)' % (a['label'], ROLE_LABELS[a['role']])) for k, a in create.ARCHETYPES.items()]
+    blurbs = ''.join('<li><b>%s</b> %s</li>' % (server.esc(a['label']), server.esc(a['blurb']))
+                     for a in create.ARCHETYPES.values())
     out = [server._masthead('Create a Player'), '<style>%s</style>' % FORM_CSS]
     if notice:
         out.append('<p class="error">%s</p>' % server.esc(notice))
@@ -168,13 +278,161 @@ def _form(srv, values, errors, notice=''):
     out.append(_field('Throws', _select('throws', THROWS_PAIRS, value('throws')), error('throws')))
     out.append(_field('Age', '<input type="number" name="age" min="17" max="45" value="%s">'
                       % server.esc(value('age', '22')), error('age')))
-    out.append('<p class="note">Pitchers use the pitching grades; everyone else the hitting and fielding grades.</p>')
-    out.append(_grades('Hitting and fielding', create.HIT_GRADES, value, error))
-    out.append(_grades('Pitching', create.PIT_GRADES, value, error))
-    out.append('<p><button type="submit">Create player</button></p>')
+    out.append(_field('Archetype', _select('archetype', archetypes,
+                                           _archetype_default(value('archetype'), value('pos'))), error('archetype')))
+    out.append('<ul class="blurbs">%s</ul>' % blurbs)
+    out.append(_mode_field(value('mode', 'realistic'), error('mode')))
+    out.append('<p><button type="submit" name="step" value="who">Next</button></p>')
     out.append('</form>')
     out.append(_created(srv.data, labels))
     return ''.join(out)
+
+
+def _ratings_page(values, errors, notice=''):
+    """Step two: a Now and a Ceiling grade for each rating of the role (a pitcher also has his arsenal), the budget in
+    realistic mode, and the step one values as hidden inputs. errors are the posted form's; messages not beside a row go
+    above the rows."""
+    role = create.role(values.get('pos', ''))
+    top = [m for k, m in errors.items() if not k.startswith(ROW_PREFIXES)]
+    out = [server._masthead('Create a Player'), '<style>%s</style>' % FORM_CSS]
+    if notice:
+        out.append('<p class="error">%s</p>' % server.esc(notice))
+    out.extend('<p class="error">%s</p>' % server.esc(m) for m in top)
+    if values.get('mode') == 'realistic':
+        out.append('<p class="note">%s</p>' % server.esc(_budget_text(values)))
+    out.append('<form method="post" action="/create/">')
+    out.append(_hidden(values, WHO_FIELDS))
+    if role == 'hit':
+        out.append(_section('Hitting and fielding', _grade_rows(create.HIT_RATINGS, values, errors)))
+    else:
+        out.append(_section('Pitching', _grade_rows(create.ROLE_RATINGS['pit'], values, errors)))
+        out.append(_section('Arsenal', _arsenal_rows(values, errors)))
+    out.append('<p><button type="submit" name="step" value="ratings">Preview the card</button> '
+               '<button type="submit" name="step" value="back">Back</button></p>')
+    out.append('</form>')
+    return ''.join(out)
+
+
+def _pct(grade):
+    """A grade's place on a card's bar: 20 at the left edge, 80 at the right, as a CSS width."""
+    return '%.1f%%' % ((grade - 20) / 60 * 100)
+
+
+def _bar(name, now, ceil, nums):
+    """One row of the card: a bar filled to the Now grade, the Ceiling reached in a lighter shade, and the numbers."""
+    return ('<div class="rating"><span class="name">%s</span><span class="bar"><span class="ceil" style="width:%s">'
+            '</span><span class="now" style="width:%s"></span></span><span class="nums">%s</span></div>'
+            % (server.esc(name), _pct(ceil), _pct(now), server.esc(nums)))
+
+
+def _card_rows(spec):
+    now, ceiling = spec['now'], spec['ceiling']
+    rows = []
+    for r in create.ROLE_RATINGS[create.role(spec['pos'])]:
+        if r == 'strikeout':
+            rows.append(_bar(create.RATING_LABELS[r], now[r], now[r], str(now[r])))
+        else:
+            rows.append(_bar(create.RATING_LABELS[r], now[r], ceiling[r], '%d / %d' % (now[r], ceiling[r])))
+    for slot in create.PITCH_SLOTS:
+        if slot in spec['pitches']:
+            n, c = spec['pitches'][slot]
+            rows.append(_bar(create.PITCH_LABELS[slot], n, c, '%d / %d' % (n, c)))
+    return ''.join(rows)
+
+
+def _preview_page(srv, form, spec):
+    """The baseball card for a valid spec: the front, then the back with the scouting report and the closest real
+    player, then the buttons that edit the ratings or sign him. Every posted value rides along as a hidden input."""
+    stem = spec['assn']
+    label = _label(stem, watch.associations(srv.game).get(stem))
+    match = create.comparable(srv.game, stem, spec, scout.year_of(label) or 1997)
+    if match is None:
+        like = 'Plays like: no close match in this association.'
+    else:
+        like = 'Plays like: %s (%s, age %d)' % (match['name'], match['team'] or 'free agent', match['age'])
+    report = ''.join('<li>%s</li>' % server.esc(s) for s in create.scouting_report(spec))
+    card = ('<div class="card"><div class="front"><h2>%s</h2><p>%s &middot; B/T %s/%s &middot; age %d</p>'
+            '<p>%s &middot; %s</p>%s</div><div class="back"><h3>Scouting report</h3><ul>%s</ul><p>%s</p></div></div>'
+            % (server.esc('%s %s' % (spec['first'], spec['last'])), server.esc(POSITION_LABELS[spec['pos']]),
+               server.esc(spec['bats']), server.esc(spec['throws']), spec['age'], server.esc(label),
+               server.esc(create.ARCHETYPES[spec['archetype']]['label']), _card_rows(spec), report,
+               server.esc(like)))
+    out = [server._masthead('Create a Player'), '<style>%s%s</style>' % (FORM_CSS, CARD_CSS), card,
+           '<form method="post" action="/create/">',
+           _hidden(form, _form_fields(spec['pos'])),
+           '<p><button type="submit" name="step" value="edit">Edit ratings</button> '
+           '<button type="submit" name="step" value="commit">Sign him into the pool</button></p>',
+           '</form>']
+    return ''.join(out)
+
+
+def _step_who(srv, form):
+    who, errors = create.validate_who(form, watch.associations(srv.game))
+    if errors:
+        return server._page_reply(422, 'Create a Player', _who_page(srv, form, errors))
+    values = {k: str(v) for k, v in who.items()}
+    values.update(create.archetype_fields(who['archetype']))
+    return server._page_reply(200, 'Create a Player', _ratings_page(values, {}))
+
+
+def _step_back(srv, form):
+    return server._page_reply(200, 'Create a Player', _who_page(srv, form, {}))
+
+
+def _step_ratings(srv, form):
+    spec, errors = create.validate(form, watch.associations(srv.game))
+    if errors:
+        return server._page_reply(422, 'Create a Player', _ratings_page(form, errors))
+    return server._page_reply(200, 'Create a Player', _preview_page(srv, form, spec))
+
+
+def _step_edit(srv, form):
+    _, errors = create.validate_who(form, watch.associations(srv.game))
+    if errors:
+        return server._page_reply(422, 'Create a Player', _who_page(srv, form, errors))
+    return server._page_reply(200, 'Create a Player', _ratings_page(form, {}))
+
+
+def _step_commit(srv, form):
+    assns = watch.associations(srv.game)
+    spec, errors = create.validate(form, assns)
+    if errors:
+        return server._page_reply(422, 'Create a Player', _ratings_page(form, errors))
+    return _commit(srv, form, spec, assns)
+
+
+def _step_unknown(srv, form):
+    return server._page_reply(422, 'Create a Player', _who_page(srv, form, {}, 'Start again.'))
+
+
+STEPS = {'who': _step_who, 'back': _step_back, 'ratings': _step_ratings, 'edit': _step_edit, 'commit': _step_commit}
+
+
+def _commit(srv, form, spec, assns):
+    """v1's create path for a valid spec: the lock, the cap, the write, then the ledger, which gains the archetype and
+    the mode."""
+    stem = spec['assn']
+    now = datetime.datetime.now().astimezone()
+    with _LOCK:
+        entries = _read_ledger(srv.data, stem)
+        if len(entries) >= CAP:
+            return _notice(429, 'Create a Player', 'This association already has %d created players.' % CAP)
+        try:
+            pid, _ = create.add_player(srv.game, spec, srv.donor, srv.backup, now, srv.proc)
+        except create.AssociationOpen:
+            notice = ('%s is open in the game. Go back to the game\'s main menu, then create the player again.'
+                      % _label(stem, assns[stem]))
+            return server._page_reply(409, 'Create a Player', _ratings_page(form, {}, notice))
+        except Exception:
+            traceback.print_exc()
+            return _notice(500, 'Create a Player', 'Could not add the player.')
+        entries.append({'pid': pid, 'name': '%s %s' % (spec['first'], spec['last']), 'pos': spec['pos'],
+                        'assn': stem, 'created': now.isoformat(timespec='seconds'),
+                        'archetype': spec['archetype'], 'mode': spec['mode']})
+        _write_ledger(srv.data, stem, entries)
+    target = '/create/done?' + urlencode({'assn': stem, 'pid': pid})
+    body = server._masthead('Player created') + '<p><a href="%s">Continue</a></p>' % server.esc(target)
+    return server._page_reply(303, 'Player created', body, (('Location', target),))
 
 
 def _notice(status, title, message, extra=()):
@@ -248,7 +506,7 @@ class Handler(BaseHTTPRequestHandler):
         if target.path == '/create/':
             if method == 'POST':
                 return self._submit()
-            return server._page_reply(200, 'Create a Player', _form(self.server, {}, {}))
+            return server._page_reply(200, 'Create a Player', _who_page(self.server, {}, {}))
         if target.path == '/create':
             return server._moved('/create/')
         if target.path == '/create/done':
@@ -271,32 +529,7 @@ class Handler(BaseHTTPRequestHandler):
             return _notice(403, 'Forbidden', 'The form must be posted from this site.')
         body = self.rfile.read(int(length)).decode('utf-8', 'replace')
         form = {k: v[0] for k, v in parse_qs(body, keep_blank_values=True).items()}
-
-        assns = watch.associations(srv.game)
-        spec, errors = create.validate(form, assns)
-        if errors:
-            return server._page_reply(422, 'Create a Player', _form(srv, form, errors))
-        stem = spec['assn']
-        now = datetime.datetime.now().astimezone()
-        with _LOCK:
-            entries = _read_ledger(srv.data, stem)
-            if len(entries) >= CAP:
-                return _notice(429, 'Create a Player', 'This association already has %d created players.' % CAP)
-            try:
-                pid, _ = create.add_player(srv.game, spec, srv.donor, srv.backup, now, srv.proc)
-            except create.AssociationOpen:
-                notice = ('%s is open in the game. Go back to the game\'s main menu, then create the player again.'
-                          % _label(stem, assns[stem]))
-                return server._page_reply(409, 'Create a Player', _form(srv, form, {}, notice))
-            except Exception:
-                traceback.print_exc()
-                return _notice(500, 'Create a Player', 'Could not add the player.')
-            entries.append({'pid': pid, 'name': '%s %s' % (spec['first'], spec['last']), 'pos': spec['pos'],
-                            'assn': stem, 'created': now.isoformat(timespec='seconds')})
-            _write_ledger(srv.data, stem, entries)
-        target = '/create/done?' + urlencode({'assn': stem, 'pid': pid})
-        body = server._masthead('Player created') + '<p><a href="%s">Continue</a></p>' % server.esc(target)
-        return server._page_reply(303, 'Player created', body, (('Location', target),))
+        return STEPS.get(form.get('step', 'who'), _step_unknown)(srv, form)
 
     def _send(self, status, ctype, body, extra, head):
         self.send_response(status)

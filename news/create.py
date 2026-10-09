@@ -15,14 +15,80 @@ import league
 import scout
 
 POSITIONS = ('P', 'C', '1B', '2B', '3B', 'SS', 'LF', 'CF', 'RF')      # code = index + 1
-HIT_GRADES = ('contact', 'power', 'speed', 'arm', 'fielding')
-PIT_GRADES = ('stamina', 'control', 'strikeout', 'stuff')
+HIT_RATINGS = ('contact', 'power', 'speed', 'arm', 'fielding')
+PIT_RATINGS = ('stamina', 'control', 'hold')
+ROLE_RATINGS = {'hit': HIT_RATINGS, 'pit': PIT_RATINGS + ('strikeout',)}   # strikeout has a Now grade only
+INDEX = {'contact': 0, 'power': 1, 'speed': 2, 'arm': 3, 'hold': 4, 'stamina': 5, 'control': 6}   # fielding: 14 + code - 1
+PITCH_SLOTS = ('FB', 'CB', 'SI', 'SL', 'CU', 'SC', 'KN')    # storage order: rating index 7 + slot number
+PITCH_LABELS = {'FB': 'Fastball', 'CB': 'Curveball', 'SI': 'Sinker', 'SL': 'Slider', 'CU': 'Changeup',
+                'SC': 'Screwball', 'KN': 'Knuckleball'}
+RATING_LABELS = {'contact': 'Contact', 'power': 'Power', 'speed': 'Speed', 'arm': 'Arm', 'fielding': 'Fielding',
+                 'stamina': 'Stamina', 'control': 'Control', 'hold': 'Hold runners', 'strikeout': 'Strikeout'}
+GRADE_WORDS = ((80, 'elite'), (70, 'plus-plus'), (60, 'plus'), (55, 'above average'), (50, 'average'),
+               (45, 'fringe'), (40, 'below average'), (30, 'well below average'), (20, 'poor'))
+MODES = ('realistic', 'sandbox')
+BUDGET = {'hit': (50, 100), 'pit': (80, 110)}      # (Now, Ceiling) points above 50 that a realistic player may spend
+ARCHETYPES = {
+    'contact': {'label': 'Contact hitter', 'role': 'hit',
+                'blurb': 'A steady bat who puts the ball in play, with a reliable glove and little power.',
+                'now': {'contact': 65, 'power': 40, 'speed': 55, 'arm': 50, 'fielding': 55},
+                'ceiling': {'contact': 70, 'power': 45, 'speed': 55, 'arm': 50, 'fielding': 60}, 'pitches': {}},
+    'slugger': {'label': 'Slugger', 'role': 'hit',
+                'blurb': 'A power bat who hits for distance, runs slowly and is clumsy in the field.',
+                'now': {'contact': 45, 'power': 70, 'speed': 35, 'arm': 50, 'fielding': 45},
+                'ceiling': {'contact': 50, 'power': 75, 'speed': 35, 'arm': 50, 'fielding': 45}, 'pitches': {}},
+    'speed': {'label': 'Speedster', 'role': 'hit',
+              'blurb': 'A fast hitter who runs the bases well and covers ground in the field, with little power.',
+              'now': {'contact': 55, 'power': 30, 'speed': 75, 'arm': 45, 'fielding': 60},
+              'ceiling': {'contact': 60, 'power': 35, 'speed': 80, 'arm': 45, 'fielding': 65}, 'pitches': {}},
+    'glove': {'label': 'Glove first', 'role': 'hit',
+              'blurb': 'A first-rate fielder with a strong arm and a light bat.',
+              'now': {'contact': 40, 'power': 35, 'speed': 55, 'arm': 65, 'fielding': 75},
+              'ceiling': {'contact': 45, 'power': 35, 'speed': 55, 'arm': 65, 'fielding': 80}, 'pitches': {}},
+    'prospect': {'label': 'Five-tool prospect', 'role': 'hit',
+                 'blurb': 'Fringe at every hitting skill today, with a wide ceiling he can grow into.',
+                 'now': {'contact': 45, 'power': 45, 'speed': 45, 'arm': 45, 'fielding': 45},
+                 'ceiling': {'contact': 70, 'power': 70, 'speed': 70, 'arm': 70, 'fielding': 70}, 'pitches': {}},
+    'regular': {'label': 'Everyday regular', 'role': 'hit',
+                'blurb': 'A solid everyday player with no weakness, who is unlikely to grow much.',
+                'now': {'contact': 50, 'power': 50, 'speed': 50, 'arm': 50, 'fielding': 50},
+                'ceiling': {'contact': 55, 'power': 55, 'speed': 55, 'arm': 55, 'fielding': 55}, 'pitches': {}},
+    'ace': {'label': 'Power ace', 'role': 'pit',
+            'blurb': 'A power pitcher with a plus fastball and slider who can carry a rotation.',
+            'now': {'stamina': 65, 'control': 50, 'hold': 50, 'strikeout': 70},
+            'ceiling': {'stamina': 70, 'control': 55, 'hold': 50},
+            'pitches': {'FB': (75, 80), 'SL': (65, 70), 'CU': (50, 55)}},
+    'artist': {'label': 'Control artist', 'role': 'pit',
+               'blurb': 'A starter who lives on control and a wide mix of pitches rather than velocity.',
+               'now': {'stamina': 60, 'control': 75, 'hold': 55, 'strikeout': 45},
+               'ceiling': {'stamina': 60, 'control': 75, 'hold': 55},
+               'pitches': {'FB': (45, 45), 'CB': (60, 60), 'SI': (55, 55), 'CU': (65, 70)}},
+    'sinker': {'label': 'Sinkerballer', 'role': 'pit',
+               'blurb': 'A groundball starter whose sinker does most of the work, with little strikeout stuff.',
+               'now': {'stamina': 60, 'control': 60, 'hold': 50, 'strikeout': 40},
+               'ceiling': {'stamina': 65, 'control': 60, 'hold': 50},
+               'pitches': {'SI': (70, 75), 'SL': (50, 55), 'CU': (50, 50)}},
+    'knuckle': {'label': 'Knuckleballer', 'role': 'pit',
+                'blurb': 'A knuckleballer who goes deep into games on a pitch no hitter can time.',
+                'now': {'stamina': 70, 'control': 45, 'hold': 35, 'strikeout': 50},
+                'ceiling': {'stamina': 70, 'control': 45, 'hold': 35},
+                'pitches': {'FB': (35, 35), 'KN': (70, 75)}},
+    'closer': {'label': 'Closer', 'role': 'pit',
+               'blurb': 'A short reliever whose fastball and slider overpower hitters for the last three outs.',
+               'now': {'stamina': 30, 'control': 55, 'hold': 45, 'strikeout': 75},
+               'ceiling': {'stamina': 30, 'control': 60, 'hold': 45},
+               'pitches': {'FB': (75, 80), 'SL': (70, 70)}},
+    'swingman': {'label': 'Swingman', 'role': 'pit',
+                 'blurb': 'A pitcher with an average arsenal and enough stamina to start or come out of the bullpen.',
+                 'now': {'stamina': 50, 'control': 50, 'hold': 50, 'strikeout': 50},
+                 'ceiling': {'stamina': 55, 'control': 55, 'hold': 50},
+                 'pitches': {'FB': (50, 55), 'CB': (50, 55), 'CU': (50, 55)}},
+}
 GRADES = tuple(range(20, 81, 5))
 AGES = range(17, 46)
 NAME_RE = re.compile(r"[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ .'-]{0,15}")
 REC = 192
 PEAK, CUR = 0x46, 0x5d
-GAP = 0x17
 K_ATTR = 0x76
 PITCHES = range(7, 14)
 BIRTH = 0x1a           # u32 birth serial: date.toordinal() + 365
@@ -35,6 +101,7 @@ BATS_CODE = {'L': 1, 'R': 2, 'S': 3}
 THROWS_CODE = {'L': 1, 'R': 2}
 NAME_MSG = 'Use letters, spaces, apostrophes, periods or hyphens, up to 16 characters.'
 GRADE_MSG = 'Pick a grade from 20 to 80, in steps of 5.'
+GAP_MSG = 'At %d a ceiling can be at most %d above Now.'
 PPD = b'PPD:'
 
 
@@ -51,6 +118,69 @@ def stuff(rec):
     """The mean of a player's nonzero current pitch ratings, 0.0 when he throws none."""
     pitches = [rec[CUR + i] for i in PITCHES if rec[CUR + i]]
     return sum(pitches) / len(pitches) if pitches else 0.0
+
+
+def role(pos):
+    """'pit' for a pitcher, 'hit' for everyone else."""
+    return 'pit' if pos == 'P' else 'hit'
+
+
+def archetype_fields(key):
+    """The form fields that prefill step two for an archetype, every value a string: each Now grade of its role, each
+    Ceiling grade but strikeout's, and for a pitcher each arsenal slot's two grades ('none' for a pitch he does not
+    throw). KeyError for an unknown archetype."""
+    arch = ARCHETYPES[key]
+    fields = {}
+    for r in ROLE_RATINGS[arch['role']]:
+        fields['now_' + r] = str(arch['now'][r])
+        if r != 'strikeout':
+            fields['ceil_' + r] = str(arch['ceiling'][r])
+    if arch['role'] == 'pit':
+        for slot in PITCH_SLOTS:
+            now, ceil = arch['pitches'].get(slot, ('none', 'none'))
+            fields['p_%s_now' % slot] = str(now)
+            fields['p_%s_ceil' % slot] = str(ceil)
+    return fields
+
+
+def max_gap(age):
+    """The most a realistic ceiling can sit above Now at this age: 25 at 22 and under, 15 at 23 to 26, 5 at 27 to 30,
+    none from 31."""
+    if age <= 22:
+        return 25
+    if age <= 26:
+        return 15
+    if age <= 30:
+        return 5
+    return 0
+
+
+def _spent(grades):
+    """The budget points grades spend: each one's distance above 50."""
+    return sum(max(0, g - 50) for g in grades)
+
+
+def budget(spec):
+    """What a spec spends of its role's budget: {'now', 'ceiling', 'now_max', 'ceiling_max'}. Hitters spend on their five
+    hitting ratings. Pitchers spend on stamina, control, hold and strikeout's Now, plus their two best pitches by Now (in
+    'now') and by Ceiling (in 'ceiling'); strikeout has no ceiling, so its Now counts in both."""
+    key = role(spec['pos'])
+    now, ceiling = spec['now'], spec['ceiling']
+    if key == 'hit':
+        n = _spent(now[r] for r in HIT_RATINGS)
+        c = _spent(ceiling[r] for r in HIT_RATINGS)
+    else:
+        best_now = sorted((p[0] for p in spec['pitches'].values()), reverse=True)[:2]
+        best_ceil = sorted((p[1] for p in spec['pitches'].values()), reverse=True)[:2]
+        n = _spent([now[r] for r in ROLE_RATINGS['pit']] + best_now)
+        c = _spent([ceiling[r] for r in PIT_RATINGS] + [now['strikeout']] + best_ceil)
+    now_max, ceil_max = BUDGET[key]
+    return {'now': n, 'ceiling': c, 'now_max': now_max, 'ceiling_max': ceil_max}
+
+
+def grade_word(grade):
+    """The scouting word for a grade: the first word in GRADE_WORDS whose floor it reaches."""
+    return next((word for floor, word in GRADE_WORDS if grade >= floor), GRADE_WORDS[-1][1])
 
 
 def _name_ok(name):
@@ -73,14 +203,14 @@ def _pick(value, options):
     return n if n in options else None
 
 
-def validate(form, assns):
-    """(spec, errors) for a submitted form: form is {field: value}, the first value of each field; assns the valid
-    STEMs. errors maps a field to a short message and spec is None when there are any. Only the grades of the
-    player's own role are checked. A message never repeats the input."""
+def validate_who(form, assns):
+    """(who, errors) for the first step: the association, the player's name, position, hands, age, archetype and mode.
+    form is {field: value}, the first value of each field; assns the valid STEMs. who is None when there are errors,
+    and a message never repeats the input."""
     errors = {}
-    spec = {}
+    who = {}
     if form.get('assn', '') in assns:
-        spec['assn'] = form['assn']
+        who['assn'] = form['assn']
     else:
         errors['assn'] = 'Pick an association.'
     for field in ('first', 'last'):
@@ -88,38 +218,106 @@ def validate(form, assns):
         if not name:
             errors[field] = 'Enter a %s name.' % field
         elif _name_ok(name):
-            spec[field] = name
+            who[field] = name
         else:
             errors[field] = NAME_MSG
     pos = form.get('pos', '')
     if pos in POSITIONS:
-        spec['pos'] = pos
+        who['pos'] = pos
     else:
         errors['pos'] = 'Pick a position.'
     if form.get('bats', '') in BATS_CODE:
-        spec['bats'] = form['bats']
+        who['bats'] = form['bats']
     else:
         errors['bats'] = 'Pick left, right or switch.'
     if form.get('throws', '') in THROWS_CODE:
-        spec['throws'] = form['throws']
+        who['throws'] = form['throws']
     else:
         errors['throws'] = 'Pick left or right.'
     age = _pick(form.get('age', ''), AGES)
     if age is None:
         errors['age'] = 'Pick an age from %d to %d.' % (AGES[0], AGES[-1])
     else:
-        spec['age'] = age
-    grades = {}
-    for field in PIT_GRADES if pos == 'P' else HIT_GRADES:
-        grade = _pick(form.get(field, ''), GRADES)
-        if grade is None:
-            errors[field] = GRADE_MSG
+        who['age'] = age
+    if pos in POSITIONS:
+        archetype = form.get('archetype', '')
+        if archetype in ARCHETYPES and ARCHETYPES[archetype]['role'] == role(pos):
+            who['archetype'] = archetype
         else:
-            grades[field] = grade
+            errors['archetype'] = 'Pick an archetype for this position.'
+    if form.get('mode', '') in MODES:
+        who['mode'] = form['mode']
+    else:
+        errors['mode'] = 'Pick realistic or sandbox.'
     if errors:
         return None, errors
-    spec['grades'] = grades
+    return who, errors
+
+
+def validate_ratings(form, who):
+    """(spec, errors) for the ratings of a valid who. Each Now and Ceiling grade of the role must be a grade, and no
+    Ceiling below its Now; a pitcher's arsenal gives each pitch both grades or neither, and 2 to 5 pitches. Only then,
+    in realistic mode, come the age's gap limit and the budget. spec is who plus 'now', 'ceiling' and 'pitches', and is
+    None when there are errors."""
+    errors = {}
+    now, ceiling, pitches = {}, {}, {}
+    for r in ROLE_RATINGS[role(who['pos'])]:
+        g = _pick(form.get('now_' + r, ''), GRADES)
+        if g is None:
+            errors['now_' + r] = GRADE_MSG
+        else:
+            now[r] = g
+        if r == 'strikeout':
+            continue
+        c = _pick(form.get('ceil_' + r, ''), GRADES)
+        if c is None:
+            errors['ceil_' + r] = GRADE_MSG
+        elif g is not None and c < g:
+            errors['ceil_' + r] = 'Ceiling must be at least Now.'
+        else:
+            ceiling[r] = c
+    if role(who['pos']) == 'pit':
+        for slot in PITCH_SLOTS:
+            field = 'p_' + slot
+            values = [form.get(field + '_now', 'none'), form.get(field + '_ceil', 'none')]
+            grades = [_pick(v, GRADES) for v in values]
+            if any(v != 'none' and g is None for v, g in zip(values, grades)):
+                errors[field] = GRADE_MSG
+            elif (values[0] == 'none') != (values[1] == 'none'):
+                errors[field] = 'Give each pitch both grades, or neither.'
+            elif values[0] != 'none' and grades[1] < grades[0]:
+                errors[field] = 'Ceiling must be at least Now.'
+            elif values[0] != 'none':
+                pitches[slot] = (grades[0], grades[1])
+        if not 2 <= len(pitches) <= 5:
+            errors['pitches'] = 'Pick 2 to 5 pitches.'
+    spec = dict(who, now=now, ceiling=ceiling, pitches=pitches)
+    if not errors and who['mode'] == 'realistic':
+        gap = max_gap(who['age'])
+        for r, c in ceiling.items():
+            if c - now[r] > gap:
+                errors['ceil_' + r] = GAP_MSG % (who['age'], gap)
+        for slot, (n, c) in pitches.items():
+            if c - n > gap:
+                errors['p_' + slot] = GAP_MSG % (who['age'], gap)
+        b = budget(spec)
+        if b['now'] > b['now_max']:
+            errors['budget'] = 'Over the realistic budget: Now uses %d of %d points.' % (b['now'], b['now_max'])
+        elif b['ceiling'] > b['ceiling_max']:
+            errors['budget'] = ('Over the realistic budget: Ceiling uses %d of %d points.'
+                                % (b['ceiling'], b['ceiling_max']))
+    if errors:
+        return None, errors
     return spec, errors
+
+
+def validate(form, assns):
+    """(spec, errors) for a whole submitted form: validate_who, then validate_ratings for a valid who. spec is None when
+    either has errors."""
+    who, errors = validate_who(form, assns)
+    if who is None:
+        return None, errors
+    return validate_ratings(form, who)
 
 
 def _is_player(rec):
@@ -140,15 +338,26 @@ def _age(rec, year):
         return 27
 
 
+def _name(rec):
+    """'First Last' of a record, the NUL padding dropped."""
+    return ('%s %s' % (gamedata.cstr(rec[NAME_FIRST:NAME_LAST]), gamedata.cstr(rec[NAME_LAST:NAME_LAST + 17]))).strip()
+
+
+def _stuff_goal(spec):
+    """The mean rating of the pitches a spec throws, at their Now grades: what a pitcher's stuff should read."""
+    grades = [rating(now) for now, _ in spec['pitches'].values()]
+    return sum(grades) / len(grades) if grades else 0.0
+
+
 def _score(rec, spec, year):
-    """How far a stock record is from the spec: the rating gaps on the graded ratings plus twice the age gap."""
-    g = spec['grades']
+    """How far a stock record is from the spec's Now grades: the rating gaps on the graded ratings plus twice the age
+    gap."""
+    now = spec['now']
     if spec['pos'] == 'P':
-        gaps = (abs(rec[CUR + 5] - rating(g['stamina'])), abs(rec[CUR + 6] - rating(g['control'])),
-                abs(rec[K_ATTR] - rating(g['strikeout'])), abs(stuff(rec) - rating(g['stuff'])))
+        gaps = (abs(rec[CUR + 5] - rating(now['stamina'])), abs(rec[CUR + 6] - rating(now['control'])),
+                abs(rec[K_ATTR] - rating(now['strikeout'])), abs(stuff(rec) - _stuff_goal(spec)))
     else:
-        gaps = tuple(abs(rec[CUR + i] - rating(g[k]))
-                     for i, k in ((0, 'contact'), (1, 'power'), (2, 'speed'), (3, 'arm')))
+        gaps = tuple(abs(rec[CUR + INDEX[k]] - rating(now[k])) for k in ('contact', 'power', 'speed', 'arm'))
     return sum(gaps) + 2 * abs(_age(rec, year) - spec['age'])
 
 
@@ -171,9 +380,10 @@ def _name_field(text):
 
 
 def build_record(spec, donor_rec, new_id, year):
-    """The new player's plain 192-byte record, seeded from donor_rec. Each graded rating is set with the donor's
-    peak-over-current gap kept (the peak capped at 99). Pitchers keep the donor's pitches, shifted to the fitted
-    stuff."""
+    """The new player's plain 192-byte record, seeded from donor_rec: the donor's attribute bytes, then each rating of the
+    spec's role set from its grades. Current is the Now grade's rating, peak the Ceiling's (never below current). A
+    hitter has no pitch bytes. A pitcher's thrown pitches get their grades and every other pitch is zero; strikeout is
+    one byte with no peak."""
     rec = bytearray(REC)
     rec[PEAK:ATTRS_END] = donor_rec[PEAK:ATTRS_END]
     rec[67] = donor_rec[67]
@@ -187,28 +397,89 @@ def build_record(spec, donor_rec, new_id, year):
     rec[66] = THROWS_CODE[spec['throws']]
     code = POSITIONS.index(spec['pos']) + 1
     rec[68] = code
-    g = spec['grades']
+    now, ceiling = spec['now'], spec['ceiling']
 
-    def put(off, value):
-        rec[off] = value
-        rec[off - GAP] = min(99, value + max(0, donor_rec[off - GAP] - donor_rec[off]))
+    def put(i, now_grade, ceiling_grade):
+        rec[CUR + i] = rating(now_grade)
+        rec[PEAK + i] = max(rating(now_grade), rating(ceiling_grade))
 
     if spec['pos'] == 'P':
-        put(CUR + 5, rating(g['stamina']))
-        put(CUR + 6, rating(g['control']))
-        rec[K_ATTR] = rating(g['strikeout'])
-        shift = rating(g['stuff']) - stuff(donor_rec)
-        for i in PITCHES:
-            if donor_rec[CUR + i]:
-                put(CUR + i, min(99, max(1, round(donor_rec[CUR + i] + shift))))
+        for r in PIT_RATINGS:
+            put(INDEX[r], now[r], ceiling[r])
+        rec[K_ATTR] = rating(now['strikeout'])
+        for k, slot in enumerate(PITCH_SLOTS):
+            if slot in spec['pitches']:
+                put(7 + k, *spec['pitches'][slot])
+            else:
+                rec[CUR + 7 + k] = rec[PEAK + 7 + k] = 0
         rec[STAMINA_BYTE] = min(255, 51 + rec[CUR + 5])
     else:
-        put(CUR + 0, rating(g['contact']))
-        put(CUR + 1, rating(g['power']))
-        put(CUR + 2, rating(g['speed']))
-        put(CUR + 3, rating(g['arm']))
-        put(CUR + 14 + code - 1, rating(g['fielding']))
+        for r in HIT_RATINGS:
+            put(14 + code - 1 if r == 'fielding' else INDEX[r], now[r], ceiling[r])
+        for i in PITCHES:
+            rec[CUR + i] = rec[PEAK + i] = 0
     return bytes(rec)
+
+
+def scouting_report(spec):
+    """The scouting report as plain sentences, no HTML: one per rating of the role (the hitting ratings, or stamina,
+    control, hold and strikeout), then one per pitch the spec throws, in slot order. A rating names its grade's word and,
+    when its Ceiling is above its Now, the Ceiling's word as the projection."""
+    now, ceiling = spec['now'], spec['ceiling']
+    out = []
+    for r in ROLE_RATINGS[role(spec['pos'])]:
+        if r != 'strikeout' and ceiling[r] > now[r]:
+            out.append('%s is %s, with room to grow to %s.'
+                       % (RATING_LABELS[r], grade_word(now[r]), grade_word(ceiling[r])))
+        else:
+            out.append('%s is %s.' % (RATING_LABELS[r], grade_word(now[r])))
+    for slot in PITCH_SLOTS:
+        if slot in spec['pitches']:
+            n, c = spec['pitches'][slot]
+            out.append('%s: %d now, %d at the ceiling.' % (PITCH_LABELS[slot], n, c))
+    return out
+
+
+def _distance(rec, spec):
+    """How far a real record's current ratings are from a spec's Now grades: a hitter's four hitting ratings and his
+    fielding at the spec's position; a pitcher's stamina, control, strikeout and stuff."""
+    now = spec['now']
+    if spec['pos'] == 'P':
+        return (abs(rec[CUR + 5] - rating(now['stamina'])) + abs(rec[CUR + 6] - rating(now['control']))
+                + abs(rec[K_ATTR] - rating(now['strikeout'])) + abs(stuff(rec) - _stuff_goal(spec)))
+    field = CUR + 14 + POSITIONS.index(spec['pos'])
+    return (sum(abs(rec[CUR + INDEX[k]] - rating(now[k])) for k in ('contact', 'power', 'speed', 'arm'))
+            + abs(rec[field] - rating(now['fielding'])))
+
+
+def comparable(game_dir, stem, spec, year):
+    """The association's real player closest to a spec, as {'pid', 'name', 'team', 'age', 'distance'}, or None. The pool is
+    the players (id 100 and up, with a name) who are on a roster or in the free agent pool, at the spec's position (a
+    pitcher's is code 1). team is the roster's abbreviation, None for a free agent. The smallest distance wins, a tie
+    going to the lower id. Never raises: a file that does not read or parse gives None."""
+    assn_dir = os.path.join(game_dir, 'Assn')
+    try:
+        pyr = _locate(assn_dir, stem + '.PYR')
+        asn = _locate(assn_dir, stem + '.ASN')
+        if pyr is None or asn is None:
+            return None
+        pyf = _locate(assn_dir, stem + '.PYF')
+        team_of = {}
+        for team in gamedata.association(asn)['teams'].values():
+            for pid in team['roster']:
+                team_of.setdefault(pid, team['abbrev'] or None)
+        pool = set(team_of) | set(pyf_ids(_read(pyf)) if pyf else ())
+        _, recs = decipher(_read(pyr))
+    except Exception:  # any file that does not read or parse gives no match
+        return None
+    code = POSITIONS.index(spec['pos']) + 1
+    cands = [r for r in recs if _pid(r) in pool and _is_player(r) and r[68] == code]
+    if not cands:
+        return None
+    best = min(cands, key=lambda r: (_distance(r, spec), _pid(r)))
+    pid = _pid(best)
+    return {'pid': pid, 'name': _name(best), 'team': team_of.get(pid), 'age': _age(best, year),
+            'distance': round(_distance(best, spec))}
 
 
 def _tables(header):
