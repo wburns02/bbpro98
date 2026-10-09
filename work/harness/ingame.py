@@ -10,6 +10,7 @@ PLAN: {"install": {"SHELL.VOL": "/path/to/edited/SHELL.VOL", ...},   keys are pa
        "steps": [["click", x, y, wait, button (1 left default, 3 right)], ["key", "ctrl+w", wait], ["move", x, y], ["wait", s], ["shot", name],
                  ["ocr", name, [x, y, w, h] | null, {"expect": [..], "absent": [..], "key": "yellow"}],
                  ["pixels", name, [x, y, w, h], {"rgb": [r, g, b], "tol": 30, "min": n, "max": m}],
+                 ["season", "STEM", seconds],                       sim STEM's regular season to the end (seasonloop.py);
                  ["copy", "Assn/X.ASN", name]],                    copy = save a work-copy file as SHOTDIR/name now;
                                                                   a glob (Stats/X.H*) copies every match into SHOTDIR/name/
        "keep": false}                                             keep = leave the edit installed and the game up
@@ -237,6 +238,9 @@ def main():
                 print(json.dumps({'ocr': st[1], 'ok': good, 'missing': miss, 'present': bad}))
                 with open(f'{shots}/{st[1]}.txt', 'w') as fh:
                     fh.write(text)
+            elif op == 'season':
+                import seasonloop
+                ok &= seasonloop.season(sys.modules[__name__], shots, st[1], st[2] if len(st) > 2 else 7200)
             elif op == 'copy':
                 if os.sep in st[2] or st[2] in ('', '.', '..'):
                     sys.exit(f'REFUSED: copy {st[1]!r} -> {st[2]!r}')
