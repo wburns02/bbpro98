@@ -17,12 +17,15 @@ No game files are included. You need your own copy of the game.
 | `re/` | Labeling pipeline (deterministic pass + LLM residue), Ghidra rename maps for all 14 binaries (`re/rename_specs/`), format readers (`re/formats/`), ASN decoding work |
 | `re/ghidra/` | Headless Ghidra helpers (`gh.sh`, decompile export, batch rename) |
 | `BBPRO98_package/` | Linux launcher and PYR (player file) reader and writer |
+| `work/lahman/` | Builds a playable association for any MLB season 1871-2019 from the Lahman database: real teams, parks, rosters, lineups, ratings fitted from stats, career and last-season lines |
+| `src-latest/mods/playercard.c` | Mod DLL: click a player on the Statistics or Career screen to open that player's card |
+| `hosting/` | Run the game headless under Wine and play it in a browser (Xvfb, x11vnc, noVNC, Cloudflare Access) |
 
 ## Status
 
 - All 14 game binaries are decompiled and labeled, with about 7,500 functions named.
 - PB.INI tuning works with no hooks. The game reads `[PlayBalance]` keys at runtime.
-- Formats: STS decoded; Stats DAT, PYR, ASN and SHELL.VOL partly decoded. See `re/formats/STATUS.md`.
+- Formats: every game file format has a round-trip codec under `work/` with a spec under `work/spec/`.
 
 Paths in the scripts are hard-coded to the author's machine (`/home/will/...`, `/mnt/nvme/...`). Adjust them before use.
 

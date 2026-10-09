@@ -1,0 +1,15 @@
+[Unit]
+Description=BBPRO98 hosted: the game under Wine on :52
+Requires=bbpro98-xvfb.service
+After=bbpro98-xvfb.service
+[Service]
+UnsetEnvironment=WAYLAND_DISPLAY XDG_SESSION_TYPE XAUTHORITY
+Environment=WINEPREFIX=/mnt/data/bbpro98/prefix WINEDEBUG=-all DISPLAY=:52
+ExecStartPre=/bin/sleep 3
+ExecStart=/mnt/data/bbpro98/bin/run-game.sh
+ExecStop=/usr/bin/wineserver -k
+TimeoutStopSec=15
+Restart=always
+RestartSec=5
+[Install]
+WantedBy=default.target

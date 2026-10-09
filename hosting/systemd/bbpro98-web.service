@@ -1,0 +1,9 @@
+[Unit]
+Description=BBPRO98 hosted: noVNC on 127.0.0.1:6152
+After=bbpro98-vnc.service
+[Service]
+ExecStart=/usr/bin/websockify --web /mnt/data/bbpro98/web 127.0.0.1:6152 127.0.0.1:5952
+Restart=always
+RestartSec=3
+[Install]
+WantedBy=default.target

@@ -1,0 +1,12 @@
+[Unit]
+Description=BBPRO98 hosted: x11vnc on 127.0.0.1:5952
+Requires=bbpro98-xvfb.service
+After=bbpro98-xvfb.service
+[Service]
+UnsetEnvironment=WAYLAND_DISPLAY XDG_SESSION_TYPE XAUTHORITY
+ExecStartPre=/bin/sleep 2
+ExecStart=/usr/bin/x11vnc -display :52 -rfbport 5952 -localhost -forever -shared -nopw -o /mnt/data/bbpro98/x11vnc.log
+Restart=always
+RestartSec=3
+[Install]
+WantedBy=default.target

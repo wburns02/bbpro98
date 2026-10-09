@@ -1,0 +1,8 @@
+# ~/.cloudflared/bbpro98.yml on the host. Create the tunnel with `cloudflared tunnel create bbpro98`.
+# Put a Cloudflare Access application on the hostname BEFORE creating its DNS record.
+tunnel: <tunnel-id>
+credentials-file: /home/<user>/.cloudflared/<tunnel-id>.json
+ingress:
+  - hostname: <hostname>
+    service: http://localhost:6152
+  - service: http_status:404
