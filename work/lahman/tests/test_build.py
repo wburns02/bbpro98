@@ -96,7 +96,7 @@ def test_stats_file_valid(built):
 
 def test_short_rosters_padded():
     """1875: Keokuk and the Philadelphia Centennials keep too few players of their own to field a lineup; the build
-    pads them with generated players so every team has nine distinct starters (pitcher's slot NONE) and a pitcher."""
+    pads them with generated players so every team has nine distinct starters (pitcher's slot NONE) and five pitchers."""
     if not all(os.path.exists(p) for p in NEEDED) or not os.path.isdir(SCRATCH):
         pytest.skip('Lahman DB or game install absent')
     try:
@@ -124,7 +124,8 @@ def test_short_rosters_padded():
         active = [x for x in ids[:25] if x]
         order, align, rot = ids[77:86], ids[95:104], [x for x in ids[113:119] if x]
         assert all(x in pos for x in active)
-        assert sum(pos[x] != 1 for x in active) >= B.MIN_HIT and rot and all(pos[x] == 1 for x in rot)
+        assert sum(pos[x] != 1 for x in active) >= B.MIN_HIT and sum(pos[x] == 1 for x in active) >= 5
+        assert rot and all(pos[x] == 1 for x in rot)
         starters = [x for x in order if x != B.NONE]
         assert len(starters) == 8 and len(set(starters)) == 8 and set(starters) <= set(active)
         assert set(x for x in align[:8]) == set(starters)

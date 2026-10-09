@@ -79,7 +79,10 @@ POS9 = ('C', '1B', '2B', '3B', 'SS', 'LF', 'CF', 'RF')
 SCARCE = ('C', 'SS', '2B', 'CF', '3B', 'RF', 'LF', '1B')
 NONE = 0xFFFF
 ACTIVE, RESERVE = 25, 15
-MIN_HIT, MIN_PIT = 9, 1         # floor of an active roster: a lineup (eight fielders and a DH) and one pitcher
+# Floor of an active roster: a lineup (eight fielders and a DH) and five pitchers. The shell fills a five-man
+# rotation before it builds the batting order and takes position players for it when pitchers run out; a team left
+# with fewer than eight fielders gets a 0 in its order and LINEUP.DLL dereferences it (crash at LINEUP+0x116e0).
+MIN_HIT, MIN_PIT = 9, 5
 
 
 # ---------------------------------------------------------------- Lahman extras (read-only SQL)
@@ -239,20 +242,20 @@ def lineup(active, season, dh):
         cand = [p for p in hitters if p not in used]
         if not cand:
             cand = [p for p in active if p not in used]
-        best = max(cand, key=lambda p: (games(p, pos), pa_of(season.bat.get(p, {})), p))
+        best = max(cand, key=lambda p: (games(p, pos), pa_of(season.bat.get(p, {})), str(p)))
         at[pos] = best
         used.add(best)
     dh_id = 0
     if dh:
         cand = [p for p in active if p not in used and season.primary(p) != 'P'] or \
                [p for p in active if p not in used]
-        dh_id = max(cand, key=lambda p: (ops(season.bat.get(p, {}))[0], p)) if cand else 0
+        dh_id = max(cand, key=lambda p: (ops(season.bat.get(p, {}))[0], str(p))) if cand else 0
     starters = [at[p] for p in POS9] + ([dh_id] if dh_id else [])
     stat = {p: ops(season.bat.get(p, {})) for p in starters}
     order = []
 
     def take(key):
-        p = max((q for q in starters if q not in order), key=lambda q: (key(q), q))
+        p = max((q for q in starters if q not in order), key=lambda q: (key(q), str(q)))
         order.append(p)
 
     take(lambda q: stat[q][0])                       # best hitter bats third
@@ -268,15 +271,16 @@ def lineup(active, season, dh):
 
 
 def staff(active, season):
-    """(rotation of up to 5, bullpen of up to 6)."""
+    """(rotation of up to 5, bullpen of up to 6). Ids are Lahman playerIDs or ints for generated players; ties sort
+    on str(id)."""
     pit = [p for p in active if season.primary(p) == 'P']
     gs = lambda p: season.pit.get(p, {}).get('GS', 0)
-    starters = sorted((p for p in pit if gs(p) > 0), key=lambda p: (-gs(p), p))[:5]
+    starters = sorted((p for p in pit if gs(p) > 0), key=lambda p: (-gs(p), str(p)))[:5]
     if not starters and pit:
         starters = pit[:1]
     pen = sorted((p for p in pit if p not in starters),
                  key=lambda p: (-season.pit.get(p, {}).get('SV', 0), -season.pit.get(p, {}).get('GF', 0),
-                                -season.pit.get(p, {}).get('G', 0), p))[:6]
+                                -season.pit.get(p, {}).get('G', 0), str(p)))[:6]
     return starters, pen
 
 
@@ -473,7 +477,13 @@ def build(year, install, db=DB, name=None, log=print):
     asn.rewrite('a', a_off, bytes(a))
 
     # ---- leagues and divisions
+    # A one-league association has no league layer: byte 2 of its league record is 0 and the Association Data screen
+    # shows the league and division fields blank. Text written there would not match those blank fields, so the
+    # screen would ask to save changes on every exit; those records stay as the game minted them.
+    layered = {p[1]: p[2] for _, p in asn.recs['l']}
     for (off, p), lg in zip(sorted(asn.recs['l'], key=lambda r: r[1][1]), plan['leagues']):
+        if not p[2]:
+            continue
         q = bytearray(p)
         lid = lg['lgID']
         put_str(q, 4, 33, LEAGUE_NAMES.get(lid, lid or 'Exhibition League'))
@@ -483,6 +493,8 @@ def build(year, install, db=DB, name=None, log=print):
     dh_of_league = {p[1]: (1 if lg['lgID'] == 'AL' and year >= 1973 else 0)
                     for (off, p), lg in zip(sorted(asn.recs['l'], key=lambda r: r[1][1]), plan['leagues'])}
     for off, p in asn.recs['d']:
+        if not layered[p[1]]:
+            continue
         lg = plan['leagues'][[x[1][1] for x in sorted(asn.recs['l'], key=lambda r: r[1][1])].index(p[1])]
         members = [by_id[t] for t in lg['divisions'][p[2]] if t]
         divs = {t['divID'] for t in members if t['divID']}
