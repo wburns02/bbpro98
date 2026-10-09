@@ -157,11 +157,38 @@ def allowed_numbers(facts):
     return out
 
 
+def _strings(value, out):
+    if isinstance(value, str):
+        out.append(value)
+    elif isinstance(value, dict):
+        for v in value.values():
+            _strings(v, out)
+    elif isinstance(value, (list, tuple)):
+        for v in value:
+            _strings(v, out)
+    return out
+
+
+def _named(facts):
+    """Number words that are part of a name or place in the facts ('Three Rivers Stadium', 'Bob Five'), each with a
+    neighbouring word from that name: 'Three Rivers' and 'Bob Five' are names in a story, a lone 'three' is not."""
+    out = set()
+    for s in _strings(facts, []):
+        words = s.split()
+        for i, w in enumerate(words):
+            if WORD.fullmatch(w):
+                out.update(' '.join(words[j:j + 2]) for j in (i - 1, i) if 0 <= j and j + 1 < len(words))
+    return sorted(out, key=len, reverse=True)
+
+
 def numbers_ok(text, facts):
-    """True when every number in text is in the facts. Number words two to twenty count; 'one' and ordinals do not."""
+    """True when every number in text is in the facts. Number words two to twenty count, except inside a name from
+    the facts; 'one' and ordinals do not."""
     allowed = allowed_numbers(facts)
     if any(n not in allowed for n in NUMBER.findall(text)):
         return False
+    for name in _named(facts):
+        text = text.replace(name, ' ')
     return all(NUMBER_WORDS[w.lower()] in allowed for w in WORD.findall(text))
 
 

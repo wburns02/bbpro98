@@ -28,6 +28,7 @@ import feed      # noqa: E402
 import gamedata  # noqa: E402
 import hive      # noqa: E402
 import recap     # noqa: E402
+import season    # noqa: E402
 
 SETTLE = 5            # seconds a game file must sit unchanged before it is read
 LLM_DAYS = 3          # columns for the newest dates go to the model; older dates get the template
@@ -127,6 +128,27 @@ class Watcher:
         write_json(os.path.join(out, 'meta.json'), {
             'assn': stem, 'name': assoc['name'], 'updated': now_iso(), 'last_day': list(last) if last else None,
             'standings': feed.standings(assoc), 'leaders': feed.leaders(season, names, teams_played)})
+        self.season_pieces(out, assoc, names, dat)
+
+    def season_pieces(self, out, assoc, names, dat):
+        """The season preview (once per association) and, once every game is played, the season awards."""
+        stem = os.path.basename(out)
+        if assoc['teams'] and not os.path.exists(os.path.join(out, 'preview.json')):
+            last = gamedata.season_lines(dat, scope=3) if dat else {'bat': {}, 'pit': {}}
+            facts = season.preview_facts(assoc, last, names)
+            piece = _llm_or_template(season.write_preview, facts, self.budget, self.complete)
+            if piece is None:
+                piece = dict(season.preview_template(facts), source='template', reason='off')
+            write_json(os.path.join(out, 'preview.json'), dict(piece, kind='preview', facts=facts, created=now_iso()))
+            self.log('%s preview (%s)' % (stem, piece['source']))
+        if season.complete(assoc) and not os.path.exists(os.path.join(out, 'awards.json')):
+            lines = gamedata.season_lines(dat) if dat else {'bat': {}, 'pit': {}}
+            facts = season.awards_facts(assoc, lines, names)
+            piece = _llm_or_template(season.write_awards, facts, self.budget, self.complete)
+            if piece is None:
+                piece = dict(season.awards_template(facts), source='template', reason='off')
+            write_json(os.path.join(out, 'awards.json'), dict(piece, kind='awards', facts=facts, created=now_iso()))
+            self.log('%s awards (%s)' % (stem, piece['source']))
 
     def capture(self, stem):
         """Copy every new box score of this association into <data>/<ASSN>/pending/ as parsed JSON. The game keeps
