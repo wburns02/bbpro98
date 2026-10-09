@@ -666,16 +666,20 @@ def build(year, install, db=DB, name=None, log=print):
 
 
 def main(argv=None):
+    global TEMPLATES
     ap = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     ap.add_argument('--year', type=int, required=True)
     ap.add_argument('--install', required=True, help='game directory holding Assn/ and Stats/')
     ap.add_argument('--db', default=DB)
     ap.add_argument('--name', help='file name (max 8 chars), default <teams>L<year>')
+    ap.add_argument('--templates', help='directory of minted structure templates (default %s)' % TEMPLATES)
     a = ap.parse_args(argv)
     if not 1871 <= a.year <= 2019:
         ap.error('year must be 1871..2019 (the Lahman data range)')
     if a.name and (len(a.name) > 8 or not a.name.isalnum()):
         ap.error('--name: up to 8 letters/digits')
+    if a.templates:
+        TEMPLATES = a.templates
     build(a.year, a.install, a.db, a.name)
     return 0
 

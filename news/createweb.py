@@ -6,7 +6,9 @@ was made. Standard library only. Pages are server.py's; the POST is checked for 
 is read.
 """
 import argparse
+import contextlib
 import datetime
+import fcntl
 import http.client
 import json
 import os
@@ -408,28 +410,64 @@ def _step_unknown(srv, form):
 STEPS = {'who': _step_who, 'back': _step_back, 'ratings': _step_ratings, 'edit': _step_edit, 'commit': _step_commit}
 
 
-def _commit(srv, form, spec, assns):
-    """v1's create path for a valid spec: the lock, the cap, the write, then the ledger, which gains the archetype and
-    the mode."""
-    stem = spec['assn']
-    now = datetime.datetime.now().astimezone()
-    with _LOCK:
-        entries = _read_ledger(srv.data, stem)
-        if len(entries) >= CAP:
-            return _notice(429, 'Create a Player', 'This association already has %d created players.' % CAP)
+class CapReached(Exception):
+    """The association already has CAP created players."""
+
+
+@contextlib.contextmanager
+def _file_lock(data):
+    """An exclusive lock on <data>/.create.lock, held by every process that creates players (this form and the
+    in-game bridge, modbridge.py), so the cap count, the write and the ledger stay together across processes."""
+    with open(os.path.join(data, '.create.lock'), 'a') as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
         try:
-            pid, _ = create.add_player(srv.game, spec, srv.donor, srv.backup, now, srv.proc)
-        except create.AssociationOpen:
-            notice = ('%s is open in the game. Go back to the game\'s main menu, then create the player again.'
-                      % _label(stem, assns[stem]))
-            return server._page_reply(409, 'Create a Player', _ratings_page(form, {}, notice))
-        except Exception:
-            traceback.print_exc()
-            return _notice(500, 'Create a Player', 'Could not add the player.')
+            yield
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+
+
+def commit(game, data, donor, backup, proc, spec, now):
+    """Sign a valid spec's player into his association's free agent pool and add him to the ledger: the lock, the cap,
+    the write, then the ledger entry. Returns his id. Raises CapReached at CAP created players, create.AssociationOpen
+    while the game holds the association's files, and whatever add_player raises otherwise."""
+    stem = spec['assn']
+    with _LOCK, _file_lock(data):
+        entries = _read_ledger(data, stem)
+        if len(entries) >= CAP:
+            raise CapReached(stem)
+        pid, _ = create.add_player(game, spec, donor, backup, now, proc)
         entries.append({'pid': pid, 'name': '%s %s' % (spec['first'], spec['last']), 'pos': spec['pos'],
                         'assn': stem, 'created': now.isoformat(timespec='seconds'),
                         'archetype': spec['archetype'], 'mode': spec['mode']})
-        _write_ledger(srv.data, stem, entries)
+        _write_ledger(data, stem, entries)
+    return pid
+
+
+def sign_steps(label):
+    """How to sign a created player in the game, one step per line."""
+    return ('League Management, then Main > Load Association and pick %s.' % label,
+            'Team > Select Team and pick your team.',
+            'Team > Data: Ownership must say Human (one click on Computer makes it Human). Claim Free Agent is greyed '
+            'out for computer-owned teams.',
+            'Team > Claim Free Agent, press OK (tick only his position to find him fast), then double-click his name. '
+            'The claim goes through when the league plays its next day.')
+
+
+def _commit(srv, form, spec, assns):
+    """The create path for a valid spec: commit, then the done page."""
+    stem = spec['assn']
+    now = datetime.datetime.now().astimezone()
+    try:
+        pid = commit(srv.game, srv.data, srv.donor, srv.backup, srv.proc, spec, now)
+    except CapReached:
+        return _notice(429, 'Create a Player', 'This association already has %d created players.' % CAP)
+    except create.AssociationOpen:
+        notice = ('%s is open in the game. Go back to the game\'s main menu, then create the player again.'
+                  % _label(stem, assns[stem]))
+        return server._page_reply(409, 'Create a Player', _ratings_page(form, {}, notice))
+    except Exception:
+        traceback.print_exc()
+        return _notice(500, 'Create a Player', 'Could not add the player.')
     target = '/create/done?' + urlencode({'assn': stem, 'pid': pid})
     body = server._masthead('Player created') + '<p><a href="%s">Continue</a></p>' % server.esc(target)
     return server._page_reply(303, 'Player created', body, (('Location', target),))
@@ -451,12 +489,7 @@ def _done(srv, query):
         return _notice(404, 'Not found', 'No such player.')
     label = _label(stem, watch.associations(srv.game).get(stem))
     text = '%s (%s) is in the %s free agent pool.' % (entry.get('name'), POSITION_LABELS.get(entry.get('pos'), ''), label)
-    steps = ('League Management, then Main > Load Association and pick %s.' % label,
-             'Team > Select Team and pick your team.',
-             'Team > Data: Ownership must say Human (one click on Computer makes it Human). Claim Free Agent is greyed '
-             'out for computer-owned teams.',
-             'Team > Claim Free Agent, press OK (tick only his position to find him fast), then double-click his name. '
-             'The claim goes through when the league plays its next day.')
+    steps = sign_steps(label)
     body = server._masthead('Player created') + '<p>%s</p><p>To sign him:</p><ol>%s</ol>' % (
         server.esc(text), ''.join('<li>%s</li>' % server.esc(s) for s in steps)) + \
         '<p>Computer-run teams sign free agents on their own, so if you wait he may land somewhere else.</p>' + \
