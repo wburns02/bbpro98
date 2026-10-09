@@ -170,3 +170,16 @@ def test_no_preview_for_an_association_without_teams(world, monkeypatch):
     monkeypatch.setattr(gamedata, 'association', lambda path: {'name': '1998 Empty', 'teams': {}, 'games': []})
     watch.Watcher(str(gd), str(data), None, None, log=lambda s: None).scan()
     assert not (data / '30L1998' / 'preview.json').exists()
+
+
+def test_full_team_names_from_the_data_dir(world):
+    gd, data, st = world
+    data.mkdir()
+    (data / 'teamnames.json').write_text(json.dumps({'1998': {'ASH': ['Ashland Ashes', 'Ash'],
+                                                              'BIR': ['Birchwood Birches', 'Bir.']}}))
+    st['boxfile']('30L1998.H10', {'away': side(1, 3, 100), 'home': side(2, 1, 200)})
+    watch.Watcher(str(gd), str(data), None, None, log=lambda s: None).scan()
+    meta = json.loads((data / '30L1998' / 'meta.json').read_text())
+    got = {t['name'] for d in meta['standings'] for t in d['teams']}
+    assert got == {'Ashland Ashes', 'Birch'}            # Birch is not the stored short form: left alone
+    assert stories(data)[0]['headline'].startswith('Ashland Ashes 3')

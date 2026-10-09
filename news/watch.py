@@ -6,9 +6,11 @@ league' column per played date, and each association's standings and leaders. se
 
 Data layout (server.py reads it):
     <data>/budget.json, <data>/limits.json            hive.Budget state and its limits
+    <data>/teamnames.json                              full Lahman team names (optional; news/teamnames.py)
     <data>/<ASSN>/meta.json                            name, last_day, standings, leaders, updated
     <data>/<ASSN>/recaps/<key>.json                    key = first 16 hex chars of the box score file's sha1
     <data>/<ASSN>/feed/<MM>-<DD>.json                  one column per played date
+    <data>/<ASSN>/preview.json, awards.json            season preview (once), season awards (once all games are played)
 
 The game files are only read. A box score is matched to its schedule game by teams and final score (gamedata); one
 that matches nothing yet (the association not saved since the game) is retried on later scans. Stories go to the
@@ -29,6 +31,7 @@ import gamedata  # noqa: E402
 import hive      # noqa: E402
 import recap     # noqa: E402
 import season    # noqa: E402
+import teamnames  # noqa: E402
 
 SETTLE = 5            # seconds a game file must sit unchanged before it is read
 LLM_DAYS = 3          # columns for the newest dates go to the model; older dates get the template
@@ -85,6 +88,7 @@ class Watcher:
         self.seen = {}          # stem -> signature of its game files at the last full pass
         self.waiting = set()    # box score keys already logged as unmatched
         self.captured = {}      # stem -> box score keys already in pending/ or recaps/
+        self.names = teamnames.load(os.path.join(data_dir, 'teamnames.json'))   # full Lahman names; {} without it
 
     def signature(self, stem, asn_path):
         stats = os.path.join(self.game, 'Stats')
@@ -114,7 +118,7 @@ class Watcher:
     def association(self, stem, asn_path):
         stats_dir = os.path.join(self.game, 'Stats')
         out = os.path.join(self.data, stem)
-        assoc = gamedata.association(asn_path)
+        assoc = teamnames.apply(gamedata.association(asn_path), self.names)
         pyr = gamedata.find(os.path.join(self.game, 'Assn'), stem + '.PYR')
         names = gamedata.names(pyr) if pyr else {}
         dat = gamedata.find(stats_dir, stem + '.DAT')
