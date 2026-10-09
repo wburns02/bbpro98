@@ -73,6 +73,12 @@ news=$(rsync -rl --checksum --itemize-changes "${DRY[@]}" -e ssh --include='*.py
 news+=${news:+$'\n'}$(rsync -rl --checksum --itemize-changes "${DRY[@]}" -e ssh \
           "$REPO/work/ctree.py" "$REPO/work/hdecode.py" "$REPO/work/league.py" "$REPO/work/stats.py" \
           "$HOST:$NEWS/work/" | grep '^<f' || true)
+# Full team names for Lahman-built associations (work/lahman/teamnames.py writes it; it is not in the repo).
+NAMES=${NAMES:-/mnt/nvme/bbpro98/teamnames.json}
+if [ -f "$NAMES" ]; then
+  news+=${news:+$'\n'}$(rsync -l --checksum --itemize-changes "${DRY[@]}" -e ssh "$NAMES" \
+            "$HOST:/mnt/data/bbpro98/news-data/teamnames.json" | grep '^<f' || true)
+fi
 if [ -n "$news" ]; then
   echo "$news"
   if [ ${#DRY[@]} -eq 0 ]; then

@@ -148,7 +148,7 @@ def template(facts):
     for d in facts['division_leaders']:
         group = ' '.join(x for x in (d['league'], d['division']) if x) or 'league'
         leaders.append('%s leads the %s at %s.' % (d['team'], group, d['record']))
-    return {'headline': 'Around the league: ' + facts['date'],
+    return {'headline': 'Scores and standings' if facts['results'] else 'An off day',     # the page's kicker has the date
             'body': '\n'.join(' '.join(p) for p in (scores, leaders) if p)}
 
 
