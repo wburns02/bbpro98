@@ -1,0 +1,197 @@
+"""Read what the game wrote for one association: team and schedule data (ASN), player names (PYR) and the per-game
+box scores (Stats/<ASSN>.Hxx). Read-only; the codecs are work/league.py and work/hdecode.py.
+"""
+import os
+import re
+import struct
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'work'))
+import ctree            # noqa: E402
+import hdecode          # noqa: E402
+import league           # noqa: E402
+import stats            # noqa: E402
+
+PYR_REC = 192
+SIDE = 0x8000           # ORed into the ids of one side's rows in a box score
+MAX_TEAM = 34           # Lahman builds go to 34 teams (1884); stock files have 28
+
+
+def cstr(b):
+    return b.split(b'\0')[0].decode('latin-1').strip('*').strip()
+
+
+def names(pyr_path):
+    """{player id: 'First Last'} from a PYR file (cipher seed in bytes 0-1, 192-byte records after a header)."""
+    with open(pyr_path, 'rb') as fh:
+        d = fh.read()
+    if len(d) < PYR_REC or (len(d) - PYR_REC) % PYR_REC:
+        raise ValueError('%s: not a PYR file' % pyr_path)
+    t = league._forward((d[0], d[1]))
+    inv = bytearray(256)
+    for x, y in enumerate(t):
+        inv[y] = x
+    out = {}
+    for i in range(PYR_REC, len(d), PYR_REC):
+        p = bytes(inv[b] for b in d[i:i + PYR_REC])
+        pid = p[0] | p[1] << 8
+        name = (cstr(p[30:47]) + ' ' + cstr(p[47:64])).strip()
+        if pid >= 100 and name:
+            out[pid] = name
+    return out
+
+
+ENC = frozenset(('a', 'l', 'd', 't', 'r', 'xs'))     # enciphered ASN members; s, tr, df, po, sp are plain
+
+
+def _members(data):
+    """{member short name: [plain payload]} found by member name (numbers differ between files), cipher seed at
+    file bytes 0x310-0x311."""
+    t = league._forward((data[0x310], data[0x311]))
+    inv = bytearray(256)
+    for x, y in enumerate(t):
+        inv[y] = x
+    _, by_mem, members, *_ = ctree.parse(data)
+    out = {}
+    for m in members:
+        if m['kind'] != 'data':
+            continue
+        name = m['name'].rsplit('.', 1)[0].lower()
+        recs = []
+        for r in by_mem.get(m['num'], []):
+            raw = data[r.off:r.off + r.pl]
+            if raw and raw[0] != 0xFF:
+                recs.append((raw[0], bytes(inv[b] for b in raw) if name in ENC else raw))
+        out[name] = recs
+    return out
+
+
+def association(asn_path):
+    """Teams (with W-L), leagues, divisions and the regular-season schedule of one ASN file, as plain dicts."""
+    with open(asn_path, 'rb') as fh:
+        mem = _members(fh.read())
+    leagues = {}
+    for key, p in mem.get('l', []):
+        if key != league.TEMPLATE_KEY:
+            leagues[p[1]] = league._cstr(p, league.L_NAME[0], league.L_NAME[1] - 1)
+    div_of = {}
+    for key, p in mem.get('d', []):
+        if key == league.TEMPLATE_KEY:
+            continue
+        for tid in p[20:30]:
+            if 1 <= tid <= MAX_TEAM:
+                div_of[tid] = (leagues.get(p[1], ''), league._cstr(p, league.D_NAME[0], league.D_NAME[1] - 1))
+    wl = {key: (p[1], p[2]) for key, p in mem.get('xs', []) if 1 <= key <= MAX_TEAM and len(p) >= 3}
+    teams = {}
+    for key, p in mem.get('t', []):
+        if not 1 <= key <= MAX_TEAM:
+            continue
+        lg, dv = div_of.get(key, ('', ''))
+        w, l = wl.get(key, (0, 0))
+        teams[key] = {'tid': key, 'name': league._cstr(p, 0x12, league.NAME_FIELD - 1),
+                      'abbrev': league._cstr(p, *league.T_ABBREV), 'city': league._cstr(p, *league.T_CITY8),
+                      'stadium': league._cstr(p, *league.T_STADIUM), 'manager': league._cstr(p, *league.T_MANAGER),
+                      'league': lg, 'division': dv, 'w': w, 'l': l}
+    games = []
+    for _, p in mem.get('s', []):
+        if len(p) >= 17 and p[6] in teams and p[10] in teams and p[15] == 0:
+            g = league._game_json(p)
+            games.append({'month': g['month'], 'day': g['day'], 'slot': g['slot'], 'away': g['away'],
+                          'home': g['home'], 'away_runs': g['ar'], 'home_runs': g['hr'], 'played': g['played'],
+                          'innings': g['innings']})
+    name = ''
+    for key, p in mem.get('a', []):
+        if key != league.TEMPLATE_KEY and len(p) >= league.ASN_TROPHY:
+            name = league._cstr(p, league.ASN_NAME, league.ASN_STR - 1)
+            break
+    return {'name': name, 'teams': teams, 'games': games}
+
+
+BAT_KEYS = ('ab', 'h', '2b', '3b', 'hr', 'rbi', 'bb', 'so', 'r', 'sb')
+PIT_KEYS = ('outs', 'h', 'r', 'er', 'bb', 'so', 'hr', 'w', 'l', 'sv')
+
+
+def _bat(c):
+    return dict(zip(BAT_KEYS, (c[0], c[1] + c[2] + c[3] + c[4], c[2], c[3], c[4], c[5], c[6], c[7], c[13], c[14])))
+
+
+def _pit(c):
+    return dict(zip(PIT_KEYS, (c[18], c[1] + c[2] + c[3] + c[4], c[13], c[26], c[6], c[7], c[4], c[20], c[21],
+                               c[22])))
+
+
+def boxscore(h_path):
+    """One game: {'away': {...}, 'home': {...}}. Rows with 0x8000 set are the home side (every stock box score
+    matches its schedule game only that way). Each side has 'tid' (from its team-total batting row), 'runs', 'hits',
+    and 'batting' / 'pitching' lists of per-player lines in file order."""
+    with open(h_path, 'rb') as fh:
+        data = fh.read()
+    sides = {s: {'tid': None, 'batting': [], 'pitching': []} for s in ('away', 'home')}
+    for rec, body, count in hdecode.tables(data):
+        if rec not in (40, 70):
+            continue
+        for u in hdecode.rows(data, body, rec, count, rec // 2):
+            side, pid, c = 'home' if u[2] & SIDE else 'away', u[2] & 0x7FFF, u[3:]
+            if pid < 100:
+                if rec == 40 and 1 <= pid <= MAX_TEAM:
+                    sides[side]['tid'] = pid
+                continue
+            line = _bat(c) if rec == 40 else _pit(c)
+            if not any(line.values()) and not (rec == 70 and c[19]):
+                continue
+            line['pid'] = pid
+            sides[side]['batting' if rec == 40 else 'pitching'].append(line)
+    for sd in sides.values():
+        sd['runs'] = sum(x['r'] for x in sd['batting'])
+        sd['hits'] = sum(x['h'] for x in sd['batting'])
+    return sides
+
+
+def match_game(assoc, box):
+    """The played schedule games (from association()) this box score can be: same away and home team, same final
+    score. Several only when one matchup repeated a score; the caller picks by order."""
+    a, h = box['away'], box['home']
+    return [g for g in assoc['games'] if g['played'] and (g['away'], g['home']) == (a['tid'], h['tid'])
+            and (g['away_runs'], g['home_runs']) == (a['runs'], h['runs'])]
+
+
+def season_lines(dat_path):
+    """This season's (scope 1) lines from a Stats DAT file: {'bat': {id: {...}}, 'pit': {id: {...}}} with stats.BAT /
+    stats.PIT field names plus 'h'. Ids >= 100 are players, < 100 teams. Members found by name (bt.dat, pt.dat)."""
+    with open(dat_path, 'rb') as fh:
+        d = fh.read()
+    _, by_mem, members, *_ = ctree.parse(d)
+    out = {'bat': {}, 'pit': {}}
+    for kind, member, fields, size in (('bat', 'bt.dat', stats.BAT, 40), ('pit', 'pt.dat', stats.PIT, 70)):
+        num = next((m['num'] for m in members if m['name'].lower() == member), None)
+        for r in by_mem.get(num, []):
+            p = d[r.off:r.off + r.pl]
+            if len(p) != size or p[0] == 0xFF:
+                continue
+            u = _u16s(p)
+            if u[0] == 1 and u[1] == 2:
+                line = dict(zip(fields, u[3:]))
+                line['h'] = line['h1b'] + line['h2b'] + line['h3b'] + line['hr']
+                out[kind][u[2]] = line
+    return out
+
+
+def find(directory, filename):
+    """The path of filename in directory, matched without case (the game writes mlbpa97.DAT and MLBPA97.H80), or
+    None."""
+    want = filename.lower()
+    for f in os.listdir(directory):
+        if f.lower() == want:
+            return os.path.join(directory, f)
+    return None
+
+
+def box_files(stats_dir, assn):
+    """Paths of this association's box scores, Stats/<ASSN>.Hxx, sorted by modification time then name."""
+    pat = re.compile(re.escape(assn) + r'\.H[0-9A-Z]{2}$', re.I)
+    out = [os.path.join(stats_dir, f) for f in os.listdir(stats_dir) if pat.match(f)]
+    return sorted(out, key=lambda p: (os.path.getmtime(p), os.path.basename(p).upper()))
+
+
+def _u16s(b):
+    return struct.unpack('<%dH' % (len(b) // 2), b)

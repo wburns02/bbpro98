@@ -129,3 +129,16 @@ def test_short_rosters_padded():
         starters = [x for x in order if x != B.NONE]
         assert len(starters) == 8 and len(set(starters)) == 8 and set(starters) <= set(active)
         assert set(x for x in align[:8]) == set(starters)
+
+
+def test_every_minted_template_has_a_schedule():
+    """A template without s records builds a season in which no game is ever played (the 14-team-league shapes
+    minted before the schedule prompt was answered). load_template refuses those; every minted one must pass."""
+    if not os.path.isdir(B.TEMPLATES):
+        pytest.skip('templates absent')
+    keys = sorted(k for k in os.listdir(B.TEMPLATES) if os.path.isdir(os.path.join(B.TEMPLATES, k)))
+    if not keys:
+        pytest.skip('no templates minted')
+    for key in keys:
+        files = B.load_template(key)
+        assert len(AsnFile(open(files['ASN'], 'rb').read()).recs['s']) > 100, key

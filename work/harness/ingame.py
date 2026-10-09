@@ -10,7 +10,8 @@ PLAN: {"install": {"SHELL.VOL": "/path/to/edited/SHELL.VOL", ...},   keys are pa
        "steps": [["click", x, y, wait, button (1 left default, 3 right)], ["key", "ctrl+w", wait], ["move", x, y], ["wait", s], ["shot", name],
                  ["ocr", name, [x, y, w, h] | null, {"expect": [..], "absent": [..], "key": "yellow"}],
                  ["pixels", name, [x, y, w, h], {"rgb": [r, g, b], "tol": 30, "min": n, "max": m}],
-                 ["copy", "Assn/X.ASN", name]],                    copy = save a work-copy file as SHOTDIR/name now
+                 ["copy", "Assn/X.ASN", name]],                    copy = save a work-copy file as SHOTDIR/name now;
+                                                                  a glob (Stats/X.H*) copies every match into SHOTDIR/name/
        "keep": false}                                             keep = leave the edit installed and the game up
 Game state the run writes (game.sav / game.in of an unfinished game, ezshell.cfg, BBPRO.INI, league and stats files) is
 put back too: every file of the work copy is listed before the launch, the small state files (top-level files under
@@ -22,7 +23,7 @@ busy background (the 3D game's yellow-on-gray panels; black for the debug labels
 mode, default 6; 11 = sparse text) and "scale" (percent, default 300) tune the pass. "pixels" counts the pixels of the region within tol (max
 channel difference) of rgb and checks min <= count <= max (either bound optional), for edits that are not text. Exit 0 = every ocr step passed.
 """
-import hashlib, json, os, re, shutil, signal, subprocess, sys, time
+import glob, hashlib, json, os, re, shutil, signal, subprocess, sys, time
 
 WORK = '/mnt/nvme/bbpro98/work_install'
 LIVE = os.path.realpath(os.path.expanduser('~/.bbpro98_prefix/drive_c/Sierra/BBPRO_98'))
@@ -237,13 +238,19 @@ def main():
                 with open(f'{shots}/{st[1]}.txt', 'w') as fh:
                     fh.write(text)
             elif op == 'copy':
-                src = os.path.realpath(os.path.join(WORK, st[1]))
-                if not src.startswith(os.path.realpath(WORK) + os.sep) or os.sep in st[2]:
+                if os.sep in st[2] or st[2] in ('', '.', '..'):
                     sys.exit(f'REFUSED: copy {st[1]!r} -> {st[2]!r}')
-                found = os.path.exists(src)
-                if found:
-                    shutil.copy2(src, f'{shots}/{st[2]}')
-                print(json.dumps({'copy': st[1], 'found': found}))
+                pattern = any(c in st[1] for c in '*?[')
+                srcs = sorted(glob.glob(os.path.join(WORK, st[1]))) if pattern else [os.path.join(WORK, st[1])]
+                srcs = [os.path.realpath(s) for s in srcs]
+                if any(not s.startswith(os.path.realpath(WORK) + os.sep) for s in srcs):
+                    sys.exit(f'REFUSED: copy {st[1]!r} -> {st[2]!r}')
+                srcs = [s for s in srcs if os.path.isfile(s)]
+                if pattern:
+                    os.makedirs(f'{shots}/{st[2]}', exist_ok=True)
+                for s in srcs:
+                    shutil.copy2(s, f'{shots}/{st[2]}/{os.path.basename(s)}' if pattern else f'{shots}/{st[2]}')
+                print(json.dumps({'copy': st[1], 'found': len(srcs) if pattern else bool(srcs)}))
             else:
                 sys.exit(f'unknown step {op}')
     finally:

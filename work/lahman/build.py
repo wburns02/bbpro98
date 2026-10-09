@@ -161,6 +161,10 @@ def load_template(key):
     for ext, path in files.items():
         if not os.path.exists(path):
             raise SystemExit('template %s: missing %s' % (key, path))
+    # A template minted before the game generated its schedule (shapes with a 14-team league stop on the
+    # Historical/Divisional prompt) has no s records: the season it builds advances dates and never plays a game.
+    if not AsnFile(open(files['ASN'], 'rb').read()).recs.get('s'):
+        raise SystemExit('template %s has no schedule (re-mint it, answering the schedule type prompt)' % key)
     return files
 
 

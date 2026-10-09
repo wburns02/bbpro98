@@ -5,7 +5,8 @@ Public repo (MIT) of tools and research for FPS Baseball Pro '98. Python codecs 
 ## Never commit
 - Game files or anything the game wrote: *.ASN *.PYR *.PYF *.DAT *.VOL *.dll *.exe, saves, templates, snapshots.
 - Decompile dumps (/mnt/nvme/bbpro98/index), third-party tools, Sierra patch notes.
-- Secrets of any kind. No network calls from repo code.
+- Secrets of any kind. No network calls from repo code, with one exception: news/hive.py (the hosted news
+  sidecar's GLM client), which reads its key at call time from a file outside the repo.
 
 ## Paths
 - Work copy of the install: /mnt/nvme/bbpro98/work_install. Never write the live install
@@ -28,4 +29,7 @@ Public repo (MIT) of tools and research for FPS Baseball Pro '98. Python codecs 
 - One-league templates (league record byte 2 = 0) show blank league and division fields. Writing text there makes
   Association Data ask to save on every exit, which blocks a scripted sim.
 - Player card: the id cell is 10 stock and 14 with bbfix [widen]; read the live push at 6805cb0b, never hardcode.
+- Templates for shapes with a 14-team league stop on a Historical/Divisional schedule prompt while minting; copy the
+  files before answering it and the ASN has no s records, so the season never plays a game. build.py refuses such
+  a template. A season test must count games played after the sim, not just the absence of crashes.
 - Hosting: units started from a desktop user session inherit Wayland variables; unset them or x11vnc exits.
