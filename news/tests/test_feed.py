@@ -248,15 +248,15 @@ def test_template_lists_the_results_and_leaders_and_passes_numbers_ok():
     f = feed.day_facts(day_assoc(), DAY_SEASON, DAY_NAMES, 4, 9)
     t = feed.template(f)
     assert t['headline'] == 'Around the league: April 9'
-    assert t['body'] == ('Ash 5, Birch 4.\nCedar 6, Dogwood 2.\n'
-                         'Ash leads the American League Western at 1-0.\nCedar leads the American League Eastern at 4-0.')
+    assert t['body'] == ('Ash 5, Birch 4. Cedar 6, Dogwood 2.\n'
+                         'Ash leads the American League Western at 1-0. Cedar leads the American League Eastern at 4-0.')
     assert recap.numbers_ok(t['headline'] + '\n' + t['body'], f)
 
 
 def test_template_on_a_day_with_no_games_and_in_a_one_league_era():
     f = feed.day_facts(day_assoc(), DAY_SEASON, DAY_NAMES, 4, 3)
     t = feed.template(f)
-    assert t['body'] == ('No games were played on April 3.\nAsh leads the American League Western at 1-0.\n'
+    assert t['body'] == ('No games were played on April 3.\nAsh leads the American League Western at 1-0. '
                          'Cedar leads the American League Eastern at 4-0.')
     assert recap.numbers_ok(t['headline'] + '\n' + t['body'], f)
 

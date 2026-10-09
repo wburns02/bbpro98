@@ -134,20 +134,22 @@ def prompt(facts):
 
 
 def template(facts):
-    """The day's results and division leaders as plain lines; every number in it passes numbers_ok."""
-    lines = []
+    """The day's results, then the division leaders, as two plain paragraphs; every number in it passes numbers_ok."""
+    scores = []
     for r in facts['results']:
         if r['home_runs'] > r['away_runs']:
             pair = (r['home'], r['home_runs'], r['away'], r['away_runs'])
         else:
             pair = (r['away'], r['away_runs'], r['home'], r['home_runs'])
-        lines.append('%s %d, %s %d.' % pair)
-    if not lines:
-        lines.append('No games were played on %s.' % facts['date'])
+        scores.append('%s %d, %s %d.' % pair)
+    if not scores:
+        scores.append('No games were played on %s.' % facts['date'])
+    leaders = []
     for d in facts['division_leaders']:
         group = ' '.join(x for x in (d['league'], d['division']) if x) or 'league'
-        lines.append('%s leads the %s at %s.' % (d['team'], group, d['record']))
-    return {'headline': 'Around the league: ' + facts['date'], 'body': '\n'.join(lines)}
+        leaders.append('%s leads the %s at %s.' % (d['team'], group, d['record']))
+    return {'headline': 'Around the league: ' + facts['date'],
+            'body': '\n'.join(' '.join(p) for p in (scores, leaders) if p)}
 
 
 def write(facts, budget, complete, attempts=2):
