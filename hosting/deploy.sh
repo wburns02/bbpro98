@@ -58,6 +58,24 @@ for s in "${SEASONS[@]}"; do
     --include='*.DAT' --exclude='*' "$s/Stats/" "$HOST:$DST/Stats/"
 done
 
+# The news sidecar: its own code plus the read-only codecs it imports. Its units restart on a change; the game does not.
+NEWS=${NEWS:-/mnt/data/bbpro98/news}
+REPO=$(cd "$(dirname "$0")/.." && pwd)
+[ ${#DRY[@]} -eq 0 ] && ssh "$HOST" "mkdir -p '$NEWS/news' '$NEWS/work' /mnt/data/bbpro98/news-data"
+news=$(rsync -rl --checksum --itemize-changes "${DRY[@]}" -e ssh --include='*.py' --exclude='*' \
+         "$REPO/news/" "$HOST:$NEWS/news/" | grep '^<f' || true)
+news+=$(rsync -rl --checksum --itemize-changes "${DRY[@]}" -e ssh \
+          "$REPO/work/ctree.py" "$REPO/work/hdecode.py" "$REPO/work/league.py" "$REPO/work/stats.py" \
+          "$HOST:$NEWS/work/" | grep '^<f' || true)
+if [ -n "$news" ]; then
+  echo "$news"
+  if [ ${#DRY[@]} -eq 0 ]; then
+    ssh "$HOST" 'systemctl --user restart bbpro98-news-web bbpro98-news-watch && systemctl --user is-active bbpro98-news-web bbpro98-news-watch'
+  else
+    echo "dry run: the news units would restart"
+  fi
+fi
+
 if [ "$changed" = 1 ] && [ ${#DRY[@]} -eq 0 ]; then
   ssh "$HOST" 'systemctl --user restart bbpro98-game && systemctl --user is-active bbpro98-game'
 elif [ "$changed" = 1 ]; then

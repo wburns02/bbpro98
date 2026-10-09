@@ -1,2 +1,22 @@
-<!doctype html><meta charset="utf-8"><title>Baseball Pro 98</title>
-<meta http-equiv="refresh" content="0; url=vnc.html?autoconnect=1&resize=scale&reconnect=1&reconnect_delay=2000&path=websockify">
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Baseball Pro 98</title>
+<style>
+:root { --bg: #f6f1e3; --ink: #1d1b16; --rule: #c9bfa6; --accent: #9b2c22; color-scheme: light }
+@media (prefers-color-scheme: dark) { :root { --bg: #1a1814; --ink: #efe8d8; --rule: #4a443a; --accent: #e07a62; color-scheme: dark } }
+body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--bg); color: var(--ink);
+       font-family: Georgia, 'Times New Roman', serif; padding: 16px; box-sizing: border-box }
+main { text-align: center; max-width: 30rem }
+h1 { font-size: 2.4rem; margin: 0 0 .25rem; border-bottom: 3px double var(--rule); padding-bottom: .5rem }
+p { font-variant: small-caps; letter-spacing: .08em; color: var(--accent); margin: .5rem 0 2rem }
+nav { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap }
+a { color: var(--ink); text-decoration: none; border: 1px solid var(--ink); padding: .8rem 1.6rem; font-size: 1.15rem }
+a.play { background: var(--ink); color: var(--bg) }
+</style>
+<main>
+<h1>Baseball Pro '98</h1>
+<p>the hosted league</p>
+<nav>
+<a class="play" href="vnc.html?autoconnect=1&amp;resize=scale&amp;reconnect=1&amp;reconnect_delay=2000&amp;path=websockify">Play</a>
+<a href="news/">League news</a>
+</nav>
+</main>

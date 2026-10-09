@@ -197,7 +197,7 @@ def template(facts):
     win = facts['winner']
     lose = 'home' if win == 'away' else 'away'
     w, l = facts[win], facts[lose]
-    body = ['The %s beat the %s %d-%d at %s on %s.' % (w['name'], l['name'], w['runs'], l['runs'],
+    body = ['%s beat %s %d-%d at %s on %s.' % (w['name'], l['name'], w['runs'], l['runs'],
                                                        facts['home']['stadium'], facts['date'])]
     if facts['innings'] > 9:
         body.append('It took %d innings.' % facts['innings'])
@@ -217,8 +217,8 @@ def template(facts):
             dec['win']['name'], _plural(dec['win']['r'], 'run'), dec['win']['ip']))
     if dec['save']:
         body.append('%s earned the save over %s innings.' % (dec['save']['name'], dec['save']['ip']))
-    body.append('The %s are %s and the %s are %s.' % (facts['away']['name'], facts['away']['record'],
-                                                     facts['home']['name'], facts['home']['record']))
+    body.append('%s is %s; %s is %s.' % (facts['away']['name'], facts['away']['record'],
+                                         facts['home']['name'], facts['home']['record']))
     return {'headline': '%s %d, %s %d' % (w['name'], w['runs'], l['name'], l['runs']), 'body': ' '.join(body)}
 
 

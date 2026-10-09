@@ -145,7 +145,8 @@ def template(facts):
     if not lines:
         lines.append('No games were played on %s.' % facts['date'])
     for d in facts['division_leaders']:
-        lines.append('%s leads the %s at %s.' % (d['team'], d['division'] or d['league'] or 'league', d['record']))
+        group = ' '.join(x for x in (d['league'], d['division']) if x) or 'league'
+        lines.append('%s leads the %s at %s.' % (d['team'], group, d['record']))
     return {'headline': 'Around the league: ' + facts['date'], 'body': '\n'.join(lines)}
 
 

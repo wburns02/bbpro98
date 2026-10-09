@@ -267,20 +267,20 @@ def test_template_home_win_reads_as_plain_prose():
     t = recap.template(facts_of())
     assert t['headline'] == 'Oakland Athletics 5, Chicago White Sox 3'
     assert t['body'] == (
-        'The Oakland Athletics beat the Chicago White Sox 5-3 at Oakland-Alameda County Stadium on April 15. '
+        'Oakland Athletics beat Chicago White Sox 5-3 at Oakland-Alameda County Stadium on April 15. '
         'Dan Dale went 2-for-4 with 1 home run and 3 RBI. Ann Able went 3-for-4 with 1 RBI. Eli Ford went 1-for-4. '
         'Ian Jett got the win, allowing 2 runs over 7.0 innings. Kip Lowe earned the save over 2.0 innings. '
-        'The Chicago White Sox are 1-2 and the Oakland Athletics are 2-1.')
+        'Chicago White Sox is 1-2; Oakland Athletics is 2-1.')
 
 
 def test_template_away_win_names_the_away_side_and_its_pitchers():
     t = recap.template(facts_of(ar=5, hr=3))
     assert t['headline'] == 'Chicago White Sox 5, Oakland Athletics 3'
-    assert t['body'].startswith('The Chicago White Sox beat the Oakland Athletics 5-3 at Oakland-Alameda County '
+    assert t['body'].startswith('Chicago White Sox beat Oakland Athletics 5-3 at Oakland-Alameda County '
                                 'Stadium on April 15. ')
     assert 'Gus Hall got the win, allowing 3 runs over 7.1 innings.' in t['body']
     assert 'Hal Ives earned the save over 1.2 innings.' in t['body']
-    assert 'The Chicago White Sox are 2-1 and the Oakland Athletics are 1-2.' in t['body']
+    assert 'Chicago White Sox is 2-1; Oakland Athletics is 1-2.' in t['body']
 
 
 def test_template_names_at_most_three_batters():

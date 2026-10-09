@@ -1,0 +1,8 @@
+[Unit]
+Description=BBPRO98 hosted: league news pages on 127.0.0.1:6153
+[Service]
+ExecStart=/usr/bin/python3 /mnt/data/bbpro98/news/news/server.py --data /mnt/data/bbpro98/news-data --port 6153
+Restart=always
+RestartSec=3
+[Install]
+WantedBy=default.target
