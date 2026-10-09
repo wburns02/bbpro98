@@ -37,6 +37,7 @@ import teamnames  # noqa: E402
 
 SETTLE = 5            # seconds a game file must sit unchanged before it is read
 LLM_DAYS = 3          # columns for the newest dates go to the model; older dates get the template
+SCOUT_CALLS = 3       # scouting reports asked of the model per scan, so a backfill never holds up box scores
 
 
 def now_iso():
@@ -90,6 +91,8 @@ class Watcher:
         self.seen = {}          # stem -> signature of its game files at the last full pass
         self.waiting = set()    # box score keys already logged as unmatched
         self.captured = {}      # stem -> box score keys already in pending/ or recaps/
+        self.scout_left = SCOUT_CALLS   # model scouting reports left in this scan
+        self.scouting_open = set()      # stems with teams still waiting for a scouting report
         self.names = teamnames.load(os.path.join(data_dir, 'teamnames.json'))   # full Lahman names; {} without it
 
     def signature(self, stem, asn_path):
@@ -105,10 +108,11 @@ class Watcher:
         return tuple(sig)
 
     def scan(self):
+        self.scout_left = SCOUT_CALLS
         for stem, asn_path in sorted(associations(self.game).items()):
             try:
                 sig = self.signature(stem, asn_path)
-                if self.seen.get(stem) == sig:
+                if self.seen.get(stem) == sig and stem not in self.scouting_open:
                     continue
                 self.association(stem, asn_path)
                 # Files younger than SETTLE were left for later; only a settled set may be skipped next time.
@@ -160,7 +164,9 @@ class Watcher:
 
     def scouting(self, out, assoc, pyr, dat):
         """One scouting report per team, written once: the team's best hitters and pitchers graded from the PYR ratings,
-        with last season's numbers where they qualify. Reads no game file while every team already has its report."""
+        with last season's numbers where they qualify. Reads no game file while every team already has its report.
+        With the model on, at most SCOUT_CALLS reports a scan, and none once the day's budget is spent (a template
+        written then would stand for good); the association stays open for the next scans until every team has one."""
         stem = os.path.basename(out)
         if not assoc['teams'] or pyr is None:
             return
@@ -172,15 +178,24 @@ class Watcher:
         last = gamedata.season_lines(dat, scope=3) if dat else {'bat': {}, 'pit': {}}
         year = scout.year_of(assoc['name'])
         for tid in todo:
+            if self.complete is not None and self.scout_left <= 0:
+                self.scouting_open.add(stem)
+                return
             team = assoc['teams'][tid]
             facts = scout.team_facts(assoc, tid, players, last, year)
+            if self.complete is not None:
+                self.scout_left -= 1
             piece = _llm_or_template(scout.write, facts, self.budget, self.complete)
+            if piece is not None and piece.get('reason') == 'budget':
+                self.scouting_open.add(stem)
+                return
             if piece is None:
                 piece = dict(scout.template(facts), source='template', reason='off')
             write_json(os.path.join(out, 'scout', '%d.json' % tid),
                        dict(piece, kind='scout', tid=tid, abbrev=team['abbrev'], team=team['name'], facts=facts,
                             roster=scout.roster(assoc, tid, players, year), created=now_iso()))
             self.log('%s scout %s (%s)' % (stem, team['abbrev'], piece['source']))
+        self.scouting_open.discard(stem)
 
     def capture(self, stem):
         """Copy every new box score of this association into <data>/<ASSN>/pending/ as parsed JSON. The game keeps

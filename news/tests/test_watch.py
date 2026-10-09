@@ -229,3 +229,45 @@ def test_no_scouting_without_a_pyr(world, monkeypatch):
     watch.Watcher(str(gd), str(data), None, None, log=lambda s: None).scan()
     assert reads == [] and not (data / '30L1998' / 'scout').exists()
     assert (data / '30L1998' / 'preview.json').exists()        # the other season pieces still come
+
+
+def test_scouting_asks_the_model_for_at_most_scout_calls_a_scan_and_finishes_on_later_scans(world, monkeypatch):
+    gd, data, st = world
+    (gd / 'Assn' / '30L1998.PYR').write_bytes(b'pyr')
+    monkeypatch.setattr(gamedata, 'players', lambda path: SCOUT_PLAYERS)
+    monkeypatch.setattr(watch, 'SCOUT_CALLS', 1)
+    calls = []
+
+    def write(facts, budget, complete):
+        calls.append(facts['team'])
+        return {'headline': 'Scouting', 'body': 'Report.', 'source': 'glm'}
+
+    monkeypatch.setattr(watch.scout, 'write', write)
+    w = watch.Watcher(str(gd), str(data), object(), lambda *a: None, log=lambda s: None)
+    monkeypatch.setattr(w, 'columns', lambda *a: None)
+    monkeypatch.setattr(w, 'recaps', lambda *a: None)
+    monkeypatch.setattr(watch.season, 'write_preview',
+                        lambda f, b, c: {'headline': 'h', 'body': 'b', 'source': 'glm'})
+    w.scan()
+    scout = data / '30L1998' / 'scout'
+    assert calls == ['Ash'] and sorted(os.listdir(scout)) == ['1.json']
+    w.scan()                                  # nothing changed on disk, but the association is still open
+    assert calls == ['Ash', 'Birch'] and sorted(os.listdir(scout)) == ['1.json', '2.json']
+    w.scan()
+    assert calls == ['Ash', 'Birch'] and '30L1998' not in w.scouting_open
+
+
+def test_scouting_writes_nothing_once_the_budget_is_spent(world, monkeypatch):
+    gd, data, st = world
+    (gd / 'Assn' / '30L1998.PYR').write_bytes(b'pyr')
+    monkeypatch.setattr(gamedata, 'players', lambda path: SCOUT_PLAYERS)
+    monkeypatch.setattr(watch.scout, 'write',
+                        lambda facts, budget, complete: {'headline': 'x', 'body': 'y', 'source': 'template',
+                                                         'reason': 'budget'})
+    w = watch.Watcher(str(gd), str(data), object(), lambda *a: None, log=lambda s: None)
+    monkeypatch.setattr(w, 'columns', lambda *a: None)
+    monkeypatch.setattr(w, 'recaps', lambda *a: None)
+    monkeypatch.setattr(watch.season, 'write_preview',
+                        lambda f, b, c: {'headline': 'h', 'body': 'b', 'source': 'glm'})
+    w.scan()
+    assert not (data / '30L1998' / 'scout').exists() and '30L1998' in w.scouting_open
