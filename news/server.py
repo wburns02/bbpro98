@@ -57,7 +57,7 @@ a:hover { color: var(--accent); }
 .masthead h1 { font-size: clamp(2rem, 6vw, 3.25rem); line-height: 1.05; margin: 2px 0 4px; }
 .kicker { margin: 0; font: .8rem var(--sans); letter-spacing: .14em; text-transform: uppercase; color: var(--accent); }
 .through, .meta, .dateline, .byline, .nav { margin: 0; font: .95rem var(--sans); color: var(--muted); }
-h1, h2 { font-weight: 700; line-height: 1.2; }
+h1, h2 { font-weight: 700; line-height: 1.2; text-wrap: balance; }
 h2 { font-size: 1.35rem; margin: 0 0 4px; }
 .grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 24px; }
 @media (max-width: 759px) { .grid { grid-template-columns: minmax(0, 1fr); } }
