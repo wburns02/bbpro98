@@ -192,9 +192,16 @@ def _done(srv, query):
     if entry is None:
         return _notice(404, 'Not found', 'No such player.')
     label = _label(stem, watch.associations(srv.game).get(stem))
-    text = ('%s (%s) is in the %s free agent pool. In the game, open League Management, load that association and sign '
-            'him from the free agents.' % (entry.get('name'), POSITION_LABELS.get(entry.get('pos'), ''), label))
-    body = server._masthead('Player created') + '<p>%s</p>' % server.esc(text) + \
+    text = '%s (%s) is in the %s free agent pool.' % (entry.get('name'), POSITION_LABELS.get(entry.get('pos'), ''), label)
+    steps = ('League Management, then Main > Load Association and pick %s.' % label,
+             'Team > Select Team and pick your team.',
+             'Team > Data: Ownership must say Human (one click on Computer makes it Human). Claim Free Agent is greyed '
+             'out for computer-owned teams.',
+             'Team > Claim Free Agent, press OK (tick only his position to find him fast), then double-click his name. '
+             'The claim goes through when the league plays its next day.')
+    body = server._masthead('Player created') + '<p>%s</p><p>To sign him:</p><ol>%s</ol>' % (
+        server.esc(text), ''.join('<li>%s</li>' % server.esc(s) for s in steps)) + \
+        '<p>Computer-run teams sign free agents on their own, so if you wait he may land somewhere else.</p>' + \
         '<p class="nav"><a href="/create/">Create another</a> &middot; <a href="/">Back to the game</a></p>'
     return server._page_reply(200, 'Player created', body)
 

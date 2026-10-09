@@ -1,0 +1,8 @@
+[Unit]
+Description=BBPRO98 hosted: Create a Player form on 127.0.0.1:6155
+[Service]
+ExecStart=/usr/bin/python3 /mnt/data/bbpro98/news/news/createweb.py --game /mnt/data/bbpro98/prefix/drive_c/Sierra/BBPRO_98 --data /mnt/data/bbpro98/news-data --backup /mnt/data/bbpro98/backup/create --origin https://bbpro98.ecbtx.com --port 6155
+Restart=always
+RestartSec=3
+[Install]
+WantedBy=default.target

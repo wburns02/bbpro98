@@ -154,6 +154,7 @@ def test_done_page_names_the_player_and_its_association(web):
     status, _, body = call(web, 'GET', '/create/done?assn=TEST77&pid=206')
     assert status == 200
     assert 'Pat Doe (Shortstop) is in the 1977 Major Leagues free agent pool.' in body.decode()
+    assert 'Ownership must say Human' in body.decode() and 'Team &gt; Claim Free Agent' in body.decode()
     assert call(web, 'GET', '/create/done?assn=TEST77&pid=999')[0] == 404
     assert call(web, 'GET', '/create/done?assn=..%2Fx&pid=206')[0] == 404
     assert call(web, 'GET', '/create/done')[0] == 404

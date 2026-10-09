@@ -7,6 +7,10 @@ set -e
 PREFIX=/mnt/data/bbpro98/prefix
 SBX=/mnt/data/bbpro98/sandbox            # the sandbox's /tmp: wineserver's socket, so `stop` can reach it
 mkdir -p -m 700 "$SBX/tmp/home"
+# No sound reaches the sandbox (the host's PulseAudio socket would let the game load server modules). Without an audio
+# device the menu music fails at once and the shell retries the next track in a busy loop that starves its input, so
+# the menu ignores clicks. ALSA's null device takes the sound and drops it.
+printf 'pcm.!default { type null }\n' > "$SBX/tmp/home/.asoundrc"
 # Wine maps Z: to / and adds a drive for every mounted disk; the game only needs C:.
 find "$PREFIX/dosdevices" -mindepth 1 -maxdepth 1 ! -name 'c:' -delete
 

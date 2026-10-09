@@ -7,6 +7,7 @@ game files: the host needs its own installed copy (a Wine prefix with `drive_c/S
 browser -> cloudflared tunnel -> nginx 127.0.0.1:6150 (asks gate.py 127.0.0.1:6154 for a signed-in cookie)
         -> websockify + noVNC 127.0.0.1:6152 -> x11vnc 127.0.0.1:5952 -> Xvfb :52 (800x600) <- wine bblaunch.exe
         -> /news: news/server.py 127.0.0.1:6153
+        -> /create: news/createweb.py 127.0.0.1:6155 -> adds a player to an association's free agents
            <- news-data <- news/watch.py <- the game's Assn/ and Stats/ (read only), GLM-Flash on Hive
 ```
 
@@ -24,11 +25,12 @@ path, `/websockify` included; a visitor without one gets the PIN form. A sign-in
 | `run-game.sh` | `/mnt/data/bbpro98/bin/` | starts `bblaunch.exe`, waits for the prefix's wineserver |
 | `systemd/bbpro98-news-watch.service` | same | writes game stories and columns from the box scores |
 | `systemd/bbpro98-news-web.service` | same | serves them at `/news` on 127.0.0.1:6153, read only |
+| `systemd/bbpro98-create.service` | same | the Create a Player form at `/create` on 127.0.0.1:6155 |
 | `gate.py` | `/mnt/data/bbpro98/gate/` | the PIN form and the cookie check nginx asks on every request |
 | `nginx.conf` | same | the only listener the tunnel reaches (6150): gate check, then `/news` or the game |
 | `systemd/bbpro98-gate.service` | `~/.config/systemd/user/` | runs `gate.py`; PIN and secret files below |
 | `systemd/bbpro98-proxy.service` | same | runs nginx as the user with that config |
-| `index.html` | web dir, next to symlinks to `/usr/share/novnc/*` | landing page: Play (noVNC, autoconnect) and League news |
+| `index.html` | web dir, next to symlinks to `/usr/share/novnc/*` | landing page: Play (noVNC, autoconnect), League news, Create a player |
 | `cloudflared.yml.example` | `~/.cloudflared/bbpro98.yml` | tunnel ingress: everything to nginx on 6150 |
 | `deploy.sh` | stays here | pushes changed game code, new seasons, the landing page, the news code and the gate |
 
@@ -56,6 +58,11 @@ Paths in the units assume `/mnt/data/bbpro98/{prefix,web,bin,news,news-data,gate
    `systemctl --user enable --now bbpro98-news-web bbpro98-news-watch`. The watcher spends at most
    `BBNEWS_CALLS` model calls and `BBNEWS_TOKENS` output tokens a day and writes template stories after that;
    `/news/status.json` shows the day's use.
+8. Create a Player: install `bbpro98-create.service` (set `--origin` to the site's `https://<hostname>`), then
+   `systemctl --user enable --now bbpro98-create`. It writes a new player into an association's `.PYR` and adds
+   him to its free agents (`.PYF`), after copying both to `/mnt/data/bbpro98/backup/create/<STEM>-<time>-<id>/`.
+   It refuses while any process holds the association's files open, so a player is added only while the game sits
+   at its main menu or in another association. The player is signed in the game from the free agents.
 
 ## Updating the hosted copy
 
@@ -66,7 +73,7 @@ HOST=user@host hosting/deploy.sh --dry-run --mods /mnt/nvme/bbpro98/build/pc --s
 Drop `--dry-run` to apply. Game code (top-level DLLs, EXEs, VOLs, `PB.INI`, `mods/*.dll`) is replaced when its
 content differs, and only then is the game restarted. New seasons are added; a season already on the host is never
 overwritten, because it holds the games played in the browser. The host's `bbfix.ini` is never touched; edit it
-there to turn a mod on. The news units restart when their code changes; the game does not.
+there to turn a mod on. The news units and the create form restart when their code changes; the game does not.
 
 ## Gotchas
 

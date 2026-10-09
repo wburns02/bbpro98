@@ -8,8 +8,8 @@
 # and is never copied. Seasons (--seasons points at a build.py --install root holding Assn/ and Stats/) are only
 # added: an association that already exists on the host keeps its files, because those carry the progress played
 # in the browser. The game unit restarts only when a replaced file changed, since a restart ends the session in
-# the browser. The landing page (index.html) and the news sidecar's code are copied too; the news units restart on a
-# change. So are the PIN gate and its nginx config (the gate restarts and nginx reloads on a change).
+# the browser. The landing page (index.html) and the news sidecar's code are copied too; the news units and the Create a
+# Player form (news/createweb.py) restart on a change. So are the PIN gate and its nginx config (the gate restarts and nginx reloads on a change).
 set -euo pipefail
 
 SRC=${SRC:-$HOME/.bbpro98_prefix/drive_c/Sierra/BBPRO_98}
@@ -82,9 +82,9 @@ fi
 if [ -n "$news" ]; then
   echo "$news"
   if [ ${#DRY[@]} -eq 0 ]; then
-    ssh "$HOST" 'systemctl --user restart bbpro98-news-web bbpro98-news-watch && systemctl --user is-active bbpro98-news-web bbpro98-news-watch'
+    ssh "$HOST" 'systemctl --user restart bbpro98-news-web bbpro98-news-watch bbpro98-create && systemctl --user is-active bbpro98-news-web bbpro98-news-watch bbpro98-create'
   else
-    echo "dry run: the news units would restart"
+    echo "dry run: the news and create units would restart"
   fi
 fi
 

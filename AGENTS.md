@@ -38,3 +38,8 @@ Public repo (MIT) of tools and research for FPS Baseball Pro '98. Python codecs 
   pointer before every screenshot (seasonloop.look) and judge the season by games played, not by the screen.
 - Lahman pitch ratings: never copy a donor's pitches verbatim; shift them to the fitted stuff (ratings.stuff). Sim ERA
   moves about 0.1 per point of mean pitch rating, so one cloned ace arsenal gives a sub-1.00 ERA.
+- League Management, Team > Data: one click on Ownership turns a Computer team Human with no prompt (only Human to
+  Computer asks), and the change is written to the ASN. Never click it in a real association (MLBPA97 is Will's).
+  Claim Free Agent is greyed out unless the selected team is Human; claims go through when the league plays a day.
+- Hosted game sandbox: with no audio device the menu music fails at once and the shell retries tracks in a busy loop
+  that ignores clicks. hosting/run-game.sh gives the sandbox ALSA's null device; never drop that line.
