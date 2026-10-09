@@ -43,20 +43,35 @@ def test_per_ip_limit_then_window_expires():
     c = Clock()
     g = gate.Gate('4321', SECRET, now=c)
     for _ in range(gate.IP_FAILS):
-        assert not g.blocked('1.1.1.1')
-        assert not g.check('1.1.1.1', '0000')
-    assert g.blocked('1.1.1.1')
-    assert not g.blocked('2.2.2.2')
+        assert g.attempt('1.1.1.1', '0000') == 'wrong'
+    assert g.attempt('1.1.1.1', '4321') == 'blocked'           # even the right PIN waits out the window
+    assert g.attempt('2.2.2.2', '4321') == 'ok'
     c.t += gate.IP_WINDOW + 1
     assert not g.blocked('1.1.1.1')
-    assert g.check('1.1.1.1', '4321')
+    assert g.attempt('1.1.1.1', '4321') == 'ok'
+
+
+def test_parallel_guesses_cannot_pass_the_limit():
+    g = gate.Gate('4321', SECRET, now=Clock())
+    out, start = [], threading.Barrier(40)
+
+    def guess(i):
+        start.wait()
+        out.append(g.attempt('1.1.1.1', '%04d' % i))
+
+    ts = [threading.Thread(target=guess, args=(i,)) for i in range(40)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    assert out.count('wrong') == gate.IP_FAILS and out.count('blocked') == 40 - gate.IP_FAILS
 
 
 def test_global_limit_across_addresses():
     c = Clock()
     g = gate.Gate('4321', SECRET, now=c)
     for i in range(gate.GLOBAL_FAILS):
-        g.check('10.0.%d.%d' % (i // 250, i % 250), '9999')
+        assert g.attempt('10.0.%d.%d' % (i // 250, i % 250), '9999') == 'wrong'
     assert g.blocked('9.9.9.9')
     c.t += gate.GLOBAL_WINDOW + 1
     assert not g.blocked('9.9.9.9')

@@ -90,24 +90,32 @@ class Gate:
         t = self.now() - window
         return [x for x in times if x > t]
 
+    def _blocked(self, ip):
+        self.all_fails = self._recent(self.all_fails, GLOBAL_WINDOW)
+        mine = self._recent(self.fails.get(ip, []), IP_WINDOW)
+        if mine:
+            self.fails[ip] = mine
+        else:
+            self.fails.pop(ip, None)
+        return len(mine) >= IP_FAILS or len(self.all_fails) >= GLOBAL_FAILS
+
     def blocked(self, ip):
         with self.lock:
-            self.all_fails = self._recent(self.all_fails, GLOBAL_WINDOW)
-            mine = self.fails[ip] = self._recent(self.fails.get(ip, []), IP_WINDOW)
-            if not mine:
-                del self.fails[ip]
-            return len(mine) >= IP_FAILS or len(self.all_fails) >= GLOBAL_FAILS
+            return self._blocked(ip)
 
-    def check(self, ip, pin):
-        """True when the PIN is right. Callers ask blocked() first; a wrong PIN counts against ip and the total."""
-        ok = hmac.compare_digest(pin.encode(), self.pin)
-        if not ok:
-            with self.lock:
-                self.fails.setdefault(ip, []).append(self.now())
-                self.all_fails.append(self.now())
-                if len(self.fails) > 10000:          # bound memory under a spray of addresses
-                    self.fails.clear()
-        return ok
+    def attempt(self, ip, pin):
+        """'ok', 'wrong' or 'blocked'. The limit check, the comparison and the count of a wrong PIN happen under one
+        lock, so parallel guesses cannot all pass the check before any of them is counted. Wrong PINs are capped at
+        GLOBAL_FAILS an hour, which also bounds the per-visitor table."""
+        with self.lock:
+            if self._blocked(ip):
+                return 'blocked'
+            if hmac.compare_digest(pin.encode(), self.pin):
+                return 'ok'
+            t = self.now()
+            self.fails.setdefault(ip, []).append(t)
+            self.all_fails.append(t)
+            return 'wrong'
 
 
 def cookie_of(header):
@@ -170,10 +178,10 @@ def handler(gate):
                 return self._send(413)
             f = urllib.parse.parse_qs(self.rfile.read(n).decode('utf-8', 'replace'))
             nxt = f.get('next', ['/'])[0]
-            ip = self._ip()
-            if gate.blocked(ip):
+            got = gate.attempt(self._ip(), f.get('pin', [''])[0].strip())
+            if got == 'blocked':
                 return self._form(429, nxt, 'Too many wrong PINs. Try again later.')
-            if not gate.check(ip, f.get('pin', [''])[0].strip()):
+            if got != 'ok':
                 return self._form(401, nxt, 'Wrong PIN.')
             self._send(303, headers=[('Location', safe_next(nxt)), ('Set-Cookie', '%s=%s; Path=/; Max-Age=%d; '
                                       'HttpOnly; Secure; SameSite=Lax' % (COOKIE, gate.token(), MAX_AGE))])

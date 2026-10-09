@@ -36,7 +36,7 @@ Paths in the units assume `/mnt/data/bbpro98/{prefix,web,bin,news,news-data,gate
 
 ## Setup
 
-1. Install `xorg-x11-server-Xvfb x11vnc novnc python3-websockify wine nginx` (Fedora names).
+1. Install `xorg-x11-server-Xvfb x11vnc novnc python3-websockify wine nginx bubblewrap` (Fedora names).
 2. Copy the Wine prefix with the installed game to `/mnt/data/bbpro98/prefix`.
 3. Install the files above, then `loginctl enable-linger $USER` and
    `systemctl --user enable --now bbpro98-xvfb bbpro98-vnc bbpro98-web bbpro98-game`.
@@ -75,6 +75,8 @@ there to turn a mod on. The news units restart when their code changes; the game
   Wine may pick the wrong display. The units unset all three.
 - Wine ignores SIGTERM while the game runs; the game unit stops it with `wineserver -k`.
 - One shared desktop: everyone who connects sees and drives the same game.
-- Wine maps `z:` to `/` and, through mountmgr, any USB disk it sees, which would let the game's file dialogs
-  read and write the host. `run-game.sh` deletes every `dosdevices` entry but `c:` before each start, and the game
-  unit points `DBUS_SYSTEM_BUS_ADDRESS` at nothing so mountmgr finds no disks to add.
+- Wine reaches every host path whatever its drive letters say: `z:` maps to `/`, mountmgr adds any USB disk, and
+  `\\?\unix\...` names and the file dialogs' "/" folder work with no drive at all. So `run-game.sh` runs the game in
+  a bubblewrap sandbox that sees only `/usr`, `/etc`, the prefix, the X socket and a `/tmp` of its own
+  (`/mnt/data/bbpro98/sandbox/tmp`, which also holds wineserver's socket so `run-game.sh stop` can reach it). It
+  also drops every `dosdevices` entry but `c:`. Needs `bubblewrap`.

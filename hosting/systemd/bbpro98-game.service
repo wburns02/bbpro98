@@ -3,13 +3,12 @@ Description=BBPRO98 hosted: the game under Wine on :52
 Requires=bbpro98-xvfb.service
 After=bbpro98-xvfb.service
 [Service]
-UnsetEnvironment=WAYLAND_DISPLAY XDG_SESSION_TYPE XAUTHORITY
-# No system D-Bus: Wine's mount manager would map every mounted USB disk to a drive letter (run-game.sh drops
-# the rest).
-Environment=WINEPREFIX=/mnt/data/bbpro98/prefix WINEDEBUG=-all DISPLAY=:52 DBUS_SYSTEM_BUS_ADDRESS=unix:path=/nonexistent
+# run-game.sh starts the game in a bubblewrap sandbox with its own environment (display, prefix, no system D-Bus,
+# so Wine's mount manager maps no USB disks) and stops it from inside the same sandbox; `wineserver -k` exits 1
+# when the server goes away mid-call, hence the "-".
 ExecStartPre=/bin/sleep 3
 ExecStart=/mnt/data/bbpro98/bin/run-game.sh
-ExecStop=/usr/bin/wineserver -k
+ExecStop=-/mnt/data/bbpro98/bin/run-game.sh stop
 TimeoutStopSec=15
 Restart=always
 RestartSec=5
