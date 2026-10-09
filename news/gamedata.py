@@ -1,6 +1,7 @@
 """Read what the game wrote for one association: team and schedule data (ASN), player names (PYR) and the per-game
 box scores (Stats/<ASSN>.Hxx). Read-only; the codecs are work/league.py and work/hdecode.py.
 """
+import datetime
 import os
 import re
 import struct
@@ -13,6 +14,16 @@ import league           # noqa: E402
 import stats            # noqa: E402
 
 PYR_REC = 192
+P_BORN = 0x1a           # u32 birth serial: the date is datetime.date.fromordinal(serial - 365)
+P_BATS = 0x41           # 1 L, 2 R, 3 S (BATS)
+P_THROWS = 0x42         # 1 L, 2 R (THROWS)
+P_POS = 0x44            # 1..9: the position in POSITIONS
+P_CUR = 0x5d            # the current ratings block, bytes 0..99
+P_STRIKEOUT = 0x76
+R_CONTACT, R_POWER, R_SPEED, R_STAMINA, R_CONTROL, R_FIELD = 0, 1, 2, 5, 6, 14   # offsets in the ratings block
+POSITIONS = ('P', 'C', '1B', '2B', '3B', 'SS', 'LF', 'CF', 'RF')
+BATS = {1: 'L', 2: 'R', 3: 'S'}
+THROWS = {1: 'L', 2: 'R'}
 SIDE = 0x8000           # ORed into the ids of one side's rows in a box score
 MAX_TEAM = 34           # Lahman builds go to 34 teams (1884); stock files have 28
 
@@ -21,8 +32,8 @@ def cstr(b):
     return b.split(b'\0')[0].decode('latin-1').strip('*').strip()
 
 
-def names(pyr_path):
-    """{player id: 'First Last'} from a PYR file (cipher seed in bytes 0-1, 192-byte records after a header)."""
+def _records(pyr_path):
+    """Each 192-byte record of a PYR file after its header, deciphered (cipher seed in the header's bytes 0-1)."""
     with open(pyr_path, 'rb') as fh:
         d = fh.read()
     if len(d) < PYR_REC or (len(d) - PYR_REC) % PYR_REC:
@@ -31,13 +42,52 @@ def names(pyr_path):
     inv = bytearray(256)
     for x, y in enumerate(t):
         inv[y] = x
-    out = {}
     for i in range(PYR_REC, len(d), PYR_REC):
-        p = bytes(inv[b] for b in d[i:i + PYR_REC])
+        yield bytes(inv[b] for b in d[i:i + PYR_REC])
+
+
+def _pname(p):
+    return (cstr(p[30:47]) + ' ' + cstr(p[47:64])).strip()
+
+
+def names(pyr_path):
+    """{player id: 'First Last'} from a PYR file (cipher seed in bytes 0-1, 192-byte records after a header)."""
+    out = {}
+    for p in _records(pyr_path):
         pid = p[0] | p[1] << 8
-        name = (cstr(p[30:47]) + ' ' + cstr(p[47:64])).strip()
+        name = _pname(p)
         if pid >= 100 and name:
             out[pid] = name
+    return out
+
+
+def _born(serial):
+    """The birth year for a birth serial, or None when the serial is not a date."""
+    try:
+        return datetime.date.fromordinal(serial - 365).year
+    except (ValueError, OverflowError):
+        return None
+
+
+def players(pyr_path):
+    """{player id: {'name', 'pos', 'bats', 'throws', 'born', 'contact', 'power', 'speed', 'stamina', 'control',
+    'strikeout', 'fielding'}} from a PYR file. 'born' is the birth year or None; 'fielding' is the rating at the
+    player's own position or None."""
+    out = {}
+    for p in _records(pyr_path):
+        pid = p[0] | p[1] << 8
+        name = _pname(p)
+        if pid < 100 or not name:
+            continue
+        pos = p[P_POS]
+        known = 1 <= pos <= len(POSITIONS)
+        out[pid] = {
+            'name': name, 'pos': POSITIONS[pos - 1] if known else '', 'bats': BATS.get(p[P_BATS], ''),
+            'throws': THROWS.get(p[P_THROWS], ''), 'born': _born(struct.unpack_from('<I', p, P_BORN)[0]),
+            'contact': p[P_CUR + R_CONTACT], 'power': p[P_CUR + R_POWER], 'speed': p[P_CUR + R_SPEED],
+            'stamina': p[P_CUR + R_STAMINA], 'control': p[P_CUR + R_CONTROL], 'strikeout': p[P_STRIKEOUT],
+            'fielding': p[P_CUR + R_FIELD + pos - 1] if known else None,
+        }
     return out
 
 

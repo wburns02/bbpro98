@@ -645,3 +645,138 @@ def test_season_section_is_on_the_first_page_only(season):
     html2 = season.get('/news/30L1998/?page=2')[2].decode()
     assert season.keys('/news/30L1998/?page=2')
     assert 'class="season"' in html1 and 'class="season"' not in html2
+
+
+def scout_file(tid, team, **over):
+    """A scout/<tid>.json in the shape the watcher writes: two hitters (the second with no birth year) and a pitcher."""
+    base = {
+        'headline': 'Scouting the %s' % team, 'body': 'Ann Hart grades 80 for contact.\nBo Lee grades 70 for control.',
+        'source': 'template', 'reason': 'off', 'kind': 'scout', 'tid': tid, 'abbrev': 'NYA', 'team': team,
+        'created': '2026-10-09T14:03:11',
+        'facts': {'association': '1998 Major Leagues', 'team': team, 'hitters': [], 'pitchers': []},
+        'roster': {
+            'hitters': [
+                {'pid': 101, 'name': 'Ann Hart', 'pos': 'CF', 'hand': 'L/L', 'age': 32, 'contact': 80, 'power': 50,
+                 'speed': 80, 'fielding': 60},
+                {'pid': 102, 'name': 'Bo Lee', 'pos': 'C', 'hand': 'R/R', 'age': None, 'contact': 50, 'power': 50,
+                 'speed': 50, 'fielding': 50},
+            ],
+            'pitchers': [
+                {'pid': 201, 'name': 'Cy Ace', 'hand': 'R/L', 'age': 27, 'control': 75, 'strikeout': 80,
+                 'stamina': 70, 'fielding': 40},
+            ],
+        },
+    }
+    base.update(over)
+    return base
+
+
+@pytest.fixture
+def scouted(seeded):
+    """seeded, plus scouting reports for Ash (tid 1) and Birch (tid 2)."""
+    write(seeded.root / '30L1998' / 'scout' / '2.json', scout_file(2, 'Birch Blue'))
+    write(seeded.root / '30L1998' / 'scout' / '1.json', scout_file(1, 'Ash Gold'))
+    return seeded
+
+
+def test_team_page_has_the_story_layout_and_the_roster_tables(scouted):
+    status, headers, body = scouted.get('/news/30L1998/team/1')
+    html = body.decode()
+    assert status == 200 and headers['content-type'] == HTML
+    assert '<title>Scouting the Ash Gold</title>' in html
+    assert ('<p class="nav"><a href="/news/30L1998/">&larr; 1998 Major Leagues</a> &middot; '
+            '<a href="/news/">All leagues</a></p>') in html
+    assert '<h1>Scouting the Ash Gold</h1>' in html
+    assert '<p class="dateline">Scouting report</p><p class="byline">Wire report</p>' in html
+    assert '<p>Ann Hart grades 80 for contact.</p><p>Bo Lee grades 70 for control.</p>' in html
+    assert html.index('<caption>Hitters</caption>') < html.index('<caption>Pitchers</caption>')
+    assert ('<th class="t">Player</th><th class="t">Pos</th><th class="t">B/T</th><th>Age</th><th>Contact</th>'
+            '<th>Power</th><th>Speed</th><th>Field</th>') in html
+    assert ('<tr><td class="t">Ann Hart</td><td class="t">CF</td><td class="t">L/L</td><td>32</td><td>80</td>'
+            '<td>50</td><td>80</td><td>60</td></tr>') in html
+    assert ('<tr><td class="t">Bo Lee</td><td class="t">C</td><td class="t">R/R</td><td></td><td>50</td><td>50</td>'
+            '<td>50</td><td>50</td></tr>') in html
+    assert ('<th class="t">Player</th><th class="t">B/T</th><th>Age</th><th>Control</th><th>Strikeout</th>'
+            '<th>Stamina</th><th>Field</th>') in html
+    assert ('<tr><td class="t">Cy Ace</td><td class="t">R/L</td><td>27</td><td>75</td><td>80</td><td>70</td>'
+            '<td>40</td></tr>') in html
+
+
+def test_team_page_escapes_every_value(site):
+    seed(site.root)
+    rec = scout_file(3, '<b>Cut & Run</b>', headline='<i>Hi</i>')
+    rec['roster']['hitters'][0]['name'] = '<img src=x onerror=1>'
+    rec['roster']['hitters'][0]['pos'] = '"C"'
+    write(site.root / '30L1998' / 'scout' / '3.json', rec)
+    html = site.get('/news/30L1998/team/3')[2].decode()
+    assert '<b>' not in html and '<i>' not in html and '<img' not in html
+    assert '<title>&lt;i&gt;Hi&lt;/i&gt;</title>' in html
+    assert '&lt;img src=x onerror=1&gt;' in html and '&quot;C&quot;' in html
+    league_html = site.get('/news/30L1998/')[2].decode()
+    assert '<a href="/news/30L1998/team/3">&lt;b&gt;Cut &amp; Run&lt;/b&gt;</a>' in league_html
+
+
+@pytest.mark.parametrize('path', [
+    '/news/30L1998/team/0', '/news/30L1998/team/3', '/news/30L1998/team/01', '/news/30L1998/team/100',
+    '/news/30L1998/team/1x', '/news/30L1998/team/', '/news/30L1998/team/1/', '/news/30L1998/team/1/x',
+    '/news/30L1998/team', '/news/MLBPA97/team/1',
+])
+def test_bad_team_paths_are_404(scouted, path):
+    status, headers, body = scouted.get(path)
+    assert status == 404 and b'Not found' in body
+    assert_secure(headers, body)
+
+
+@pytest.mark.parametrize('content', [
+    '{"kind": ',                                                            # corrupt
+    [scout_file(4, 'Dogwood')],                                             # not an object
+    dict(scout_file(4, 'Dogwood'), kind='preview'),                         # another kind
+    {k: v for k, v in scout_file(4, 'Dogwood').items() if k != 'kind'},     # no kind
+])
+def test_unreadable_or_other_kind_report_is_404(scouted, content):
+    write(scouted.root / '30L1998' / 'scout' / '4.json', content)
+    status, headers, body = scouted.get('/news/30L1998/team/4')
+    assert status == 404
+    assert_secure(headers, body)
+
+
+def test_team_pages_carry_the_security_headers(scouted):
+    status, headers, body = scouted.get('/news/30L1998/team/1')
+    assert status == 200
+    assert_secure(headers, body)
+
+
+def test_league_page_links_each_report_by_team_name_then_tid(scouted):
+    write(scouted.root / '30L1998' / 'scout' / '5.json', scout_file(5, 'Ash Gold'))
+    write(scouted.root / '30L1998' / 'scout' / '3.json', scout_file(3, 'Zebra'))
+    write(scouted.root / '30L1998' / 'scout' / '9.json', dict(scout_file(9, 'Alpha'), kind='preview'))
+    write(scouted.root / '30L1998' / 'scout' / '8.json', '{"kind": ')
+    write(scouted.root / '30L1998' / 'scout' / '100.json', scout_file(100, 'Beta'))
+    html = scouted.get('/news/30L1998/')[2].decode()
+    assert re.findall(r'href="/news/30L1998/team/(\d+)">([^<]*)</a>', html) == [
+        ('1', 'Ash Gold'), ('5', 'Ash Gold'), ('2', 'Birch Blue'), ('3', 'Zebra')]
+
+
+def test_scouting_box_is_above_the_standings_and_below_the_season_box(scouted):
+    write(scouted.root / '30L1998' / 'preview.json', preview_file())
+    html = scouted.get('/news/30L1998/')[2].decode()
+    assert ('<aside class="side"><section class="season">' in html
+            and html.index('class="season"') < html.index('class="scouting"')
+            < html.index('<caption>American League East</caption>'))
+    assert ('<section class="scouting"><h2>Scouting reports</h2><ul>'
+            '<li><a href="/news/30L1998/team/1">Ash Gold</a></li>'
+            '<li><a href="/news/30L1998/team/2">Birch Blue</a></li>'
+            '</ul></section>') in html
+
+
+def test_no_scouting_box_without_a_readable_report(seeded):
+    html = seeded.get('/news/30L1998/')[2].decode()
+    assert 'class="scouting"' not in html and 'Scouting reports' not in html
+
+
+def test_scouting_box_is_on_the_first_page_only(scouted):
+    for i in range(31):
+        write(scouted.root / '30L1998' / 'recaps' / ('%016x.json' % i), story('%016x' % i, slot=i))
+    html1 = scouted.get('/news/30L1998/')[2].decode()
+    html2 = scouted.get('/news/30L1998/?page=2')[2].decode()
+    assert 'class="scouting"' in html1 and 'class="scouting"' not in html2

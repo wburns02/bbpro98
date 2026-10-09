@@ -183,3 +183,49 @@ def test_full_team_names_from_the_data_dir(world):
     got = {t['name'] for d in meta['standings'] for t in d['teams']}
     assert got == {'Ashland Ashes', 'Birch'}            # Birch is not the stored short form: left alone
     assert stories(data)[0]['headline'].startswith('Ashland Ashes 3')
+
+
+SCOUT_PLAYERS = {
+    100: {'name': 'Al Winner', 'pos': 'RF', 'bats': 'L', 'throws': 'L', 'born': 1970, 'contact': 90, 'power': 60,
+          'speed': 70, 'stamina': 0, 'control': 0, 'strikeout': 0, 'fielding': 50},
+    200: {'name': 'Bo Loser', 'pos': 'P', 'bats': '', 'throws': 'R', 'born': None, 'contact': 0, 'power': 0,
+          'speed': 0, 'stamina': 69, 'control': 97, 'strikeout': 47, 'fielding': 40},
+}
+
+
+def test_scouting_writes_one_report_per_team_and_a_rescan_writes_nothing(world, monkeypatch):
+    gd, data, st = world
+    (gd / 'Assn' / '30L1998.PYR').write_bytes(b'pyr')
+    reads = []
+
+    def players(path):
+        reads.append(path)
+        return SCOUT_PLAYERS
+
+    monkeypatch.setattr(gamedata, 'players', players)
+    w = watch.Watcher(str(gd), str(data), None, None, log=lambda s: None)
+    w.scan()
+    scout = data / '30L1998' / 'scout'
+    assert sorted(os.listdir(scout)) == ['1.json', '2.json']
+    ash = json.loads((scout / '1.json').read_text())
+    assert (ash['kind'], ash['tid'], ash['abbrev'], ash['team'], ash['source'], ash['reason']) == (
+        'scout', 1, 'ASH', 'Ash', 'template', 'off')
+    assert ash['facts']['association'] == '1998 Test' and ash['facts']['hitters'][0]['name'] == 'Al Winner'
+    assert ash['roster']['hitters'][0]['age'] == 28            # 1998 - 1970
+    birch = json.loads((scout / '2.json').read_text())
+    assert birch['roster']['pitchers'][0]['control'] == 80 and birch['roster']['pitchers'][0]['name'] == 'Bo Loser'
+    (scout / '1.json').write_text('{"kept": true}')
+    reads.clear()
+    w.seen.clear()
+    w.scan()
+    assert json.loads((scout / '1.json').read_text()) == {'kept': True}
+    assert reads == []                                         # every team has its report: the PYR is not read
+
+
+def test_no_scouting_without_a_pyr(world, monkeypatch):
+    gd, data, st = world
+    reads = []
+    monkeypatch.setattr(gamedata, 'players', lambda path: reads.append(path) or SCOUT_PLAYERS)
+    watch.Watcher(str(gd), str(data), None, None, log=lambda s: None).scan()
+    assert reads == [] and not (data / '30L1998' / 'scout').exists()
+    assert (data / '30L1998' / 'preview.json').exists()        # the other season pieces still come

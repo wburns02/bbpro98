@@ -11,6 +11,7 @@ Data layout (server.py reads it):
     <data>/<ASSN>/recaps/<key>.json                    key = first 16 hex chars of the box score file's sha1
     <data>/<ASSN>/feed/<MM>-<DD>.json                  one column per played date
     <data>/<ASSN>/preview.json, awards.json            season preview (once), season awards (once all games are played)
+    <data>/<ASSN>/scout/<tid>.json                     one scouting report per team (once)
 
 The game files are only read. A box score is matched to its schedule game by teams and final score (gamedata); one
 that matches nothing yet (the association not saved since the game) is retried on later scans. Stories go to the
@@ -30,6 +31,7 @@ import feed      # noqa: E402
 import gamedata  # noqa: E402
 import hive      # noqa: E402
 import recap     # noqa: E402
+import scout     # noqa: E402
 import season    # noqa: E402
 import teamnames  # noqa: E402
 
@@ -132,10 +134,11 @@ class Watcher:
         write_json(os.path.join(out, 'meta.json'), {
             'assn': stem, 'name': assoc['name'], 'updated': now_iso(), 'last_day': list(last) if last else None,
             'standings': feed.standings(assoc), 'leaders': feed.leaders(season, names, teams_played)})
-        self.season_pieces(out, assoc, names, dat)
+        self.season_pieces(out, assoc, names, dat, pyr)
 
-    def season_pieces(self, out, assoc, names, dat):
-        """The season preview (once per association) and, once every game is played, the season awards."""
+    def season_pieces(self, out, assoc, names, dat, pyr=None):
+        """The season preview (once per association), once every game is played the season awards, and the scouting
+        reports (once per team)."""
         stem = os.path.basename(out)
         if assoc['teams'] and not os.path.exists(os.path.join(out, 'preview.json')):
             last = gamedata.season_lines(dat, scope=3) if dat else {'bat': {}, 'pit': {}}
@@ -153,6 +156,31 @@ class Watcher:
                 piece = dict(season.awards_template(facts), source='template', reason='off')
             write_json(os.path.join(out, 'awards.json'), dict(piece, kind='awards', facts=facts, created=now_iso()))
             self.log('%s awards (%s)' % (stem, piece['source']))
+        self.scouting(out, assoc, pyr, dat)
+
+    def scouting(self, out, assoc, pyr, dat):
+        """One scouting report per team, written once: the team's best hitters and pitchers graded from the PYR ratings,
+        with last season's numbers where they qualify. Reads no game file while every team already has its report."""
+        stem = os.path.basename(out)
+        if not assoc['teams'] or pyr is None:
+            return
+        todo = [tid for tid in sorted(assoc['teams'])
+                if not os.path.exists(os.path.join(out, 'scout', '%d.json' % tid))]
+        if not todo:
+            return
+        players = gamedata.players(pyr)
+        last = gamedata.season_lines(dat, scope=3) if dat else {'bat': {}, 'pit': {}}
+        year = scout.year_of(assoc['name'])
+        for tid in todo:
+            team = assoc['teams'][tid]
+            facts = scout.team_facts(assoc, tid, players, last, year)
+            piece = _llm_or_template(scout.write, facts, self.budget, self.complete)
+            if piece is None:
+                piece = dict(scout.template(facts), source='template', reason='off')
+            write_json(os.path.join(out, 'scout', '%d.json' % tid),
+                       dict(piece, kind='scout', tid=tid, abbrev=team['abbrev'], team=team['name'], facts=facts,
+                            roster=scout.roster(assoc, tid, players, year), created=now_iso()))
+            self.log('%s scout %s (%s)' % (stem, team['abbrev'], piece['source']))
 
     def capture(self, stem):
         """Copy every new box score of this association into <data>/<ASSN>/pending/ as parsed JSON. The game keeps

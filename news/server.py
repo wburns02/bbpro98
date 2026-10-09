@@ -23,6 +23,7 @@ ASSN_RE = re.compile(r'[A-Za-z0-9_]{1,8}')
 KEY_RE = re.compile(r'[0-9a-f]{16}')
 FEED_RE = re.compile(r'([0-9]{2})-([0-9]{2})\.json')
 PAGE_RE = re.compile(r'[0-9]{1,5}')
+TID_RE = re.compile(r'[0-9]{1,2}')
 MONTHS = ('January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October',
           'November', 'December')
 LEADERS = (('avg', 'AVG'), ('hr', 'HR'), ('rbi', 'RBI'), ('w', 'W'), ('era', 'ERA'), ('so', 'SO'), ('sv', 'SV'))
@@ -141,6 +142,22 @@ def _stories(assn_dir):
             out.append((key, rec))
     out.sort(key=lambda kr: (-_int(kr[1], 'month'), -_int(kr[1], 'day'), -_int(kr[1], 'slot'), kr[0]))
     return out
+
+
+def _scout_files(data_dir, assn):
+    """[(tid, report)] for every readable scouting report of the association, by team name then tid."""
+    scout_dir = data_dir / assn / 'scout'
+    try:
+        names = os.listdir(scout_dir)
+    except OSError:
+        return []
+    out = []
+    for name in names:
+        tid = name[:-len('.json')] if name.endswith('.json') else ''
+        rec = _read_obj(scout_dir / name) if TID_RE.fullmatch(tid) else None
+        if rec is not None and rec.get('kind') == 'scout':
+            out.append((int(tid), rec))
+    return sorted(out, key=lambda tr: (_text(tr[1].get('team')), tr[0]))
 
 
 def _latest_feed(assn_dir):
@@ -335,7 +352,8 @@ def _association(data_dir, assn, qs):
     lead.extend(_story_row(assn, key, rec) for key, rec in shown)
     lead.append(_pager(assn, page, len(stories)))
     season = _season_links(data_dir, assn) if page == 1 else ''
-    side = season + _standings_html(meta.get('standings')) + _leaders_html(meta.get('leaders'))
+    scouting = _scouting_links(data_dir, assn) if page == 1 else ''
+    side = season + scouting + _standings_html(meta.get('standings')) + _leaders_html(meta.get('leaders'))
     body = (_masthead(name, _through(meta)) + _nav()
             + '<div class="grid"><section class="lead">%s</section><aside class="side">%s</aside></div>'
             % (''.join(lead), side))
@@ -476,6 +494,37 @@ def _season_links(data_dir, assn):
     return '<section class="season"><h2>Season</h2><ul>%s</ul></section>' % ''.join(links)
 
 
+def _scouting_links(data_dir, assn):
+    """The Scouting reports box for the side column: one link per team's report. '' for none."""
+    links = ['<li><a href="/news/%s/team/%d">%s</a></li>' % (esc(assn), tid, esc(rec.get('team')))
+             for tid, rec in _scout_files(data_dir, assn)]
+    if not links:
+        return ''
+    return '<section class="scouting"><h2>Scouting reports</h2><ul>%s</ul></section>' % ''.join(links)
+
+
+def _team_page(assn, tid, rec):
+    """A team's scouting report in the story layout, then its roster graded: hitters, then pitchers."""
+    roster = _d(rec.get('roster'))
+    hitters = [[h.get('name'), h.get('pos'), h.get('hand'), h.get('age'), h.get('contact'), h.get('power'),
+                h.get('speed'), h.get('fielding')] for h in _dicts(roster.get('hitters'))]
+    pitchers = [[p.get('name'), p.get('hand'), p.get('age'), p.get('control'), p.get('strikeout'), p.get('stamina'),
+                 p.get('fielding')] for p in _dicts(roster.get('pitchers'))]
+    tables = [
+        _table('Hitters', ('Player', 'Pos', 'B/T', 'Age', 'Contact', 'Power', 'Speed', 'Field'), hitters, text=3),
+        _table('Pitchers', ('Player', 'B/T', 'Age', 'Control', 'Strikeout', 'Stamina', 'Field'), pitchers, text=2),
+    ]
+    return _season_page(assn, rec, 'Scouting report', tables)
+
+
+def _team(data_dir, assn, tid):
+    """A team's scouting report page; 404 when its file is missing, unreadable or of another kind."""
+    rec = _read_obj(data_dir / assn / 'scout' / (tid + '.json'))
+    if rec is None or rec.get('kind') != 'scout':
+        return _not_found()
+    return _team_page(assn, tid, rec)
+
+
 def _status(data_dir):
     budget = _read_obj(data_dir / 'budget.json') or {}
     limits = _read_obj(data_dir / 'limits.json') or {}
@@ -535,6 +584,8 @@ def route(data_dir, target):
         return _story(data_dir, assn, rest[1])
     if len(rest) == 2 and rest[1] in ('preview', 'awards'):
         return _season(data_dir, assn, rest[1])
+    if len(rest) == 3 and rest[1] == 'team' and TID_RE.fullmatch(rest[2]):
+        return _team(data_dir, assn, rest[2])
     return _not_found()
 
 
