@@ -1,12 +1,16 @@
 # BBPro98 ideas (captured 2026-10-06, not started)
 
-## GLM-Flash (Hive.ai) inside the game (recaps and the news feed DONE 2026-10-09: news/, hosted at /news)
+## GLM-Flash (Hive.ai) inside the game (recaps, news feed, season previews and awards DONE 2026-10-09: news/, /news)
 
 Shipped: option 1, the sidecar. news/watch.py captures every box score the game writes (it keeps only seven sim days
 of them), writes a story per game and an 'Around the league' column per date with GLM-Flash, checked so every number
 in a story is one of the facts, with a template fallback. Cap: 1000 calls and 3M output tokens a day
 (BBNEWS_CALLS, BBNEWS_TOKENS). news/server.py serves the pages behind the same Access login as the game.
-Still open from the list below: season previews, award write-ups, scouting reports, AI GM, contracts.
+Season pieces (news/season.py): a preview once per association from last season's lines of each roster, and the
+awards once every regular-season game is played (MVP by runs created, Cy Young by a points score, top 3 each, plus the
+division champions), at /news/<ASSN>/preview and /awards. Lahman-built teams show their full names
+(work/lahman/teamnames.py, shipped to news-data by deploy.sh).
+Still open from the list below: scouting reports, AI GM, contracts.
 
 Goal: use z-ai/glm-5.3-flash through the Hive API to add AI features to FPS Baseball Pro '98.
 
