@@ -3,6 +3,10 @@
 tunnel: <tunnel-id>
 credentials-file: /home/<user>/.cloudflared/<tunnel-id>.json
 ingress:
+  # League news first: path is a regex on the request path, and the first matching rule wins.
+  - hostname: <hostname>
+    path: ^/news(/|$)
+    service: http://localhost:6153
   - hostname: <hostname>
     service: http://localhost:6152
   - service: http_status:404

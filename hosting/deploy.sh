@@ -8,7 +8,8 @@
 # and is never copied. Seasons (--seasons points at a build.py --install root holding Assn/ and Stats/) are only
 # added: an association that already exists on the host keeps its files, because those carry the progress played
 # in the browser. The game unit restarts only when a replaced file changed, since a restart ends the session in
-# the browser.
+# the browser. The landing page (index.html) and the news sidecar's code are copied too; the news units restart on a
+# change.
 set -euo pipefail
 
 SRC=${SRC:-$HOME/.bbpro98_prefix/drive_c/Sierra/BBPRO_98}
@@ -58,13 +59,18 @@ for s in "${SEASONS[@]}"; do
     --include='*.DAT' --exclude='*' "$s/Stats/" "$HOST:$DST/Stats/"
 done
 
+# The landing page noVNC's web root serves at /: Play and League news. Static; nothing restarts for it.
+WEB=${WEB:-/mnt/data/bbpro98/web}
+rsync -l --checksum --itemize-changes "${DRY[@]}" -e ssh "$(cd "$(dirname "$0")" && pwd)/index.html" \
+  "$HOST:$WEB/index.html" | grep '^<f' || true
+
 # The news sidecar: its own code plus the read-only codecs it imports. Its units restart on a change; the game does not.
 NEWS=${NEWS:-/mnt/data/bbpro98/news}
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 [ ${#DRY[@]} -eq 0 ] && ssh "$HOST" "mkdir -p '$NEWS/news' '$NEWS/work' /mnt/data/bbpro98/news-data"
 news=$(rsync -rl --checksum --itemize-changes "${DRY[@]}" -e ssh --include='*.py' --exclude='*' \
          "$REPO/news/" "$HOST:$NEWS/news/" | grep '^<f' || true)
-news+=$(rsync -rl --checksum --itemize-changes "${DRY[@]}" -e ssh \
+news+=${news:+$'\n'}$(rsync -rl --checksum --itemize-changes "${DRY[@]}" -e ssh \
           "$REPO/work/ctree.py" "$REPO/work/hdecode.py" "$REPO/work/league.py" "$REPO/work/stats.py" \
           "$HOST:$NEWS/work/" | grep '^<f' || true)
 if [ -n "$news" ]; then
