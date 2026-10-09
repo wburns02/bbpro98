@@ -4,14 +4,14 @@ The game runs under Wine on a headless Linux host and is played in a browser thr
 game files: the host needs its own installed copy (a Wine prefix with `drive_c/Sierra/BBPRO_98`).
 
 ```
-browser -> Cloudflare Access (one-time PIN) -> cloudflared tunnel -> websockify + noVNC 127.0.0.1:6152
-        -> x11vnc 127.0.0.1:5952 -> Xvfb :52 (800x600) <- wine bblaunch.exe
-browser -> Cloudflare Access -> cloudflared tunnel (/news) -> news/server.py 127.0.0.1:6153
-        <- news-data <- news/watch.py <- the game's Assn/ and Stats/ (read only), GLM-Flash on Hive
+browser -> cloudflared tunnel -> nginx 127.0.0.1:6150 (asks gate.py 127.0.0.1:6154 for a signed-in cookie)
+        -> websockify + noVNC 127.0.0.1:6152 -> x11vnc 127.0.0.1:5952 -> Xvfb :52 (800x600) <- wine bblaunch.exe
+        -> /news: news/server.py 127.0.0.1:6153
+           <- news-data <- news/watch.py <- the game's Assn/ and Stats/ (read only), GLM-Flash on Hive
 ```
 
-Every listener binds to 127.0.0.1. The tunnel is the only way in, and Access sits in front of every path,
-`/websockify` included.
+Every listener binds to 127.0.0.1. The tunnel reaches only nginx, and nginx checks the PIN gate's cookie on every
+path, `/websockify` included; a visitor without one gets the PIN form. A sign-in lasts 30 days.
 
 ## Files
 
@@ -24,24 +24,32 @@ Every listener binds to 127.0.0.1. The tunnel is the only way in, and Access sit
 | `run-game.sh` | `/mnt/data/bbpro98/bin/` | starts `bblaunch.exe`, waits for the prefix's wineserver |
 | `systemd/bbpro98-news-watch.service` | same | writes game stories and columns from the box scores |
 | `systemd/bbpro98-news-web.service` | same | serves them at `/news` on 127.0.0.1:6153, read only |
+| `gate.py` | `/mnt/data/bbpro98/gate/` | the PIN form and the cookie check nginx asks on every request |
+| `nginx.conf` | same | the only listener the tunnel reaches (6150): gate check, then `/news` or the game |
+| `systemd/bbpro98-gate.service` | `~/.config/systemd/user/` | runs `gate.py`; PIN and secret files below |
+| `systemd/bbpro98-proxy.service` | same | runs nginx as the user with that config |
 | `index.html` | web dir, next to symlinks to `/usr/share/novnc/*` | landing page: Play (noVNC, autoconnect) and League news |
-| `cloudflared.yml.example` | `~/.cloudflared/bbpro98.yml` | tunnel ingress: `/news` to 6153, the rest to 6152 |
-| `deploy.sh` | stays here | pushes changed game code, new seasons, the landing page and the news code |
+| `cloudflared.yml.example` | `~/.cloudflared/bbpro98.yml` | tunnel ingress: everything to nginx on 6150 |
+| `deploy.sh` | stays here | pushes changed game code, new seasons, the landing page, the news code and the gate |
 
-Paths in the units assume `/mnt/data/bbpro98/{prefix,web,bin,news,news-data}`; edit them for another host.
+Paths in the units assume `/mnt/data/bbpro98/{prefix,web,bin,news,news-data,gate}`; edit them for another host.
 
 ## Setup
 
-1. Install `xorg-x11-server-Xvfb x11vnc novnc python3-websockify wine` (Fedora names).
+1. Install `xorg-x11-server-Xvfb x11vnc novnc python3-websockify wine nginx` (Fedora names).
 2. Copy the Wine prefix with the installed game to `/mnt/data/bbpro98/prefix`.
 3. Install the files above, then `loginctl enable-linger $USER` and
    `systemctl --user enable --now bbpro98-xvfb bbpro98-vnc bbpro98-web bbpro98-game`.
 4. Check locally: `ssh -L 16152:127.0.0.1:6152 host`, open http://127.0.0.1:16152/.
 5. Create the tunnel and a system unit running
    `cloudflared --no-autoupdate --config ~/.cloudflared/bbpro98.yml tunnel run`.
-6. Create the Access application (self-hosted, the hostname, an allow policy for your own email), then the
-   proxied CNAME `<hostname> -> <tunnel-id>.cfargotunnel.com`. Access first, DNS second: in the other order the
-   game is public for the minutes in between, and noVNC here has no password.
+6. PIN gate: write the PIN to `~/.config/bbpro98/gate_pin` (mode 600; never in the repo or a unit), run
+   `deploy.sh` once (it copies `gate.py` and `nginx.conf` to `/mnt/data/bbpro98/gate`), then
+   `systemctl --user enable --now bbpro98-gate bbpro98-proxy`. The gate makes its cookie-signing secret
+   (`~/.config/bbpro98/gate_secret`) on first start; delete that file and restart the gate to sign everyone out.
+   Wrong PINs are limited to 5 per visitor per 15 minutes and 30 in total per hour. Then create the proxied
+   CNAME `<hostname> -> <tunnel-id>.cfargotunnel.com`. Gate first, DNS second: in the other order the game is
+   public for the minutes in between, and noVNC here has no password.
 7. League news: put the Hive key in `~/.config/hivemodels/api_key.env` on the host (a `HIVEMODELS_API_KEY=` line,
    mode 600; never in the repo or a unit), install the two news units, run `deploy.sh` once (it copies `news/*.py`
    and the codecs they import to `/mnt/data/bbpro98/news`), then
@@ -67,3 +75,6 @@ there to turn a mod on. The news units restart when their code changes; the game
   Wine may pick the wrong display. The units unset all three.
 - Wine ignores SIGTERM while the game runs; the game unit stops it with `wineserver -k`.
 - One shared desktop: everyone who connects sees and drives the same game.
+- Wine maps `z:` to `/` and, through mountmgr, any USB disk it sees, which would let the game's file dialogs
+  read and write the host. `run-game.sh` deletes every `dosdevices` entry but `c:` before each start, and the game
+  unit points `DBUS_SYSTEM_BUS_ADDRESS` at nothing so mountmgr finds no disks to add.

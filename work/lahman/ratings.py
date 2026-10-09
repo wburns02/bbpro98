@@ -6,9 +6,11 @@ function of each player's 1996 stats. fit() matches those players to Lahman 1996
 on z-scored rate stats (5-fold CV R2 on 1996: contact .90, power .92, speed .95, endurance .90, control .94,
 strikeout .95, fielding .4-.76). rate() applies the model to any season: each stat is z-scored inside its own
 league-year (the era adjustment) and shrunk toward the mean by sample size, so a .400 hitter in 1894 and a .340
-hitter in 1968 land where they stood against their own league. Ratings the stats cannot predict (pitch repertoire,
-arm, the 25 single attributes) come from the nearest MLBPA96E player of the same role and position (the donor), and
-every fitted rating's peak is the current value plus the donor's peak-current gap.
+hitter in 1968 land where they stood against their own league. Ratings the stats cannot predict (which pitches a
+pitcher throws, arm, the 25 single attributes) come from the nearest MLBPA96E player of the same role and position
+(the donor), and every fitted rating's peak is the current value plus the donor's peak-current gap. A pitcher's
+pitch ratings are the donor's shifted so their mean matches his fitted stuff (cvR2 .46): copied verbatim, a 1998
+control pitcher matched to Greg Maddux got Maddux's whole arsenal and a 0.59 sim ERA.
 
 PYR record layout used here: work/spec/PGEN_FORMAT.md and /mnt/nvme/bbpro98/loop/lahman/contract.md (C4).
 The game files are read at run time and never copied into the repo.
@@ -28,6 +30,7 @@ REC = 192
 PEAK, CUR, ATTR = 0x46, 0x5d, 0x74
 CH, PH, SP, EN, CO = 0, 1, 2, 5, 6                      # rating indexes inside a 23-byte block
 FLD0 = 14                                                # fielding P..RF = block indexes 14..22
+PITCHES = range(7, 14)                                   # pitch ratings fb cb cu sl sb kb si; 0 = not thrown
 K_ATTR, GF_ATTR = 0x76, 0x75                             # pitcher strikeout attribute, hitter ground/fly attribute
 POS_CODE = {'P': 1, 'C': 2, '1B': 3, '2B': 4, '3B': 5, 'SS': 6, 'LF': 7, 'CF': 8, 'RF': 9}
 APP_POS = (('G_p', 'P'), ('G_c', 'C'), ('G_1b', '1B'), ('G_2b', '2B'), ('G_3b', '3B'), ('G_ss', 'SS'),
@@ -50,6 +53,7 @@ TARGETS = {
     'CO': ('p', CUR + CO, ('BB9',), False, False),          # .98
     'K': ('p', K_ATTR, ('K9',), False, False),              # .98
 }
+STUFF = ('GSr', 'BB9', 'K9', 'H9')                       # features of the mean pitch rating, cvR2 .46
 
 
 # ---------------------------------------------------------------- PYR io
@@ -249,6 +253,12 @@ def _clamp(v, lo=1, hi=99):
     return int(max(lo, min(hi, round(float(v)))))
 
 
+def stuff(p):
+    """Mean of a record's nonzero current pitch ratings, None when it throws none."""
+    v = [p[CUR + i] for i in PITCHES if p[CUR + i]]
+    return sum(v) / len(v) if v else None
+
+
 def _row(feats, quad):
     return [1.0] + list(feats) + ([feats[0] ** 2] if quad else [])
 
@@ -258,7 +268,7 @@ class Model:
         self.w = {}            # target name -> weights (intercept first)
         self.raw_mu = {}       # raw pitcher rate-stat means, 1996 IP >= 30 (shrinkage target)
         self.donors_h = []     # (pos code, age, (ch, ph, sp), record)
-        self.donors_p = []     # (age, (en, co, k), record)
+        self.donors_p = []     # (age, (en, co, k, stuff), record)
 
     # -------------------------------------------------- fit on MLBPA96E vs 1996
     @classmethod
@@ -282,7 +292,7 @@ class Model:
             born = from_serial(struct.unpack_from('<I', p, 26)[0])
             age = 1996 - born.year
             if p[68] == 1:
-                m.donors_p.append((age, (p[CUR + EN], p[CUR + CO], p[K_ATTR]), p))
+                m.donors_p.append((age, (p[CUR + EN], p[CUR + CO], p[K_ATTR], stuff(p) or 0.0), p))
             elif 2 <= p[68] <= 9:
                 m.donors_h.append((p[68], age, (p[CUR + CH], p[CUR + PH], p[CUR + SP]), p))
             c = [x for x in people.get((cstr(p[30:47]).lower(), cstr(p[47:64]).lower()), [])
@@ -308,6 +318,8 @@ class Model:
             rows = H if role == 'h' else P
             X = [_row([(r[1] if raw else r[0])[x] for x in feats], quad) for r in rows]
             m.w[name] = _ols(X, [r[2][off] for r in rows])
+        rows = [r for r in P if stuff(r[2])]
+        m.w['ST'] = _ols([[1.0] + [r[0][x] for x in STUFF] for r in rows], [stuff(r[2]) for r in rows])
         for pos, rows in F.items():
             m.w['F' + pos] = _ols([[1.0] + [z[x] for x in FEAT_F] for z, _ in rows],
                                   [p[CUR + FLD0 + POS_CODE[pos] - 1] for _, p in rows])
@@ -360,8 +372,13 @@ class Model:
             z = s.norm(s.np_, lid).z(f, FEAT_P, ip, SHRINK_P) if f else {}
             fitted = {TARGETS[t][1]: self.predict(t, z, f, ip, SHRINK_P) for t in ('EN', 'CO')}
             k = _clamp(self.predict('K', z, f, ip, SHRINK_P))
-            base = bytearray(self._donor_p(age, (_clamp(fitted[CUR + EN]), _clamp(fitted[CUR + CO]), k)))
+            st = float(np.dot(self.w['ST'], [1.0] + [z.get(x, 0.0) for x in STUFF]))
+            base = bytearray(self._donor_p(age, (_clamp(fitted[CUR + EN]), _clamp(fitted[CUR + CO]), k, st)))
             base[K_ATTR] = k
+            shift = st - (stuff(base) or st)
+            for i in PITCHES:
+                if base[CUR + i]:
+                    fitted[CUR + i] = base[CUR + i] + shift
         else:
             f, pa = hit_feats(b)
             z = s.norm(s.nh, lid).z(f, FEAT_H, pa, SHRINK_H) if f else {}

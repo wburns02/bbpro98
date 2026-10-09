@@ -19,7 +19,7 @@ No game files are included. You need your own copy of the game.
 | `BBPRO98_package/` | Linux launcher and PYR (player file) reader and writer |
 | `work/lahman/` | Builds a playable association for any MLB season 1871-2019 from the Lahman database: real teams, parks, rosters, lineups, ratings fitted from stats, career and last-season lines |
 | `src-latest/mods/playercard.c` | Mod DLL: click a player on the Statistics or Career screen to open that player's card |
-| `hosting/` | Run the game headless under Wine and play it in a browser (Xvfb, x11vnc, noVNC, Cloudflare Access) |
+| `hosting/` | Run the game headless under Wine and play it in a browser (Xvfb, x11vnc, noVNC, a PIN gate) |
 
 ## Status
 

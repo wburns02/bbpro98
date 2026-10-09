@@ -9,7 +9,7 @@
 # added: an association that already exists on the host keeps its files, because those carry the progress played
 # in the browser. The game unit restarts only when a replaced file changed, since a restart ends the session in
 # the browser. The landing page (index.html) and the news sidecar's code are copied too; the news units restart on a
-# change.
+# change. So are the PIN gate and its nginx config (the gate restarts and nginx reloads on a change).
 set -euo pipefail
 
 SRC=${SRC:-$HOME/.bbpro98_prefix/drive_c/Sierra/BBPRO_98}
@@ -86,6 +86,20 @@ if [ -n "$news" ]; then
   else
     echo "dry run: the news units would restart"
   fi
+fi
+
+# The PIN gate (gate.py) and the nginx in front of everything (nginx.conf). The PIN itself lives on the host in
+# ~/.config/bbpro98/gate_pin and is never copied. A gate change restarts the gate; a config change reloads nginx.
+GATE=${GATE:-/mnt/data/bbpro98/gate}
+[ ${#DRY[@]} -eq 0 ] && ssh "$HOST" "mkdir -p '$GATE/tmp'"
+HOSTING=$(cd "$(dirname "$0")" && pwd)
+g=$(rsync -l --checksum --itemize-changes "${DRY[@]}" -e ssh "$HOSTING/gate.py" "$HOST:$GATE/gate.py" | grep '^<f' || true)
+c=$(rsync -l --checksum --itemize-changes "${DRY[@]}" -e ssh "$HOSTING/nginx.conf" "$HOST:$GATE/nginx.conf" \
+      | grep '^<f' || true)
+[ -n "$g$c" ] && echo "$g${g:+${c:+$'\n'}}$c"
+if [ ${#DRY[@]} -eq 0 ]; then
+  [ -n "$g" ] && ssh "$HOST" 'systemctl --user restart bbpro98-gate && systemctl --user is-active bbpro98-gate'
+  [ -n "$c" ] && ssh "$HOST" 'systemctl --user reload-or-restart bbpro98-proxy && systemctl --user is-active bbpro98-proxy'
 fi
 
 if [ "$changed" = 1 ] && [ ${#DRY[@]} -eq 0 ]; then

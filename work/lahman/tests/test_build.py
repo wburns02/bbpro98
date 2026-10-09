@@ -142,3 +142,24 @@ def test_every_minted_template_has_a_schedule():
     for key in keys:
         files = B.load_template(key)
         assert len(AsnFile(open(files['ASN'], 'rb').read()).recs['s']) > 100, key
+
+
+def test_pitch_ratings_follow_fitted_stuff(built):
+    """Pitch ratings are shifted to each pitcher's fitted stuff, not copied from a donor: in the first 1998 build three
+    control pitchers carried Greg Maddux's whole 1996 arsenal (stuff 88.5) and sim ERAs under 1.10."""
+    out, _, _ = built
+    recs = [r for r in RT.read_pyr(out['PYR'])[1] if r[68] == 1]
+    st = [RT.stuff(r) for r in recs]
+    assert all(s is not None for s in st)
+    assert max(st) < 80
+    arsenals = [tuple(r[RT.CUR + i] for i in RT.PITCHES) for r in recs]
+    assert len(set(arsenals)) > 0.75 * len(arsenals)
+    for r in recs:
+        assert all(r[RT.PEAK + i] >= r[RT.CUR + i] for i in RT.PITCHES)
+
+
+def test_stuff_is_mean_of_thrown_pitches():
+    r = bytearray(RT.REC)
+    assert RT.stuff(r) is None
+    r[RT.CUR + 7], r[RT.CUR + 9], r[RT.CUR + 13] = 60, 50, 40
+    assert RT.stuff(r) == 50

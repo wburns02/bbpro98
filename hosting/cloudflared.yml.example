@@ -1,12 +1,9 @@
 # ~/.cloudflared/bbpro98.yml on the host. Create the tunnel with `cloudflared tunnel create bbpro98`.
-# Put a Cloudflare Access application on the hostname BEFORE creating its DNS record.
+# Every path goes to the PIN gate's nginx (hosting/nginx.conf), which routes /news and the game itself.
+# Start the gate and the proxy BEFORE creating the hostname's DNS record.
 tunnel: <tunnel-id>
 credentials-file: /home/<user>/.cloudflared/<tunnel-id>.json
 ingress:
-  # League news first: path is a regex on the request path, and the first matching rule wins.
   - hostname: <hostname>
-    path: ^/news(/|$)
-    service: http://localhost:6153
-  - hostname: <hostname>
-    service: http://localhost:6152
+    service: http://localhost:6150
   - service: http_status:404

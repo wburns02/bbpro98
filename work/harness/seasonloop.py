@@ -26,6 +26,7 @@ SCREEN = (128, 137, 1152, 905)                # the game's 1024x768 area of the 
 UPDATE_BOX = (507, 491, 773, 503)             # 'Updating association data for today' (f_update.png)
 QUIET = 60                                    # seconds without a newly played game that end a sim round
 MAX_STOPS = 12
+PROGRESS = 600                                # seconds between progress lines while a round runs
 
 
 def _diff(png, ref, box):
@@ -40,16 +41,27 @@ def _same(a, b):
     return ImageStat.Stat(ImageChops.difference(x, y)).mean[0] < 1.0
 
 
-def settle(h, shots, t_end, gap=20):
-    """Wait until the game has finished its end-of-day update: no 'Updating association data' box on screen and two
-    screenshots gap seconds apart match. On a draft day the update runs for minutes, past QUIET, and can sit on one
-    team longer than gap."""
+def look(h, png):
+    """Screenshot after moving the pointer over the banner above the game's dialogs: under Wine a dialog the game
+    raises during a sim (the draft notice) is not painted until the window sees input."""
+    h.x('mousemove', 640, 200); time.sleep(0.3)
+    h.x('mousemove', 650, 205); time.sleep(1.5)
+    h.shot(png)
+
+
+def settle(h, shots, t_end, gap=20, still=4):
+    """Wait until the game has finished its end-of-day update: two screenshots gap seconds apart match and either no
+    'Updating association data' box is on screen or the screen has held still for `still` gaps. Without look()'s
+    pointer move the update box stays painted over the draft notice while the game sits idle, and even with it the
+    box can stay up on an idle screen."""
     a, b = f'{shots}/_settle_a.png', f'{shots}/_settle_b.png'
-    h.shot(a)
+    look(h, a)
+    held = 0
     while time.time() < t_end:
         time.sleep(gap)
-        h.shot(b)
-        if _same(a, b) and _diff(b, 'f_update.png', UPDATE_BOX) >= 10.0:
+        look(h, b)
+        held = held + 1 if _same(a, b) else 0
+        if held and (held >= still or _diff(b, 'f_update.png', UPDATE_BOX) >= 10.0):
             return
         os.replace(b, a)
 
@@ -85,7 +97,7 @@ def run_draft(h, shots, timeout=900):
     while time.time() - t0 < timeout:
         time.sleep(15)
         png = f'{shots}/_poll.png'
-        h.shot(png)
+        look(h, png)
         if on_assn_data(png):
             h.x('key', 'ctrl+k'); time.sleep(6)          # back to the schedule
             return True
@@ -106,20 +118,26 @@ def season(h, shots, stem, limit):
         h.click(615, 346); time.sleep(4)      # Simulate...
         h.click(543, 501); time.sleep(1)      # All games until next "Play"
         h.click(570, 565); time.sleep(10)     # OK
-        last, quiet_since = n, time.time()
+        last, quiet_since, shown = n, time.time(), time.time()
         while time.time() < t_end and time.time() - quiet_since < QUIET:
             time.sleep(10)
             cur, _ = played(asn)
             if cur is not None and cur != last:
                 last, quiet_since = cur, time.time()
+            if time.time() - shown >= PROGRESS:
+                print(json.dumps({'round': rnd, 'progress': last, 'of': total}), flush=True)
+                shown = time.time()
+        cur, total = played(asn)
+        if total and cur == total:            # season over: the loop top reports it; nothing on screen to answer
+            continue
         settle(h, shots, t_end)
         png = f'{shots}/_poll.png'
-        h.shot(png)
+        look(h, png)
         if _diff(png, 'f_draft.png', DRAFT_BOX) < 15.0:
             ok = run_draft(h, shots)
             print(json.dumps({'round': rnd, 'played': last, 'draft': ok}), flush=True)
             if not ok:
-                h.shot(f'{shots}/stuck_draft.png')
+                look(h, f'{shots}/stuck_draft.png')
                 return False
             continue
         cur, total = played(asn)
@@ -131,7 +149,7 @@ def season(h, shots, stem, limit):
             if cur != n:
                 continue
         stops += 1
-        h.shot(f'{shots}/stop_{stops}.png')
+        look(h, f'{shots}/stop_{stops}.png')
         print(json.dumps({'round': rnd, 'played': last, 'of': total, 'stop': stops}), flush=True)
         if stops > MAX_STOPS:
             return False

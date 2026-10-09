@@ -33,3 +33,8 @@ Public repo (MIT) of tools and research for FPS Baseball Pro '98. Python codecs 
   files before answering it and the ASN has no s records, so the season never plays a game. build.py refuses such
   a template. A season test must count games played after the sim, not just the absence of crashes.
 - Hosting: units started from a desktop user session inherit Wayland variables; unset them or x11vnc exits.
+- Scripted sims under Wine: a dialog the game raises mid-sim (the draft notice) is not painted until the window sees
+  pointer input, and at season end the 'Updating association data' box stays on screen even with input. Move the
+  pointer before every screenshot (seasonloop.look) and judge the season by games played, not by the screen.
+- Lahman pitch ratings: never copy a donor's pitches verbatim; shift them to the fitted stuff (ratings.stuff). Sim ERA
+  moves about 0.1 per point of mean pitch rating, so one cloned ace arsenal gives a sub-1.00 ERA.
