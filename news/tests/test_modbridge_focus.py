@@ -316,8 +316,9 @@ def test_an_association_news_page_gets_a_player_development_link(bridge, monkeyp
     html = b'<title>1977 Major Leagues</title><p>See <a href="/news/x/">the opener</a>.</p>'
     serve_pages(monkeypatch, {'/news/TEST77/': (200, html, ())})
     head, _ = page(ctx, spool, '/news/TEST77/')
-    assert head['status'] == 'ok' and head['count'] == '2'
-    assert links_of(head) == [('the opener', '/news/x/'), ('Player development', BASE + '/')]
+    assert head['status'] == 'ok' and head['count'] == '3'
+    assert links_of(head) == [('the opener', '/news/x/'), ('Player development', BASE + '/'),
+                              ('Offseason trades', '/news/gm/TEST77/')]
 
 
 def test_a_redirected_association_page_links_to_its_stem_in_capitals(bridge, monkeypatch):
@@ -325,7 +326,8 @@ def test_a_redirected_association_page_links_to_its_stem_in_capitals(bridge, mon
     serve_pages(monkeypatch, {'/news/test77': (301, b'', (('Location', '/news/test77/'),)),
                               '/news/test77/': (200, b'<title>1977</title><p>hi</p>', ())})
     head, _ = page(ctx, spool, '/news/test77')
-    assert head['path'] == '/news/test77/' and links_of(head) == [('Player development', BASE + '/')]
+    assert head['path'] == '/news/test77/' and links_of(head) == [('Player development', BASE + '/'),
+                                                        ('Offseason trades', '/news/gm/TEST77/')]
 
 
 @pytest.mark.parametrize('path, status', [('/news/', 200), ('/news/TEST77/moves', 200), ('/news/NOPE/', 200),
