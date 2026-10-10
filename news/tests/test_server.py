@@ -1039,3 +1039,8 @@ def test_replay_box_is_on_the_association_page_only_with_the_file(seeded):
     html = seeded.get('/news/30L1998/')[2].decode()
     assert ('<section class="replay"><h2>Replay vs history</h2><ul><li><a href="/news/30L1998/replay">Scorecard</a>'
             '</li></ul></section>') in html
+
+
+def test_replay_status_rounds_games_per_team(seeded):
+    write(seeded.root / '30L1998' / 'replay.json', replay_file(played=80.6, scheduled=160.9))
+    assert 'After 81 of 161 games per team' in seeded.get('/news/30L1998/replay')[2].decode()

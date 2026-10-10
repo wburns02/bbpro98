@@ -577,7 +577,8 @@ def _replay_page(assn, name, rec):
     teams = _dicts(rec.get('teams'))
     leagues = _d(rec.get('leagues'))
     played, scheduled = rec.get('played'), rec.get('scheduled')
-    status = ('After %s of %s games per team' % ('%g' % played, '%g' % scheduled)
+    # Per-team averages ('160.9' for 2414 games over 30 teams) read as whole games.
+    status = ('After %d of %d games per team' % (round(played), round(scheduled))
               if _is_num(played) and _is_num(scheduled) else '')
     unmatched = _strings(rec.get('unmatched'))
     leaders = _leader_tables(_d(rec.get('leaders')))

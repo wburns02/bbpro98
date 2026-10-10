@@ -5,7 +5,7 @@ Description=BBPRO98 hosted: writes game stories from the box scores the game lea
 Environment=BBNEWS_KEY_FILE=%h/.config/hivemodels/api_key.env
 Environment=BBNEWS_CALLS=1000
 Environment=BBNEWS_TOKENS=3000000
-ExecStart=/usr/bin/python3 /mnt/data/bbpro98/news/news/watch.py --game /mnt/data/bbpro98/prefix/drive_c/Sierra/BBPRO_98 --data /mnt/data/bbpro98/news-data
+ExecStart=/usr/bin/python3 /mnt/data/bbpro98/news/news/watch.py --game /mnt/data/bbpro98/prefix/drive_c/Sierra/BBPRO_98 --data /mnt/data/bbpro98/news-data --db /mnt/data/bbpro98/lahman/lahman2025.sqlite
 Restart=always
 RestartSec=10
 [Install]
