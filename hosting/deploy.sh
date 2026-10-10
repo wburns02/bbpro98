@@ -68,8 +68,9 @@ rsync -l --checksum --itemize-changes "${DRY[@]}" -e ssh "$(cd "$(dirname "$0")"
 NEWS=${NEWS:-/mnt/data/bbpro98/news}
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 [ ${#DRY[@]} -eq 0 ] && ssh "$HOST" "mkdir -p '$NEWS/news' '$NEWS/work' /mnt/data/bbpro98/news-data"
-news=$(rsync -rl --checksum --itemize-changes "${DRY[@]}" -e ssh --include='*.py' --exclude='*' \
-         "$REPO/news/" "$HOST:$NEWS/news/" | grep '^<f' || true)
+# salary_table.json is the contracts pricing table watch.py loads; without it the payroll pages stay empty.
+news=$(rsync -rl --checksum --itemize-changes "${DRY[@]}" -e ssh --include='*.py' --include='salary_table.json' \
+         --exclude='*' "$REPO/news/" "$HOST:$NEWS/news/" | grep '^<f' || true)
 news+=${news:+$'\n'}$(rsync -rl --checksum --itemize-changes "${DRY[@]}" -e ssh \
           "$REPO/work/ctree.py" "$REPO/work/hdecode.py" "$REPO/work/league.py" "$REPO/work/stats.py" \
           "$HOST:$NEWS/work/" | grep '^<f' || true)
