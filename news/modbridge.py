@@ -1,9 +1,10 @@
 """The in-game Mods menu's bridge: a long-running host process that answers the requests a mod DLL writes into
 the game's Mods/spool directory. The game runs in a sandbox with no network, so the requests are answered here by the
 repo's own Python: league news pages (server.route), the player development pages under /news/development/ and the
-Mods/focus.txt they set (focus.py), which aging.dll reads at each offseason, Create a Player (create.validate and
-createweb.commit), and a season built from the Lahman database (work/lahman/build.py, run as a subprocess). Standard
-library only.
+Mods/focus.txt they set (focus.py), which aging.dll reads at each offseason, the offseason trade pages under /news/gm/
+(aigm.py: the computer teams' preseason trades, written into the ASN, and each human team's proposals to accept or
+reject), Create a Player (create.validate and createweb.commit), and a season built from the Lahman database
+(work/lahman/build.py, run as a subprocess). Standard library only.
 
 The DLL writes q<ID>.tmp and renames it to q<ID>.req. The bridge claims the request by renaming it to q<ID>.work,
 writes r<ID>.tmp and renames that to r<ID>.rsp, then removes the .work file. parse_request reads a request, render
@@ -14,6 +15,7 @@ import datetime
 import os
 import pathlib
 import re
+import shutil
 import sqlite3
 import stat
 import subprocess
@@ -26,6 +28,7 @@ import types
 import urllib.parse
 from html.parser import HTMLParser
 
+import aigm
 import create
 import createweb
 import focus
@@ -446,6 +449,8 @@ def _news(ctx, req):
         return [('status', 'error')], 'Bad request.'
     if _in_development(path):
         return _development(ctx, path)
+    if _in_gm(path):
+        return _gm(ctx, path)
     data = pathlib.Path(ctx.data)     # server.route joins paths with /
     status, _, body, extra = server.route(data, path)
     for _ in range(3):
@@ -458,6 +463,7 @@ def _news(ctx, req):
     stem = _assn_page_stem(ctx, path) if status == 200 else None
     if stem is not None:
         links.append(('Player development', '/news/development/%s/' % stem))
+        links.append(('Offseason trades', '/news/gm/%s/' % stem))
     return _news_reply(status, path, title, text, links)
 
 
@@ -523,6 +529,12 @@ def _in_development(path):
     """True for /news/development and anything beneath it: those paths are the bridge's own, never server.route's."""
     page = urllib.parse.urlsplit(path).path
     return page == '/news/development' or page.startswith('/news/development/')
+
+
+def _in_gm(path):
+    """True for /news/gm and anything beneath it: those pages are the bridge's own, never server.route's."""
+    page = urllib.parse.urlsplit(path).path
+    return page == '/news/gm' or page.startswith('/news/gm/')
 
 
 def _assn_page_stem(ctx, path):
@@ -717,6 +729,223 @@ def _development(ctx, path):
     """The reply for a path under /news/development: the page its route names, else Not found."""
     built = None
     for pattern, page in DEV_PAGES:
+        m = pattern.fullmatch(path)
+        if m is not None:
+            built = page(ctx, *m.groups())
+            break
+    if built is None:
+        return _news_reply(404, path, 'Not found', 'Not found.', [])
+    return _news_reply(*built)
+
+
+# The offseason trades under /news/gm/ (aigm.py). The season's ledger is <data>/<STEM>/gm.json; the ASN is written only
+# after aigm.validate passes, with a copy of it first. Everything here runs under _GM_LOCK.
+GM_FILE = 'gm.json'
+OPEN_TEXT = '%s is open in the game. Go back to the main menu, then try again.'
+_GM_LOCK = threading.Lock()
+
+
+def _gm_league(ctx, stem):
+    """What the offseason pages read of one association (STEM upper-cased): its label, season year, teams, players, the
+    ASN's path and whether its season has started (a game has been played). None when the game has no association with
+    that STEM."""
+    stem = stem.upper()
+    asn = watch.associations(ctx.game).get(stem)
+    if asn is None:
+        return None
+    info = gamedata.association(asn)
+    pyr = gamedata.find(os.path.join(ctx.game, 'Assn'), stem + '.PYR')
+    return types.SimpleNamespace(stem=stem, asn=asn, label=createweb._label(stem, asn), year=info['season_year'],
+                                 teams=info['teams'], players=gamedata.players(pyr) if pyr else {},
+                                 started=any(g['played'] for g in info['games']))
+
+
+def _ledger_for(ctx, stem, year):
+    """The ledger of stem's season year, or None: a missing or unreadable file, one of another kind, or one for another
+    season."""
+    led = watch.read_json(os.path.join(ctx.data, stem, GM_FILE))
+    if led is None or led.get('kind') != 'gm' or led.get('season_year') != year:
+        return None
+    if not isinstance(led.get('trades'), list) or not isinstance(led.get('proposals'), list):
+        return None
+    return led
+
+
+def _write_ledger(ctx, stem, led):
+    watch.write_json(os.path.join(ctx.data, stem, GM_FILE), led)
+
+
+def _held(ctx, lg):
+    """The association's game files some process holds open (create.open_by_anyone): the ASN, PYR, PYF and DAT."""
+    assn_dir = os.path.join(ctx.game, 'Assn')
+    stats = os.path.join(ctx.game, 'Stats')
+    paths = [lg.asn, gamedata.find(assn_dir, lg.stem + '.PYR'), gamedata.find(assn_dir, lg.stem + '.PYF'),
+             gamedata.find(stats, lg.stem + '.DAT') if os.path.isdir(stats) else None]
+    return create.open_by_anyone([p for p in paths if p], ctx.proc)
+
+
+def _read_bytes(path):
+    with open(path, 'rb') as fh:
+        return fh.read()
+
+
+def _put_asn(ctx, lg, new):
+    """Copies the ASN to a new folder under ctx.backup (named for the STEM and the time; a number is added when that
+    second has one), then replaces it with new."""
+    base = os.path.join(ctx.backup, '%s-%s-gm' % (lg.stem, datetime.datetime.now().strftime('%Y%m%dT%H%M%S')))
+    folder, n = base, 1
+    while os.path.exists(folder):
+        n += 1
+        folder = '%s-%d' % (base, n)
+    os.makedirs(folder)
+    shutil.copy2(lg.asn, folder)
+    create._write_atomic(lg.asn, new)
+
+
+def _team(lg, tid):
+    return lg.teams[tid]['name'] or 'Team %d' % tid
+
+
+def _named(lg, trade):
+    """A trade or proposal with the names its lines show: the two teams' and the two players'."""
+    out = dict(trade)
+    out.update(a_name=_team(lg, trade['a']), b_name=_team(lg, trade['b']),
+               a_gives_name=lg.players[trade['a_gives']]['name'], b_gives_name=lg.players[trade['b_gives']]['name'])
+    return out
+
+
+def _gm_reply(ctx, lg, status=200, note=''):
+    """(status, path, title, text, links) for the offseason trades of lg: the season's trades and proposals when its
+    ledger exists, else the run link while the preseason lasts. The note, when there is one, comes first."""
+    base = '/news/gm/%s/' % lg.stem
+    title = 'Offseason trades: %s' % lg.label
+    led = _ledger_for(ctx, lg.stem, lg.year)
+    body, links = [], []
+    if led is not None:
+        body += ['Trades made (%d):' % len(led['trades'])]
+        body += ['%s trade %s to %s for %s' % (t['a_name'], t['a_gives_name'], t['b_name'], t['b_gives_name'])
+                 for t in led['trades']]
+        body += ['', 'Proposals for your teams:']
+        for n, p in enumerate(led['proposals'], 1):
+            body.append('%d. %s get %s, %s get %s (%s)' % (n, p['a_name'], p['b_gives_name'], p['b_name'],
+                                                          p['a_gives_name'], p['status']))
+            if p['status'] == 'open':
+                links += [('Accept %d' % n, base + 'accept/%d' % n), ('Reject %d' % n, base + 'reject/%d' % n)]
+    else:
+        body += ['No trades yet this season.']
+        if lg.started:
+            body += ['Trades run in the preseason, before the first game.']
+        else:
+            body += ["Computer-run teams trade bench players to fill each other's needs. "
+                     "Human-run teams only get proposals."]
+            links += [('Run computer trades', base + 'run')]
+    links += [('Player development', '/news/development/%s/' % lg.stem), ('League news', '/news/%s/' % lg.stem)]
+    text = ([note, ''] if note else []) + _heading(title) + body
+    return status, base, title, '\n'.join(text), links
+
+
+def _gm_view(ctx, stem):
+    with _GM_LOCK:
+        lg = _gm_league(ctx, stem)
+        return None if lg is None else _gm_reply(ctx, lg)
+
+
+def _gm_run(ctx, stem):
+    """Plans this preseason's computer trades, applies and checks them, writes the ASN (when there are any) and the
+    ledger, once a season."""
+    with _GM_LOCK:
+        lg = _gm_league(ctx, stem)
+        if lg is None:
+            return None
+        if lg.started:
+            return _gm_reply(ctx, lg, 409, 'The season has started.')
+        if _ledger_for(ctx, lg.stem, lg.year) is not None:
+            return _gm_reply(ctx, lg, 409, 'Trades already ran this season.')
+        if _held(ctx, lg):
+            return _gm_reply(ctx, lg, 409, OPEN_TEXT % lg.label)
+        old = _read_bytes(lg.asn)
+        snap = aigm.read(old)
+        found = aigm.plan(snap['windows'], lg.players, lg.year, snap['human'])
+        new = old
+        for trade in found['trades']:
+            new = aigm.apply_trade(new, trade)
+        problems = aigm.validate(snap['windows'], aigm.read(new)['windows'], lg.players)
+        if problems:
+            return _gm_reply(ctx, lg, 500, 'Trade check failed: %s' % problems[0])
+        if found['trades']:
+            _put_asn(ctx, lg, new)
+        _write_ledger(ctx, lg.stem, {
+            'kind': 'gm', 'season_year': lg.year, 'created': watch.now_iso(),
+            'trades': [_named(lg, t) for t in found['trades']],
+            'proposals': [dict(_named(lg, p), status='open') for p in found['proposals']]})
+        return _gm_reply(ctx, lg, 200, '%d trades made.' % len(found['trades']))
+
+
+def _gm_proposal(ctx, stem, n):
+    """(lg, ledger, proposal) for proposal n of stem's season, or None when there is no such one. Callers hold
+    _GM_LOCK."""
+    lg = _gm_league(ctx, stem)
+    led = None if lg is None else _ledger_for(ctx, lg.stem, lg.year)
+    if led is None or not 1 <= n <= len(led['proposals']):
+        return None
+    return lg, led, led['proposals'][n - 1]
+
+
+def _gm_accept(ctx, stem, n):
+    """Writes proposal n into the ASN when it still fits the file (else it is stale). The game must not hold the files."""
+    n = int(n)
+    with _GM_LOCK:
+        found = _gm_proposal(ctx, stem, n)
+        if found is None:
+            return None
+        lg, led, prop = found
+        if prop['status'] != 'open':
+            return _gm_reply(ctx, lg, 409, 'Proposal %d is %s.' % (n, prop['status']))
+        if _held(ctx, lg):
+            return _gm_reply(ctx, lg, 409, OPEN_TEXT % lg.label)
+        old = _read_bytes(lg.asn)
+        try:
+            new = aigm.apply_trade(old, prop)
+        except aigm.SwapError:
+            prop['status'] = 'stale'
+            _write_ledger(ctx, lg.stem, led)
+            return _gm_reply(ctx, lg, 200, 'Proposal %d is out of date.' % n)
+        problems = aigm.validate(aigm.read(old)['windows'], aigm.read(new)['windows'], lg.players)
+        if problems:
+            return _gm_reply(ctx, lg, 500, 'Trade check failed: %s' % problems[0])
+        _put_asn(ctx, lg, new)
+        prop['status'] = 'accepted'
+        _write_ledger(ctx, lg.stem, led)
+        return _gm_reply(ctx, lg, 200, 'Trade made.')
+
+
+def _gm_reject(ctx, stem, n):
+    """Marks proposal n rejected. No game file is written."""
+    n = int(n)
+    with _GM_LOCK:
+        found = _gm_proposal(ctx, stem, n)
+        if found is None:
+            return None
+        lg, led, prop = found
+        if prop['status'] != 'open':
+            return _gm_reply(ctx, lg, 409, 'Proposal %d is %s.' % (n, prop['status']))
+        prop['status'] = 'rejected'
+        _write_ledger(ctx, lg.stem, led)
+        return _gm_reply(ctx, lg, 200, 'Proposal rejected.')
+
+
+GM_PAGES = (
+    (re.compile(r'/news/gm/([A-Za-z0-9]{1,8})/'), _gm_view),
+    (re.compile(r'/news/gm/([A-Za-z0-9]{1,8})/run'), _gm_run),
+    (re.compile(r'/news/gm/([A-Za-z0-9]{1,8})/accept/([0-9]{1,3})'), _gm_accept),
+    (re.compile(r'/news/gm/([A-Za-z0-9]{1,8})/reject/([0-9]{1,3})'), _gm_reject),
+)
+
+
+def _gm(ctx, path):
+    """The reply for a path under /news/gm: the page its route names, else Not found."""
+    built = None
+    for pattern, page in GM_PAGES:
         m = pattern.fullmatch(path)
         if m is not None:
             built = page(ctx, *m.groups())
