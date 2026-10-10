@@ -93,3 +93,7 @@ Public repo (MIT) of tools and research for FPS Baseball Pro '98. Python codecs 
 - League News home (in game and on the web) lists the news watcher's data folders, not Assn/: an association shows
   there only after a watcher pass. A scratch game needs `news/watch.py --game G --data D --once --no-llm` first, or its
   association pages (and their Player development and Offseason trades links) cannot be reached from the menu.
+- Generated players: FUN_680719f0 has the generator fill a plaintext 192-byte PYR record at gen+0x10e, writes it with
+  FUN_680537e0 (call at 0x68071a34), then reads it back into the runtime player. A change to the runtime player after
+  the add is never saved; mod a new player's ratings by wrapping that write (mods\rookies.dll). Check a mod like this
+  on disk after a rollover (players not in the start PYR), not from its log.
