@@ -1,0 +1,22 @@
+; bbfix.ini: put next to Baseball.exe, then start the game with bblaunch.exe.
+
+[mods]
+; Mods to load at startup, comma separated, paths relative to the game folder.
+load=mods\aging.dll,mods\rookies.dll,mods\playercard.dll
+
+[aging]
+; decline=on|off: peak ratings fall with age.  retire=curve|pass: retire by age and ability, or the stock rule.
+decline=on
+retire=curve
+
+[rookies]
+; map=on|off: draw generated players' ratings like real ones.
+map=on
+
+[steal]
+; pass (stock), zero, max, or scale with pct=100.
+mode=pass
+
+[widen]
+; 1 adds four stat columns to League Statistics. Needs the widened SHELL.VOL from work/patches; keep 0 without it.
+enable=0
