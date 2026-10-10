@@ -259,6 +259,22 @@ def test_a_symlinked_focus_file_reads_as_none_and_is_never_written_through(dev, 
     assert entries_of(game) == [ent(100, serial(1952), 'power')]
 
 
+def test_a_symlinked_mods_dir_reads_as_none_and_a_set_fails_closed(dev, tmp_path):
+    ctx, spool, game = dev
+    elsewhere = tmp_path / 'elsewhere'
+    elsewhere.mkdir()
+    (elsewhere / 'focus.txt').write_text(focus.format([ent(100, serial(1952), 'power', 'MLBPA97')]))
+    before = (elsewhere / 'focus.txt').read_bytes()
+    mods = game / 'Mods'
+    if mods.exists():
+        mods.rename(game / 'Mods.real')     # the spool is held by descriptor, so it survives the rename
+    os.symlink(elsewhere, mods)
+    assert modbridge._read_focus(str(game)) == []
+    head, _ = modbridge.handle(ctx, {'op': 'news', 'path': BASE + '/p/100/set/power'})
+    assert dict(head)['status'] == 'error'
+    assert (elsewhere / 'focus.txt').read_bytes() == before and sorted(os.listdir(elsewhere)) == ['focus.txt']
+
+
 def test_a_focus_file_that_is_not_a_regular_file_reads_as_none(dev):
     ctx, spool, game = dev
     (game / 'Mods' / 'focus.txt').mkdir()

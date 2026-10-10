@@ -565,11 +565,12 @@ def _mods_dir(game, make=False):
 
 
 def _read_focus(game):
-    """The entries in <game>/Mods/focus.txt: none when Mods or the file is missing, or the file is not a regular file.
+    """The entries in <game>/Mods/focus.txt: none when Mods or the file is missing, when Mods is a symlink, or when the
+    file is not a regular file.
     At most MAX_FILE bytes are read."""
     try:
         mods = _mods_dir(game)
-    except FileNotFoundError:
+    except OSError:             # no Mods, or Mods is a symlink (ELOOP) or not a directory
         return []
     try:
         return focus.parse(_read(mods, FOCUS_FILE, focus.MAX_FILE).decode('latin-1'))
