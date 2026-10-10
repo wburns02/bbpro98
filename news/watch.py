@@ -14,6 +14,7 @@ Data layout (server.py reads it):
     <data>/<ASSN>/scout/<tid>.json                     one scouting report per team (once)
     <data>/<ASSN>/moves/log.json, notes/<n>.json       roster moves and milestones, newest last; a note per notable one
     <data>/<ASSN>/moves/last.json                      the snapshot the next scan diffs against
+    <data>/<ASSN>/replay.json                          the season against its Lahman namesake (with --db; replay.py)
 
 The game files are only read. A box score is matched to its schedule game by teams and final score (gamedata); one
 that matches nothing yet (the association not saved since the game) is retried on later scans. Stories go to the
@@ -24,7 +25,9 @@ import datetime
 import hashlib
 import json
 import os
+import pathlib
 import re
+import sqlite3
 import sys
 import time
 
@@ -34,6 +37,7 @@ import gamedata  # noqa: E402
 import hive      # noqa: E402
 import moves     # noqa: E402
 import recap     # noqa: E402
+import replay    # noqa: E402
 import scout     # noqa: E402
 import season    # noqa: E402
 import teamnames  # noqa: E402
@@ -91,14 +95,17 @@ def _llm_or_template(write, facts, budget, complete):
 
 
 class Watcher:
-    def __init__(self, game_dir, data_dir, budget, complete, log=print):
+    def __init__(self, game_dir, data_dir, budget, complete, log=print, db=None):
         self.game, self.data, self.budget, self.complete, self.log = game_dir, data_dir, budget, complete, log
+        self.db = db            # the Lahman database, opened read-only; None leaves out the replay scorecard
         self.seen = {}          # stem -> signature of its game files at the last full pass
         self.waiting = set()    # box score keys already logged as unmatched
         self.captured = {}      # stem -> box score keys already in pending/ or recaps/
         self.scout_left = SCOUT_CALLS   # model scouting reports left in this scan
         self.move_left = MOVE_CALLS     # model transaction notes left in this scan
         self.scouting_open = set()      # stems with teams still waiting for a scouting report
+        self.real_seasons = {}  # (year, leagues) -> replay.real(): the database is read once per season
+        self.off_season = set() # stems whose season_year is not the year their name gives: logged once
         self.names = teamnames.load(os.path.join(data_dir, 'teamnames.json'))   # full Lahman names; {} without it
 
     def signature(self, stem, asn_path):
@@ -148,6 +155,37 @@ class Watcher:
             'standings': feed.standings(assoc), 'leaders': feed.leaders(season, names, teams_played)})
         self.season_pieces(out, assoc, names, dat, pyr)
         self.moves(out, assoc, pyr, dat)
+        self.replay_piece(out, assoc, names, season)
+
+    def replay_piece(self, out, assoc, names, season):
+        """The replay scorecard, written on every pass of a Lahman-named association while a database is given: this
+        season's standings and leaders against the real season of the same name. A sqlite error is logged and
+        skipped."""
+        found = replay.season_of(assoc['name'])
+        if self.db is None or found is None:
+            return
+        stem = os.path.basename(out)
+        sim_year = assoc.get('season_year')
+        if type(sim_year) is int and sim_year != found[0]:
+            if stem not in self.off_season:
+                self.off_season.add(stem)
+                self.log('%s replay: season %d is not %d, skipped' % (stem, sim_year, found[0]))
+            return
+        try:
+            if found not in self.real_seasons:
+                self.real_seasons[found] = self.read_real(*found)
+            card = replay.scorecard(assoc, season, names, self.real_seasons[found])
+        except sqlite3.Error as e:
+            self.log('%s replay: %s' % (stem, e))
+            return
+        write_json(os.path.join(out, 'replay.json'), dict(card, kind='replay', year=found[0], created=now_iso()))
+
+    def read_real(self, year, leagues):
+        con = sqlite3.connect(pathlib.Path(self.db).resolve().as_uri() + '?mode=ro', uri=True)
+        try:
+            return replay.real(con, year, leagues)
+        finally:
+            con.close()
 
     def season_pieces(self, out, assoc, names, dat, pyr=None):
         """The season preview (once per association), once every game is played the season awards, and the scouting
@@ -348,13 +386,15 @@ def main(argv=None):
                     help='model output tokens a day')
     ap.add_argument('--once', action='store_true')
     ap.add_argument('--no-llm', action='store_true', help='template stories only')
+    ap.add_argument('--db', default=None, help='the Lahman database, opened read-only: adds the replay scorecard')
     a = ap.parse_args(argv)
     if not a.game or not a.data:
         ap.error('--game and --data (or BBNEWS_GAME / BBNEWS_DATA) are required')
     os.makedirs(a.data, exist_ok=True)
     write_json(os.path.join(a.data, 'limits.json'), {'calls_per_day': a.calls, 'tokens_per_day': a.tokens})
     budget = hive.Budget(os.path.join(a.data, 'budget.json'), a.calls, a.tokens)
-    w = Watcher(a.game, a.data, budget, None if a.no_llm else hive.complete, log=lambda s: print(s, flush=True))
+    w = Watcher(a.game, a.data, budget, None if a.no_llm else hive.complete, log=lambda s: print(s, flush=True),
+                db=a.db)
     while True:
         w.scan()
         if a.once:

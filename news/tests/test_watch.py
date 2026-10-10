@@ -2,6 +2,7 @@
 import json
 import os
 import struct
+import sqlite3
 import sys
 
 import pytest
@@ -443,3 +444,110 @@ def test_a_fresh_pyf_waits_for_a_later_scan(league):
     assert not (data / '30L1998' / 'moves' / 'last.json').exists()
     league_scan(w, gd, st)
     assert (data / '30L1998' / 'moves' / 'last.json').exists()
+
+
+def lahman_db(path):
+    """A tiny Lahman database: the two teams of the world fixture, 1998, both in the AL."""
+    con = sqlite3.connect(path)
+    con.execute('CREATE TABLE teams (yearID INT, lgID TEXT, teamID TEXT, divID TEXT, name TEXT, G INT, W INT, L INT, '
+                'teamRank INT)')
+    con.execute('CREATE TABLE batting (playerID TEXT, yearID INT, teamID TEXT, lgID TEXT, AB INT, H INT, HR INT, '
+                'RBI INT, SB INT, BB INT)')
+    con.execute('CREATE TABLE pitching (playerID TEXT, yearID INT, teamID TEXT, lgID TEXT, W INT, L INT, SV INT, '
+                'IPouts INT, ER INT, SO INT)')
+    con.execute('CREATE TABLE people (playerID TEXT, nameFirst TEXT, nameLast TEXT)')
+    con.executemany('INSERT INTO teams VALUES (?,?,?,?,?,?,?,?,?)',
+                    [(1998, 'AL', 'ASH', 'E', 'Ash Gold', 4, 3, 1, 1),
+                     (1998, 'AL', 'BIR', 'E', 'Birch Blue', 4, 1, 3, 2)])
+    con.commit()
+    con.close()
+    return str(path)
+
+
+def named(monkeypatch, name, **over):
+    """The world's association under another name, with any other keys given."""
+    read = gamedata.association
+    monkeypatch.setattr(gamedata, 'association', lambda path: dict(read(path), name=name, **over))
+
+
+def test_lahman_named_association_gets_a_replay_scorecard(world, monkeypatch, tmp_path):
+    gd, data, st = world
+    named(monkeypatch, '1998 Major Leagues')
+    watch.Watcher(str(gd), str(data), None, None, log=lambda s: None, db=lahman_db(tmp_path / 'lahman.sqlite')).scan()
+    card = json.loads((data / '30L1998' / 'replay.json').read_text())
+    assert card['kind'] == 'replay' and card['year'] == 1998 and card['created']
+    assert [t['name'] for t in card['teams']] == ['Ash', 'Birch']
+    assert card['teams'][0]['sim'] == {'w': 2, 'l': 0, 'pct': 1.0}
+    assert card['teams'][0]['real'] == {'w': 3, 'l': 1, 'pct': 0.75}
+    assert card['teams'][0]['wins_diff'] == 1.0
+    assert card['played'] == 2.0 and card['scheduled'] == 3.0
+
+
+def test_stock_named_association_gets_no_scorecard(world, tmp_path):
+    gd, data, st = world
+    watch.Watcher(str(gd), str(data), None, None, log=lambda s: None, db=lahman_db(tmp_path / 'lahman.sqlite')).scan()
+    assert (data / '30L1998' / 'meta.json').exists()
+    assert not (data / '30L1998' / 'replay.json').exists()
+
+
+def test_no_database_writes_no_scorecard(world, monkeypatch):
+    gd, data, st = world
+    named(monkeypatch, '1998 Major Leagues')
+    watch.Watcher(str(gd), str(data), None, None, log=lambda s: None).scan()
+    assert not (data / '30L1998' / 'replay.json').exists()
+
+
+def test_broken_database_path_is_logged_and_the_scan_goes_on(world, monkeypatch, tmp_path):
+    gd, data, st = world
+    named(monkeypatch, '1998 Major Leagues')
+    logs = []
+    watch.Watcher(str(gd), str(data), None, None, log=logs.append, db=str(tmp_path / 'missing.sqlite')).scan()
+    assert any('30L1998 replay' in line for line in logs)
+    assert not (data / '30L1998' / 'replay.json').exists()
+    assert (data / '30L1998' / 'meta.json').exists()
+
+
+def test_the_database_is_read_once_per_season(world, monkeypatch, tmp_path):
+    gd, data, st = world
+    named(monkeypatch, '1998 Major Leagues')
+    calls = []
+    read = watch.replay.real
+    monkeypatch.setattr(watch.replay, 'real', lambda con, year, leagues: calls.append(year) or read(con, year, leagues))
+    w = watch.Watcher(str(gd), str(data), None, None, log=lambda s: None, db=lahman_db(tmp_path / 'lahman.sqlite'))
+    w.scan()
+    w.seen.clear()
+    w.scan()
+    assert calls == [1998]
+
+
+def test_a_season_year_equal_to_the_name_writes_the_scorecard(world, monkeypatch, tmp_path):
+    gd, data, st = world
+    named(monkeypatch, '1998 Major Leagues', season_year=1998)
+    watch.Watcher(str(gd), str(data), None, None, log=lambda s: None, db=lahman_db(tmp_path / 'lahman.sqlite')).scan()
+    assert json.loads((data / '30L1998' / 'replay.json').read_text())['year'] == 1998
+
+
+def test_a_season_year_past_the_name_writes_nothing_and_logs_once(world, monkeypatch, tmp_path):
+    gd, data, st = world
+    named(monkeypatch, '1998 Major Leagues', season_year=1999)
+    logs = []
+    w = watch.Watcher(str(gd), str(data), None, None, log=logs.append, db=lahman_db(tmp_path / 'lahman.sqlite'))
+    w.scan()
+    w.seen.clear()
+    w.scan()
+    assert not (data / '30L1998' / 'replay.json').exists()
+    assert [line for line in logs if 'replay' in line] == ['30L1998 replay: season 1999 is not 1998, skipped']
+    assert (data / '30L1998' / 'meta.json').exists()
+
+
+def test_a_season_that_moved_on_leaves_the_old_scorecard_alone(world, monkeypatch, tmp_path):
+    gd, data, st = world
+    db = lahman_db(tmp_path / 'lahman.sqlite')
+    named(monkeypatch, '1998 Major Leagues', season_year=1998)
+    w = watch.Watcher(str(gd), str(data), None, None, log=lambda s: None, db=db)
+    w.scan()
+    before = (data / '30L1998' / 'replay.json').read_text()
+    named(monkeypatch, '1998 Major Leagues', season_year=1999)
+    w.seen.clear()
+    w.scan()
+    assert (data / '30L1998' / 'replay.json').read_text() == before
