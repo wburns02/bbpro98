@@ -780,3 +780,102 @@ def test_scouting_box_is_on_the_first_page_only(scouted):
     html1 = scouted.get('/news/30L1998/')[2].decode()
     html2 = scouted.get('/news/30L1998/?page=2')[2].decode()
     assert 'class="scouting"' in html1 and 'class="scouting"' not in html2
+
+
+def replay_file(**over):
+    """A replay.json in the shape the watcher writes: an American League with three matched teams, a National League
+    with no matched team, and one filler team with no real counterpart."""
+    base = {
+        'kind': 'replay', 'year': 1998, 'created': '2026-10-09T14:03:11', 'played': 81.0, 'scheduled': 162.0,
+        'teams': [
+            {'name': 'New York Yankees', 'lg': 'AL', 'real': {'w': 114, 'l': 48, 'pct': 0.704},
+             'sim': {'w': 47, 'l': 34, 'pct': 0.58}, 'diff': -0.124, 'wins_diff': -20.1},
+            {'name': 'Boston Red Sox', 'lg': 'AL', 'real': {'w': 86, 'l': 76, 'pct': 0.531},
+             'sim': {'w': 40, 'l': 41, 'pct': 0.494}, 'diff': -0.037, 'wins_diff': -6.0},
+            {'name': 'Seattle Mariners', 'lg': 'AL', 'real': {'w': 84, 'l': 78, 'pct': 0.519},
+             'sim': {'w': 45, 'l': 36, 'pct': 0.556}, 'diff': 0.037, 'wins_diff': 6.0},
+        ],
+        'unmatched': ['Filler Team 1'],
+        'leagues': {
+            'AL': {'rank_corr': 0.9, 'mean_abs_diff': 0.021, 'real_best': 'New York Yankees',
+                   'sim_best': 'New York Yankees'},
+            'NL': {'rank_corr': None, 'mean_abs_diff': None, 'real_best': None, 'sim_best': None},
+        },
+        'leaders': {stat: {'real': [], 'sim': []} for stat in ('HR', 'AVG', 'RBI', 'SB', 'W', 'SV', 'SO', 'ERA')},
+        'players': [{'stat': 'HR', 'name': 'Mark McGwire', 'real': 70, 'sim': 12}],
+    }
+    base['leaders'].update({
+        'HR': {'real': [['Mark McGwire', 70], ['Sammy Sosa', 66]], 'sim': [['Ken Griffey', 56]]},
+        'AVG': {'real': [['Tony Gwynn', 0.39]], 'sim': [['Larry Walker', 0.412]]},
+        'ERA': {'real': [['Roger Clemens', 2.65]], 'sim': [['Ned Ace', 3.1]]},
+    })
+    base.update(over)
+    return base
+
+
+@pytest.fixture
+def scorecard(seeded):
+    """seeded, plus the replay scorecard for 30L1998."""
+    write(seeded.root / '30L1998' / 'replay.json', replay_file())
+    return seeded
+
+
+def test_replay_page_has_status_standings_leaders_and_the_real_leaders_in_the_sim(scorecard):
+    status, headers, body = scorecard.get('/news/30L1998/replay')
+    html = body.decode()
+    assert status == 200 and headers['content-type'] == HTML
+    assert '<title>1998 Major Leagues · Replay vs history</title>' in html
+    assert ('<p class="nav"><a href="/news/30L1998/">&larr; 1998 Major Leagues</a> &middot; '
+            '<a href="/news/">All leagues</a></p>') in html
+    assert '<h1>Replay vs history</h1><p class="through">After 81 of 162 games per team</p>' in html
+    assert ('<section><h2>AL</h2><p>Rank correlation with the real standings: 0.90. Mean gap in winning percentage: '
+            '.021. Best real record: New York Yankees, 114-48. Best sim record: New York Yankees, 47-34.</p>') in html
+    assert ('<th class="t">Team</th><th>Real W-L</th><th>Real Pct</th><th>Sim W-L</th><th>Sim Pct</th><th>Gap</th>'
+            in html)
+    assert ('<tr><td class="t">New York Yankees</td><td>114-48</td><td>.704</td><td>47-34</td><td>.580</td>'
+            '<td>-20.1</td></tr>') in html
+    assert ('<tr><td class="t">Seattle Mariners</td><td>84-78</td><td>.519</td><td>45-36</td><td>.556</td>'
+            '<td>+6.0</td></tr>') in html
+    assert '<p class="empty">No real counterpart: Filler Team 1.</p>' in html
+    assert '<section><h2>NL</h2><p>Rank correlation with the real standings: n/a.</p></section>' in html
+    assert '<caption>HR</caption>' in html and '<caption>AVG</caption>' in html
+    assert ('<tr><td>1</td><td class="t">Mark McGwire</td><td>70</td><td class="t">Ken Griffey</td><td>56</td></tr>'
+            in html)
+    assert ('<tr><td>1</td><td class="t">Tony Gwynn</td><td>.390</td><td class="t">Larry Walker</td>'
+            '<td>.412</td></tr>') in html
+    assert ('<tr><td>1</td><td class="t">Roger Clemens</td><td>2.65</td><td class="t">Ned Ace</td>'
+            '<td>3.10</td></tr>') in html
+    assert '<caption>Players</caption>' in html
+    assert '<tr><td class="t">HR</td><td class="t">Mark McGwire</td><td>70</td><td>12</td></tr>' in html
+
+
+def test_replay_page_escapes_every_value(scorecard):
+    team = dict(replay_file()['teams'][0], name='<b>Evil</b>')
+    write(scorecard.root / '30L1998' / 'replay.json', replay_file(teams=[team], unmatched=['<i>Filler</i>']))
+    html = scorecard.get('/news/30L1998/replay')[2].decode()
+    assert '<b>Evil</b>' not in html and '<i>Filler</i>' not in html
+    assert '&lt;b&gt;Evil&lt;/b&gt;' in html and '&lt;i&gt;Filler&lt;/i&gt;' in html
+
+
+def test_replay_page_without_teams_or_leaders_says_so(seeded):
+    write(seeded.root / '30L1998' / 'replay.json', replay_file(teams=[], leagues={}, leaders={}, players=[]))
+    html = seeded.get('/news/30L1998/replay')[2].decode()
+    assert '<p class="empty">No leaders yet.</p>' in html
+    assert '<p class="empty">No real leaders in the sim yet.</p>' in html
+
+
+@pytest.mark.parametrize('content', [None, 'not json', '[1, 2]', {'kind': 'awards'}, {'year': 1998}])
+def test_replay_page_is_404_without_a_readable_replay_file_of_its_kind(seeded, content):
+    if content is not None:
+        write(seeded.root / '30L1998' / 'replay.json', content)
+    status, headers, body = seeded.get('/news/30L1998/replay')
+    assert status == 404
+    assert headers['content-type'] == HTML
+
+
+def test_replay_box_is_on_the_association_page_only_with_the_file(seeded):
+    assert 'class="replay"' not in seeded.get('/news/30L1998/')[2].decode()
+    write(seeded.root / '30L1998' / 'replay.json', replay_file())
+    html = seeded.get('/news/30L1998/')[2].decode()
+    assert ('<section class="replay"><h2>Replay vs history</h2><ul><li><a href="/news/30L1998/replay">Scorecard</a>'
+            '</li></ul></section>') in html

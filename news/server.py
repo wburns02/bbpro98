@@ -27,6 +27,7 @@ TID_RE = re.compile(r'[0-9]{1,2}')
 MONTHS = ('January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October',
           'November', 'December')
 LEADERS = (('avg', 'AVG'), ('hr', 'HR'), ('rbi', 'RBI'), ('w', 'W'), ('era', 'ERA'), ('so', 'SO'), ('sv', 'SV'))
+REPLAY_STATS = ('HR', 'AVG', 'RBI', 'SB', 'W', 'SV', 'SO', 'ERA')
 BYLINES = {'glm': 'Staff writer', 'template': 'Wire report'}
 HTML_TYPE = 'text/html; charset=utf-8'
 JSON_TYPE = 'application/json'
@@ -218,9 +219,12 @@ def _paras_html(paras):
 
 
 def _table(caption, heads, rows, text=1):
-    """A table in an overflow wrapper. The first `text` columns are names, left-aligned; the rest are numbers."""
+    """A table in an overflow wrapper. The first `text` columns are names, left-aligned; the rest are numbers. text
+    may also be a tuple of the indexes of the name columns."""
+    left = range(text) if isinstance(text, int) else text
+
     def cells(values, tag):
-        return ''.join('<%s%s>%s</%s>' % (tag, ' class="t"' if i < text else '', esc(v), tag)
+        return ''.join('<%s%s>%s</%s>' % (tag, ' class="t"' if i in left else '', esc(v), tag)
                        for i, v in enumerate(values))
     body = ''.join('<tr>%s</tr>' % cells(r, 'td') for r in rows)
     return ('<div class="table-wrap"><table><caption>%s</caption><thead><tr>%s</tr></thead><tbody>%s</tbody>'
@@ -352,8 +356,9 @@ def _association(data_dir, assn, qs):
     lead.extend(_story_row(assn, key, rec) for key, rec in shown)
     lead.append(_pager(assn, page, len(stories)))
     season = _season_links(data_dir, assn) if page == 1 else ''
+    replay = _replay_link(data_dir, assn) if page == 1 else ''
     scouting = _scouting_links(data_dir, assn) if page == 1 else ''
-    side = season + scouting + _standings_html(meta.get('standings')) + _leaders_html(meta.get('leaders'))
+    side = season + replay + scouting + _standings_html(meta.get('standings')) + _leaders_html(meta.get('leaders'))
     body = (_masthead(name, _through(meta)) + _nav()
             + '<div class="grid"><section class="lead">%s</section><aside class="side">%s</aside></div>'
             % (''.join(lead), side))
@@ -412,7 +417,7 @@ def _story(data_dir, assn, key):
 
 
 def _season_file(data_dir, assn, which):
-    """The season preview or awards (which: 'preview' or 'awards') as an object of that kind, else None."""
+    """The season file of that kind (which: 'preview', 'awards' or 'replay') as an object, else None."""
     rec = _read_obj(data_dir / assn / (which + '.json'))
     return rec if rec is not None and rec.get('kind') == which else None
 
@@ -474,6 +479,128 @@ def _awards_page(assn, rec):
         league = _text(lg.get('league')).strip() or 'The league'
         sections.append('<section><h2>%s</h2>%s</section>' % (esc(league), ''.join(tables)))
     return _season_page(assn, rec, 'Season awards', sections)
+
+
+def _is_num(value):
+    return type(value) in (int, float)
+
+
+def _pct_text(value):
+    """A winning percentage as the standings print it: .612, 1.000. '' when not a number."""
+    return ('%.3f' % value).lstrip('0') if _is_num(value) else ''
+
+
+def _gap_text(value):
+    """A signed gap in wins: +3.5, -0.5. '' when not a number."""
+    return '%+.1f' % value if _is_num(value) else ''
+
+
+def _stat_text(stat, value):
+    if stat == 'AVG' and _is_num(value):
+        return _pct_text(value)
+    if stat == 'ERA' and _is_num(value):
+        return '%.2f' % value
+    return value
+
+
+def _wl(side):
+    return '%s-%s' % (_text(side.get('w')), _text(side.get('l')))
+
+
+def _strings(value):
+    return [v for v in value if isinstance(v, str)] if isinstance(value, list) else []
+
+
+def _pairs(value):
+    """[(name, value)] from a leaders list; entries that are not two-item lists are dropped."""
+    if not isinstance(value, list):
+        return []
+    return [(p[0], p[1]) for p in value if isinstance(p, list) and len(p) == 2]
+
+
+def _league_summary(info, teams):
+    """The paragraph under a league's name: the rank correlation, the mean gap, and the best real and sim records."""
+    corr = info.get('rank_corr')
+    parts = ['Rank correlation with the real standings: %s.' % ('%.2f' % corr if _is_num(corr) else 'n/a')]
+    gap = _pct_text(info.get('mean_abs_diff'))
+    if gap:
+        parts.append('Mean gap in winning percentage: %s.' % gap)
+    for label, side, key in (('Best real record', 'real', 'real_best'), ('Best sim record', 'sim', 'sim_best')):
+        best = _text(info.get(key))
+        team = next((t for t in teams if best and _text(t.get('name')) == best), None)
+        if team is not None:
+            parts.append('%s: %s, %s.' % (label, best, _wl(_d(team.get(side)))))
+    return ' '.join(parts)
+
+
+def _league_section(lg, info, teams):
+    rows = []
+    for t in teams:
+        real, sim = _d(t.get('real')), _d(t.get('sim'))
+        rows.append([t.get('name'), _wl(real), _pct_text(real.get('pct')), _wl(sim), _pct_text(sim.get('pct')),
+                     _gap_text(t.get('wins_diff'))])
+    table = _table('Standings', ('Team', 'Real W-L', 'Real Pct', 'Sim W-L', 'Sim Pct', 'Gap'), rows) if rows else ''
+    return '<section><h2>%s</h2><p>%s</p>%s</section>' % (esc(lg), esc(_league_summary(info, teams)), table)
+
+
+def _leader_tables(leaders):
+    tables = []
+    for stat in REPLAY_STATS:
+        side = _d(leaders.get(stat))
+        real, sim = _pairs(side.get('real')), _pairs(side.get('sim'))
+        if not real and not sim:
+            continue
+        rows = []
+        for i in range(max(len(real), len(sim))):
+            r, s = real[i] if i < len(real) else ('', ''), sim[i] if i < len(sim) else ('', '')
+            rows.append([i + 1, r[0], _stat_text(stat, r[1]), s[0], _stat_text(stat, s[1])])
+        tables.append(_table(stat, ('Rank', 'Real', 'Value', 'Sim', 'Value'), rows, text=(1, 3)))
+    return tables
+
+
+def _player_table(players):
+    rows = [[_text(p.get('stat')), p.get('name'), _stat_text(_text(p.get('stat')), p.get('real')),
+             _stat_text(_text(p.get('stat')), p.get('sim'))] for p in players]
+    return _table('Players', ('Stat', 'Player', 'Real', 'Sim'), rows, text=2) if rows else ''
+
+
+def _replay_page(assn, name, rec):
+    """The replay scorecard: the season's status, each league's standings against the real ones with a summary, the
+    leaders of each stat in both seasons, then the real leaders the sim has."""
+    teams = _dicts(rec.get('teams'))
+    leagues = _d(rec.get('leagues'))
+    played, scheduled = rec.get('played'), rec.get('scheduled')
+    status = ('After %s of %s games per team' % ('%g' % played, '%g' % scheduled)
+              if _is_num(played) and _is_num(scheduled) else '')
+    unmatched = _strings(rec.get('unmatched'))
+    leaders = _leader_tables(_d(rec.get('leaders')))
+    parts = [_masthead('Replay vs history', status), _league_nav(assn, {'association': name})]
+    for lg in sorted(leagues):
+        parts.append(_league_section(lg, _d(leagues[lg]), [t for t in teams if _text(t.get('lg')) == lg]))
+    if unmatched:
+        parts.append('<p class="empty">%s</p>' % esc('No real counterpart: ' + ', '.join(unmatched) + '.'))
+    parts.append('<section><h2>Leaders</h2>%s</section>' % (''.join(leaders) or '<p class="empty">No leaders yet.</p>'))
+    players = _player_table(_dicts(rec.get('players')))
+    parts.append('<section><h2>Real leaders in the sim</h2>%s</section>'
+                 % (players or '<p class="empty">No real leaders in the sim yet.</p>'))
+    return _page_reply(200, '%s · Replay vs history' % name, ''.join(parts))
+
+
+def _replay(data_dir, assn):
+    """The replay scorecard page; 404 when its file is missing, unreadable or of another kind."""
+    rec = _season_file(data_dir, assn, 'replay')
+    if rec is None:
+        return _not_found()
+    name = _text(_d(_read_obj(data_dir / assn / 'meta.json')).get('name')) or assn
+    return _replay_page(assn, name, rec)
+
+
+def _replay_link(data_dir, assn):
+    """The Replay vs history box for the side column: a link to the scorecard. '' without its file."""
+    if _season_file(data_dir, assn, 'replay') is None:
+        return ''
+    return ('<section class="replay"><h2>Replay vs history</h2><ul><li><a href="/news/%s/replay">Scorecard</a>'
+            '</li></ul></section>' % esc(assn))
 
 
 def _season(data_dir, assn, which):
@@ -584,6 +711,8 @@ def route(data_dir, target):
         return _story(data_dir, assn, rest[1])
     if len(rest) == 2 and rest[1] in ('preview', 'awards'):
         return _season(data_dir, assn, rest[1])
+    if len(rest) == 2 and rest[1] == 'replay':
+        return _replay(data_dir, assn)
     if len(rest) == 3 and rest[1] == 'team' and TID_RE.fullmatch(rest[2]):
         return _team(data_dir, assn, rest[2])
     return _not_found()
