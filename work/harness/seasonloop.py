@@ -147,15 +147,28 @@ def sim(h):
     h.click(570, 565); time.sleep(10)     # OK
 
 
+def _other_mtimes(asn):
+    """{path: mtime} of every other association file in asn's directory."""
+    d = os.path.dirname(asn)
+    return {p: os.stat(p).st_mtime_ns for p in glob.glob(os.path.join(d, '*.ASN')) + glob.glob(os.path.join(d, '*.asn'))
+            if os.path.basename(p).lower() != os.path.basename(asn).lower()}
+
+
 def season(h, shots, stem, limit):
     """Sim to the end of the regular season. True when every scheduled game is played."""
     asn = os.path.join(h.WORK, 'Assn', stem + '.ASN')
     t_end, stops, rnd = time.time() + limit, 0, 0
+    others = _other_mtimes(asn)
+    start, _ = played(asn)
     while time.time() < t_end:
         n, total = played(asn)
         if total and n == total:
             print(json.dumps({'season': stem, 'done': True, 'played': n, 'rounds': rnd, 'stops': stops}), flush=True)
             return True
+        if rnd == 1 and n == start and _other_mtimes(asn) != others:
+            # A wrong row in the association list opens another league, and the sim plays that one instead.
+            print(json.dumps({'season': stem, 'done': False, 'wrong_association': True}), flush=True)
+            return False
         rnd += 1
         sim(h)
         last, quiet_since, shown = n, time.time(), time.time()

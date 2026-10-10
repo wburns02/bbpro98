@@ -27,16 +27,28 @@ channel difference) of rgb and checks min <= count <= max (either bound optional
 """
 import glob, hashlib, json, os, re, shutil, signal, subprocess, sys, time
 
-WORK = '/mnt/nvme/bbpro98/work_install'
+# BBLANE=2 runs a second, independent copy (own Wine prefix, work copy, display), so two plans can run at once:
+# /mnt/nvme/bbpro98/prefix2 (a copy of ~/.bbpro98_prefix whose C:\Sierra\BBPRO_98_wk2 links to work_install2) on :97.
+# Each lane only sees and stops its own game processes.
+LANE = os.environ.get('BBLANE', '1')
+if LANE == '1':
+    PREFIX = os.path.expanduser('~/.bbpro98_prefix')
+    WORK, WORKDIR, DISPLAY = '/mnt/nvme/bbpro98/work_install', 'BBPRO_98_work', ':99'
+elif LANE == '2':
+    PREFIX = '/mnt/nvme/bbpro98/prefix2'
+    WORK, WORKDIR, DISPLAY = '/mnt/nvme/bbpro98/work_install2', 'BBPRO_98_wk2', ':97'
+else:
+    sys.exit('BBLANE must be 1 or 2')
 LIVE = os.path.realpath(os.path.expanduser('~/.bbpro98_prefix/drive_c/Sierra/BBPRO_98'))
 LAUNCH = os.path.expanduser('~/bb_launch_work.sh')
-GAME = re.compile(r'C:.Sierra.BBPRO_98_work.(bblaunch|Baseball)\.exe|^\d+ [A-Z]:.BBArch\.exe|winedbg')
+GAME = re.compile(r'C:.Sierra.%s.(bblaunch|Baseball)\.exe' % WORKDIR + (r'|^\d+ [A-Z]:.BBArch\.exe|winedbg' if LANE == '1'
+                                                                       else ''))
 EXES = ('BBArch.exe',)       # other programs a plan may start ("exe")
 # BBArch lists the *.ASN / *.ARC of its whole current drive with a fixed path buffer: on C: the walk follows the
 # prefix's Desktop/Documents links into /home and a 64-char directory name overruns it (access violation at "NO S").
 # So "exe" runs start from their own drive K: whose root is the work copy (A: and B: are refused as floppies).
-EXE_DRIVE = os.path.expanduser('~/.bbpro98_prefix/dosdevices/k:')
-ENV = dict(os.environ, DISPLAY=':99')
+EXE_DRIVE = os.path.join(PREFIX, 'dosdevices/k:')
+ENV = dict(os.environ, DISPLAY=DISPLAY)
 
 
 def sha(p):
@@ -45,7 +57,7 @@ def sha(p):
 
 
 def game_pids():
-    out = subprocess.run(['pgrep', '-af', 'BBPRO_98_work|BBArch|winedbg'], capture_output=True, text=True).stdout
+    out = subprocess.run(['pgrep', '-af', WORKDIR + '|BBArch|winedbg'], capture_output=True, text=True).stdout
     mine = ancestors()
     return [int(l.split()[0]) for l in out.splitlines() if GAME.search(l) and int(l.split()[0]) not in mine]
 
@@ -173,7 +185,7 @@ def main():
     plan = json.load(open(sys.argv[1]))
     shots = os.path.abspath(sys.argv[2])
     os.makedirs(shots, exist_ok=True)
-    if os.path.realpath(WORK) == LIVE:
+    if os.path.realpath(WORK) == LIVE or os.path.realpath(WORK).startswith(LIVE + os.sep):
         sys.exit('REFUSED: the work copy resolves to the live install')
     backup = f'{shots}/_orig'
     os.makedirs(backup, exist_ok=True)
@@ -195,14 +207,17 @@ def main():
         for dst, src in ((os.path.realpath(os.path.join(WORK, r)), s) for r, s in plan.get('install', {}).items()):
             shutil.copyfile(src, dst)
         exe = plan.get('exe')
-        if exe is None:
+        if exe is None and LANE == '1':
             cmd = ['setsid', 'bash', LAUNCH]
+        elif exe is None:                                  # bb_launch_work.sh with this lane's prefix and display
+            cmd = ['setsid', 'bash', '-c', 'export WINEPREFIX="$1" WINEDEBUG=-all DISPLAY="$2" PULSE_SINK=bbnull; '
+                   'cd "$1/drive_c/Sierra/$3" && exec wine bblaunch.exe', 'bb', PREFIX, DISPLAY, WORKDIR]
         elif exe in EXES:                                  # same environment as the launch script, cwd K:\
             if os.path.lexists(EXE_DRIVE):
                 sys.exit(f'REFUSED: {EXE_DRIVE} already exists')
             os.symlink(WORK, EXE_DRIVE)
-            cmd = ['setsid', 'bash', '-c', 'export WINEPREFIX=$HOME/.bbpro98_prefix WINEDEBUG=-all DISPLAY=:99 '
-                   'PULSE_SINK=bbnull; cd "$2" && exec wine "$1"', 'bb', exe, WORK]
+            cmd = ['setsid', 'bash', '-c', 'export WINEPREFIX="$3" WINEDEBUG=-all DISPLAY="$4" '
+                   'PULSE_SINK=bbnull; cd "$2" && exec wine "$1"', 'bb', exe, WORK, PREFIX, DISPLAY]
         else:
             sys.exit(f'REFUSED: exe {exe!r} is not one of {EXES}')
         subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

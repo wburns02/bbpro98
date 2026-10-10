@@ -1,7 +1,8 @@
 /* modmenu.c: replaces the dead WWW SITE button on the main menu with a Mods window. The window lists the game mods
    loaded from bbfix.ini and opens three tools that run in the host: Create a Player (a form that creates a player in an
    association's free agent pool), League News (a text browser over the league news pages) and Build a Season (builds a
-   playable association for any MLB season 1871..2019 from the Lahman database).
+   playable association for any MLB season 1871..2025, or a Negro Leagues season 1920..1948, from the Lahman
+   database).
 
    Hook: detour on EZShell.dll VA 0x6a006370, the WWW SITE button handler, void __fastcall handler(menu_screen): this in
    ECX, no stack arguments, plain ret. Its prolog 81 ec 54 02 00 00 (sub esp,0x254) is position independent. The original
@@ -490,7 +491,7 @@ static void build_menu(MenuState *st) {
     btn(h, "League News", 20, 52, 180, 28, IDC_NEWS);
     lbl(h, "Stories, standings, previews, awards, scouting", 210, 51, 190, 30);
     btn(h, "Build a Season", 20, 88, 180, 28, IDC_BUILD);
-    lbl(h, "Any MLB season from 1871 to 2019", 210, 93, 190, 20);
+    lbl(h, "MLB 1871 to 2025, Negro Leagues 1920 to 1948", 210, 88, 190, 30);
     lbl(h, "Loaded game mods:", 20, 130, 200, 18);
     st->list = text_out(h, 20, 150, 380, 100, 0, 0);
     mods_text(list, sizeof list);
@@ -1147,8 +1148,9 @@ static void open_news(HWND owner) {
 
 #define IDC_YEAR 41
 #define IDC_GO 42
+#define IDC_NEGRO 43
 
-typedef struct { Win w; HWND year; } BuildState;
+typedef struct { Win w; HWND year, negro; } BuildState;
 
 static void build_done(Win *w, MMResp *r, const char *err) {
     const char *s;
@@ -1164,20 +1166,25 @@ static void build_done(Win *w, MMResp *r, const char *err) {
 
 static void build_go(BuildState *st) {
     char buf[16], yr[8];
-    const char *kv[2];
-    int y;
+    const char *kv[4];
+    int y, negro;
     if (st->w.busy) return;
     GetWindowTextA(st->year, buf, sizeof buf);
     y = atoi(buf);
-    if (y < 1871 || y > 2019) {
-        win_error(&st->w, "Enter a season from 1871 to 2019.");
+    negro = SendMessageA(st->negro, BM_GETCHECK, 0, 0) == BST_CHECKED;
+    /* The bridge holds the database and has the final word on the range; this only catches typing slips. */
+    if (negro ? (y < 1920 || y > 1948) : (y < 1871 || y > 2099)) {
+        win_error(&st->w, negro ? "Enter a Negro Leagues season from 1920 to 1948."
+                                : "Enter a season from 1871 to 2025.");
         return;
     }
     snprintf(yr, sizeof yr, "%d", y);
     kv[0] = "year";
     kv[1] = yr;
+    kv[2] = "league";
+    kv[3] = negro ? "negro" : "mlb";
     st->w.done = build_done;
-    win_request(&st->w, "build", kv, 1, BUILD_TIMEOUT_MS);
+    win_request(&st->w, "build", kv, 2, BUILD_TIMEOUT_MS);
 }
 
 static LRESULT CALLBACK build_proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
@@ -1188,13 +1195,15 @@ static LRESULT CALLBACK build_proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
         SetWindowLongPtrA(h, GWLP_USERDATA, (LONG_PTR)st);
         st->w.hwnd = h;
         open_windows++;
-        lbl(h, "Season (1871 to 2019):", 10, 13, 150, 20);
+        lbl(h, "Season (1871 to 2025):", 10, 13, 150, 20);
         st->year = mk(h, "EDIT", "", WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL | ES_NUMBER, 165, 10, 60, 22, IDC_YEAR);
         SendMessageA(st->year, EM_LIMITTEXT, 4, 0);
         btn(h, "Build", 235, 9, 90, 26, IDC_GO);
+        st->negro = mk(h, "BUTTON", "Negro Leagues (1920 to 1948)", WS_TABSTOP | BS_AUTOCHECKBOX, 10, 40, 260, 20,
+                       IDC_NEGRO);
         lbl(h, "Builds the season's teams, players and schedule from the Lahman database. It appears in the "
-               "association list when it is done.", 10, 44, 400, 32);
-        st->w.msg = text_out(h, 10, 80, 400, 136, 0, WS_HSCROLL | ES_AUTOHSCROLL);
+               "association list when it is done.", 10, 64, 400, 32);
+        st->w.msg = text_out(h, 10, 98, 400, 118, 0, WS_HSCROLL | ES_AUTOHSCROLL);
         SendMessageA(st->w.msg, WM_SETFONT, (WPARAM)mono_font, 0);
         btn(h, "Close", 320, 224, 90, 26, IDC_CLOSE);
         st->w.status = lbl(h, "", 10, 229, 300, 20);

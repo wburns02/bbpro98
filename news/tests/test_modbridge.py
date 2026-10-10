@@ -371,13 +371,74 @@ def test_news_refuses_bad_paths(bridge, monkeypatch, path):
     assert head == {'status': 'error'} and body == 'Bad request.' and seen == []
 
 
-@pytest.mark.parametrize('year', ['1800', '2020', 'abcd', ''])
+@pytest.mark.parametrize('year', ['1800', '2026', 'abcd', ''])
 def test_build_refuses_a_year_out_of_range(bridge, monkeypatch, year):
     ctx, spool = bridge
     calls = fake_build(monkeypatch, None)
     head, body = ask(ctx, spool, 'op=build\nyear=' + year)
-    assert head == {'status': 'error'} and body == 'Pick a year from 1871 to 2019.'
+    assert head == {'status': 'error'} and body == 'Pick a year from 1871 to 2025 for MLB.'
     assert calls == []
+
+
+@pytest.mark.parametrize('year', ['1919', '1949'])
+def test_build_refuses_a_negro_leagues_year_out_of_range(bridge, monkeypatch, year):
+    ctx, spool = bridge
+    calls = fake_build(monkeypatch, None)
+    head, body = ask(ctx, spool, 'op=build\nyear=%s\nleague=negro' % year)
+    assert head == {'status': 'error'} and body == 'Pick a year from 1920 to 1948 for Negro Leagues.'
+    assert calls == []
+
+
+def test_build_refuses_an_unknown_league(bridge, monkeypatch):
+    ctx, spool = bridge
+    calls = fake_build(monkeypatch, None)
+    assert ask(ctx, spool, 'op=build\nyear=1942\nleague=fed') == ({'status': 'error'}, 'Bad request.')
+    assert calls == []
+
+
+def test_build_refuses_a_kind_the_database_lacks(bridge, monkeypatch):
+    ctx, spool = bridge
+    ctx.ranges = {'mlb': (1871, 2019)}
+    calls = fake_build(monkeypatch, None)
+    head, body = ask(ctx, spool, 'op=build\nyear=1942\nleague=negro')
+    assert head == {'status': 'error'} and body == 'This database has no Negro Leagues seasons.'
+    head, body = ask(ctx, spool, 'op=build\nyear=2020')
+    assert body == 'Pick a year from 1871 to 2019 for MLB.'
+    assert calls == []
+
+
+def test_build_negro_leagues_passes_the_leagues_and_finds_the_n_stem(bridge, site, monkeypatch):
+    ctx, spool = bridge
+    calls = []
+
+    def run(cmd, **kw):
+        calls.append(cmd)
+        (site[0] / 'Assn' / '16N1942.ASN').write_bytes(b'asn')
+        return subprocess.CompletedProcess(cmd, 0, stdout='ok\n', stderr='')
+
+    monkeypatch.setattr(subprocess, 'run', run)
+    head, body = ask(ctx, spool, 'op=build\nyear=1942\nleague=negro')
+    assert head['status'] == 'ok' and head['existed'] == '0' and head['stem'] == '16N1942'
+    assert calls[0][-2:] == ['--leagues', 'NNL,ECL,ANL,EWL,NSL,NN2,NAL']
+    # asking again finds the 16N1942 just built
+    head, _ = ask(ctx, spool, 'op=build\nyear=1942\nleague=negro')
+    assert head['existed'] == '1' and len(calls) == 1
+
+
+def test_year_ranges_reads_the_database(tmp_path):
+    import sqlite3
+    db = tmp_path / 'l.sqlite'
+    con = sqlite3.connect(str(db))
+    con.execute('CREATE TABLE teams (yearID INTEGER, lgID TEXT)')
+    con.executemany('INSERT INTO teams VALUES (?, ?)', [(1876, 'NL'), (2025, 'AL'), (1937, 'NAL'), (1931, 'NNL')])
+    con.commit()
+    con.close()
+    assert modbridge.year_ranges(str(db)) == {'mlb': (1876, 2025), 'negro': (1931, 1937)}
+    con = sqlite3.connect(str(db))
+    con.execute("DELETE FROM teams WHERE lgID IN ('NAL', 'NNL')")
+    con.commit()
+    con.close()
+    assert modbridge.year_ranges(str(db)) == {'mlb': (1876, 2025)}
 
 
 @pytest.mark.parametrize('name', ['16L1927.ASN', '16l1927.asn'])

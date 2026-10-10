@@ -11,7 +11,8 @@ Public repo (MIT) of tools and research for FPS Baseball Pro '98. Python codecs 
 ## Paths
 - Work copy of the install: /mnt/nvme/bbpro98/work_install. Never write the live install
   (~/.bbpro98_prefix/drive_c/Sierra/BBPRO_98) directly; work/patches/install_live.sh does that.
-- Lahman database: /mnt/nvme/tlrb2/lahman/lahmansbaseballdb.sqlite, open read-only
+- Lahman databases: /mnt/nvme/bbpro98/lahman2025/lahman2025.sqlite (2025 release, what build.py uses) and the older
+  /mnt/nvme/tlrb2/lahman/lahmansbaseballdb.sqlite (load_csv's schema reference). Open both read-only
   (sqlite3.connect('file:...?mode=ro', uri=True)).
 - Large data goes under /mnt/nvme, never /home/will or /tmp.
 
@@ -63,3 +64,16 @@ Public repo (MIT) of tools and research for FPS Baseball Pro '98. Python codecs 
 - Windows a mod creates on the game's UI thread get skinned by ODASL.dll's WH_CBT hook, and its subclassed EDIT
   answers WM_NCHITTEST with HTMENU, so text boxes never take focus. modmenu installs its own thread CBT hook first
   and skips the chain for its classes. Top-level popups also need ShowWindow; without WS_VISIBLE they never map.
+- Harness lanes: BBLANE=1 (default, ~/.bbpro98_prefix, work_install, :99) and BBLANE=2 (/mnt/nvme/bbpro98/prefix2,
+  work_install2 linked as C:\Sierra\BBPRO_98_wk2, :97) run two plans at once; each lane only kills its own game
+  processes. The association list is sorted by label and its rows sit at y = 479 + 11n, so a plan's row depends on
+  which associations are installed in that lane. A wrong row opens another league; seasonloop.season stops with
+  wrong_association when another ASN's mtime moves and this one's game count does not.
+- Never rsync --delete into a lane's work copy or a game directory: it removes associations the plans rely on.
+  Never pkill by a pattern your own shell's command line contains; pgrep -af "pat[x]" and kill exact PIDs.
+- An association's season is not the year in its name: a career league keeps its name. The ASN 'a' record (key not
+  league.TEMPLATE_KEY) holds the season date as a u32 at payload offset 14, a PYR birth serial
+  (gamedata.association()['season_year']). It moves to the next April at each rollover.
+- Lahman database: build.py reads /mnt/nvme/bbpro98/lahman2025/lahman2025.sqlite (work/lahman/load_csv.py from the
+  SABR 2025 CSV release, Negro Leagues 1920 to 1948 included). The CSV edition broke some unique keys; load_csv keeps
+  those indexes without the constraint. After a new release, rerun work/lahman/teamnames.py.

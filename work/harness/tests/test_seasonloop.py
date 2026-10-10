@@ -76,3 +76,44 @@ def test_each_notice_reference_is_recognised_and_a_plain_screen_is_not():
     for plain in ('f_assn.png', 'f_update.png'):
         if os.path.exists(os.path.join(seasonloop.REFS, plain)):
             assert seasonloop.notice(os.path.join(seasonloop.REFS, plain)) is None
+
+
+class _H:
+    def __init__(self, work):
+        self.WORK = str(work)
+
+    def x(self, *a):
+        pass
+
+
+def _quiet_sim(monkeypatch, tmp_path, on_sim):
+    """season() with the screen, the clock and the ASN stubbed: no game is ever played, and on_sim runs per round."""
+    assn = tmp_path / 'Assn'
+    assn.mkdir()
+    (assn / 'TEST.ASN').write_bytes(b'a')
+    (assn / 'OTHER.ASN').write_bytes(b'b')
+    monkeypatch.setattr(seasonloop, 'played', lambda asn: (0, 100))
+    monkeypatch.setattr(seasonloop, 'sim', lambda h: on_sim(assn))
+    monkeypatch.setattr(seasonloop, 'QUIET', 0)
+    for name in ('settle', 'look'):
+        monkeypatch.setattr(seasonloop, name, lambda *a, **k: None)
+    monkeypatch.setattr(seasonloop, '_diff', lambda *a: 100.0)
+    monkeypatch.setattr(seasonloop, 'on_assn_data', lambda png: False)
+    monkeypatch.setattr(seasonloop.time, 'sleep', lambda s: None)
+    return _H(tmp_path)
+
+
+def test_season_stops_when_the_sim_wrote_another_association(tmp_path, monkeypatch, capsys):
+    def touch_other(assn):
+        st = os.stat(assn / 'OTHER.ASN')
+        os.utime(assn / 'OTHER.ASN', ns=(st.st_atime_ns, st.st_mtime_ns + 10 ** 9))
+    h = _quiet_sim(monkeypatch, tmp_path, touch_other)
+    assert seasonloop.season(h, str(tmp_path), 'TEST', 3600) is False
+    assert '"wrong_association": true' in capsys.readouterr().out
+
+
+def test_season_without_another_write_is_not_called_wrong(tmp_path, monkeypatch, capsys):
+    h = _quiet_sim(monkeypatch, tmp_path, lambda assn: None)
+    assert seasonloop.season(h, str(tmp_path), 'TEST', 3600) is False      # stuck: MAX_STOPS, never a game played
+    out = capsys.readouterr().out
+    assert 'wrong_association' not in out and '"stop": 1' in out

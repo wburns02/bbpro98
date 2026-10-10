@@ -12,6 +12,7 @@ import datetime
 import os
 import pathlib
 import re
+import sqlite3
 import stat
 import subprocess
 import sys
@@ -41,6 +42,10 @@ TAIL = 10                   # lines of build output in a reply
 WIDTH = 76                  # columns of news text
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BUILD_PY = os.path.join(REPO, 'work', 'lahman', 'build.py')
+# Seasons a build can make, per kind: build.py's --leagues for it, the letter in the association's stem (16L1927,
+# 12N1942) and the years. main() reads the years from the database; these are the SABR 2025 release's.
+KINDS = {'mlb': ('NA,NL,AA,UA,PL,AL,FL', 'L', 'MLB'), 'negro': ('NNL,ECL,ANL,EWL,NSL,NN2,NAL', 'N', 'Negro Leagues')}
+RANGES = {'mlb': (1871, 2025), 'negro': (1920, 1948)}
 BUSY_TEXT = 'A season is already being built. Try again when it finishes.'
 WAIT_TEXT = 'Computer-run teams sign free agents on their own, so if you wait he may land somewhere else.'
 KEY_RE = re.compile(r'[a-z0-9_]{1,24}')
@@ -316,20 +321,20 @@ def html_to_text(html, path):
     return title, '\n'.join(_tidy(page.out)), page.links
 
 
-def _season(game, year):
-    """(STEM, ASN path) of the season built for year (a file <n>L<year>.ASN in Assn/), or (None, None)."""
+def _season(game, year, letter='L'):
+    """(STEM, ASN path) of the season built for year (a file <n><letter><year>.ASN in Assn/), or (None, None)."""
     assn = os.path.join(game, 'Assn')
-    pat = re.compile(r'[0-9]{1,2}L%d\.ASN' % year, re.I)
+    pat = re.compile(r'[0-9]{1,2}%s%d\.ASN' % (letter, year), re.I)
     for f in sorted(os.listdir(assn)):
         if pat.fullmatch(f) and not os.path.islink(os.path.join(assn, f)):
             return os.path.splitext(f)[0].upper(), os.path.join(assn, f)
     return None, None
 
 
-def _leftovers(game, year):
-    """True when Assn/ or Stats/ holds anything named for a <n>L<year> season (any extension), or either directory
-    is a symlink. build.py writes those names with the host's permissions, so it never runs over one."""
-    pat = re.compile(r'[0-9]{1,2}L%d\.[A-Za-z]+' % year, re.I)
+def _leftovers(game, year, letter='L'):
+    """True when Assn/ or Stats/ holds anything named for a <n><letter><year> season (any extension), or either
+    directory is a symlink. build.py writes those names with the host's permissions, so it never runs over one."""
+    pat = re.compile(r'[0-9]{1,2}%s%d\.[A-Za-z]+' % (letter, year), re.I)
     for sub in ('Assn', 'Stats'):
         path = os.path.join(game, sub)
         if os.path.islink(path):
@@ -443,14 +448,17 @@ def _news(ctx, req):
     return header, text
 
 
-def _run_build(ctx, year):
+def _run_build(ctx, year, kind='mlb'):
+    leagues, letter, _ = KINDS[kind]
     cmd = [sys.executable, BUILD_PY, '--year', str(year), '--install', ctx.game, '--db', ctx.db,
            '--templates', ctx.templates]
+    if kind != 'mlb':
+        cmd += ['--leagues', leagues]
     try:
         run = subprocess.run(cmd, capture_output=True, text=True, timeout=BUILD_TIMEOUT, cwd=REPO)
     except subprocess.TimeoutExpired:
         return [('status', 'error')], _paragraphs('The build failed.', 'Timed out.')
-    stem, asn = _season(ctx.game, year)
+    stem, asn = _season(ctx.game, year, letter)
     if run.returncode == 0 and stem is not None:
         label = createweb._label(stem, asn)
         header = [('status', 'ok'), ('existed', '0'), ('stem', stem), ('label', _plain(label))]
@@ -460,21 +468,28 @@ def _run_build(ctx, year):
 
 
 def _build(ctx, req):
-    year = req.get('year', '')
-    if not (re.fullmatch(r'[0-9]{4}', year) and 1871 <= int(year) <= 2019):
-        return [('status', 'error')], 'Pick a year from 1871 to 2019.'
+    year, kind = req.get('year', ''), req.get('league', 'mlb')
+    if kind not in KINDS:
+        return [('status', 'error')], 'Bad request.'
+    _, letter, title = KINDS[kind]
+    span = getattr(ctx, 'ranges', RANGES).get(kind)
+    if span is None:
+        return [('status', 'error')], 'This database has no %s seasons.' % title
+    first, last = span
+    if not (re.fullmatch(r'[0-9]{4}', year) and first <= int(year) <= last):
+        return [('status', 'error')], 'Pick a year from %d to %d for %s.' % (first, last, title)
     year = int(year)
-    stem, asn = _season(ctx.game, year)
-    if stem is None and _leftovers(ctx.game, year):
+    stem, asn = _season(ctx.game, year, letter)
+    if stem is None and _leftovers(ctx.game, year, letter):
         return [('status', 'error')], ('Files for a %d season are already in the game without its association. '
                                        'Remove them, then build again.' % year)
     if stem is None:
         if not _BUILD.acquire(blocking=False):
             return [('status', 'busy')], BUSY_TEXT
         try:
-            stem, asn = _season(ctx.game, year)     # a build may have finished since the look above
+            stem, asn = _season(ctx.game, year, letter)     # a build may have finished since the look above
             if stem is None:
-                return _run_build(ctx, year)
+                return _run_build(ctx, year, kind)
         finally:
             _BUILD.release()
     label = createweb._label(stem, asn)
@@ -681,6 +696,28 @@ def serve(ctx, poll):
         time.sleep(poll)
 
 
+def year_ranges(db):
+    """{kind: (first, last)} of the seasons db holds; RANGES for a kind it has none of (a pre-2024 release has no
+    Negro Leagues) or when it cannot be read."""
+    out = dict(RANGES)
+    try:
+        con = sqlite3.connect(pathlib.Path(db).resolve().as_uri() + '?mode=ro', uri=True)
+        try:
+            for kind, (leagues, _, _) in KINDS.items():
+                ids = leagues.split(',')
+                first, last = con.execute('SELECT MIN(yearID), MAX(yearID) FROM teams WHERE lgID IN (%s)'
+                                          % ','.join('?' * len(ids)), ids).fetchone()
+                if first is None:
+                    out.pop(kind, None)
+                else:
+                    out[kind] = (int(first), int(last))
+        finally:
+            con.close()
+    except sqlite3.Error:
+        traceback.print_exc()
+    return out
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description='Answer the requests the in-game Mods menu writes to its spool.')
     ap.add_argument('--game', required=True, help='the game directory (holds Assn/ and Stats/)')
@@ -700,7 +737,7 @@ def main(argv=None):
     if not os.path.isdir(args.data):
         ap.error('not a directory: %s' % args.data)
     ctx = types.SimpleNamespace(game=args.game, data=args.data, backup=args.backup, donor=donor, db=args.db,
-                                templates=args.templates, proc='/proc')
+                                templates=args.templates, proc='/proc', ranges=year_ranges(args.db))
     try:
         serve(ctx, args.poll)
     except KeyboardInterrupt:

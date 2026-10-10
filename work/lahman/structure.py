@@ -32,7 +32,7 @@ DIV_RANK = {'E': 0, 'C': 1, 'W': 2}
 def plan(teams, year):
     year = int(year)
     rows = [dict(t) for t in teams]
-    if 2013 <= year <= 2019:
+    if year >= 2013:
         for t in rows:
             if t['teamID'] == 'HOU' and t['lgID'] == 'AL':
                 t['lgID'], t['divID'] = 'NL', 'W'

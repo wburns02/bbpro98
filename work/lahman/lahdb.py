@@ -15,16 +15,31 @@ APP_COLS = ('G_all', 'GS', 'G_batting', 'G_p', 'G_c', 'G_1b', 'G_2b', 'G_3b', 'G
             'G_dh')
 
 
+# The major leagues. The 2024 and later releases add the Negro Leagues (NEGRO_LEAGUES) and the independent clubs
+# (EAS, IND, INT, NAC, WES); a build takes the majors unless it asks for other leagues.
+MLB_LEAGUES = ('NA', 'NL', 'AA', 'UA', 'PL', 'AL', 'FL')
+NEGRO_LEAGUES = ('NNL', 'ECL', 'ANL', 'EWL', 'NSL', 'NN2', 'NAL')
+
+
 def connect(path):
     """Open the database read-only."""
     return sqlite3.connect(Path(path).resolve().as_uri() + '?mode=ro', uri=True)
 
 
-def teams(con, year):
+def year_range(con, leagues=MLB_LEAGUES):
+    """(first, last) season the database holds for these leagues, or None."""
+    marks = ','.join('?' * len(leagues))
+    first, last = con.execute('SELECT MIN(yearID), MAX(yearID) FROM teams WHERE lgID IN (%s)' % marks,
+                              tuple(leagues)).fetchone()
+    return None if first is None else (int(first), int(last))
+
+
+def teams(con, year, leagues=MLB_LEAGUES):
+    marks = ','.join('?' * len(leagues))
     rows = con.execute('''
         SELECT teamID, lgID, divID, franchID, name, park, G, W, L, teamRank
-        FROM teams WHERE yearID = ?
-        ORDER BY COALESCE(lgID, ''), COALESCE(divID, ''), teamID''', (year,)).fetchall()
+        FROM teams WHERE yearID = ? AND lgID IN (%s)
+        ORDER BY COALESCE(lgID, ''), COALESCE(divID, ''), teamID''' % marks, (year,) + tuple(leagues)).fetchall()
     return [
         {'teamID': tid, 'lgID': lg, 'divID': div or '', 'franchID': franch, 'name': name, 'park': park or '',
          'G': int(g or 0), 'W': int(w or 0), 'L': int(l or 0), 'rank': int(rank or 0)}

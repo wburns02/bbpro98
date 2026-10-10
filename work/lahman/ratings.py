@@ -179,13 +179,13 @@ class Norm:
 class Season:
     """Every Lahman number one season needs, plus its era norms."""
 
-    def __init__(self, con, year):
+    def __init__(self, con, year, leagues=lahdb.MLB_LEAGUES):
         self.year = year
         self.bat = lahdb.batting(con, year=year)
         self.pit = lahdb.pitching(con, year=year)
         self.fld = lahdb.fielding(con, year=year)
         self.app = lahdb.appearances(con, year)
-        self.teams = lahdb.teams(con, year)
+        self.teams = lahdb.teams(con, year, leagues)
         glen = max([t['G'] for t in self.teams] + [1])
         self.min_ab = 150 * glen / 162
         self.min_ip = 30 * glen / 162

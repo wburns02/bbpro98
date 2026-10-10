@@ -28,7 +28,7 @@ from stats import BAT as STATS_BAT, PIT as STATS_PIT     # noqa: E402
 from lahman import lahdb, structure, ratings as RT       # noqa: E402
 from lahman.asnfile import AsnFile, put_str, cstr          # noqa: E402
 
-DB = '/mnt/nvme/tlrb2/lahman/lahmansbaseballdb.sqlite'
+DB = '/mnt/nvme/bbpro98/lahman2025/lahman2025.sqlite'     # work/lahman/load_csv.py, SABR 2025 release
 TEMPLATES = '/mnt/nvme/bbpro98/lahman/templates'
 
 # The game's weather cities (t record byte 4 = index + 1), in the game's order.
@@ -73,7 +73,9 @@ FRANCH_STOCK = {
 }
 LEAGUE_NAMES = {'NL': 'National League', 'AL': 'American League', 'AA': 'American Association',
                 'UA': 'Union Association', 'PL': "Players' League", 'FL': 'Federal League',
-                'NA': 'National Association'}
+                'NA': 'National Association', 'NNL': 'Negro National League', 'ECL': 'Eastern Colored League',
+                'ANL': 'American Negro League', 'EWL': 'East-West League', 'NSL': 'Negro Southern League',
+                'NN2': 'Negro National League', 'NAL': 'Negro American League'}
 DIV_NAMES = {'E': 'East', 'C': 'Central', 'W': 'West'}
 POS9 = ('C', '1B', '2B', '3B', 'SS', 'LF', 'CF', 'RF')
 SCARCE = ('C', 'SS', '2B', 'CF', '3B', 'RF', 'LF', '1B')
@@ -437,9 +439,9 @@ def shift_year(born_serial, years):
         return RT.serial(d.replace(year=d.year + years, day=28))
 
 
-def build(year, install, db=DB, name=None, log=print):
+def build(year, install, db=DB, name=None, log=print, leagues=lahdb.MLB_LEAGUES):
     con = lahdb.connect(db)
-    teams = lahdb.teams(con, year)
+    teams = lahdb.teams(con, year, leagues)
     if not teams:
         raise SystemExit('no Lahman teams for %d' % year)
     plan = structure.plan(teams, year)
@@ -453,7 +455,7 @@ def build(year, install, db=DB, name=None, log=print):
     log('%d: template %s, cost %d, dropped %s' % (year, key, plan['cost'], plan['dropped']))
 
     # ---- players
-    season = RT.Season(con, year)
+    season = RT.Season(con, year, leagues)
     model = RT.Model.fit(os.path.join(install, 'Assn', 'MLBPA96E.PYR'), con)
     owner = primary_owner(season.app)
     rosters = {}
@@ -496,8 +498,10 @@ def build(year, install, db=DB, name=None, log=print):
     opening = RT.from_serial(struct.unpack_from('<I', a_p, 0x0e)[0])
     struct.pack_into('<I', a, 0x0a, RT.serial(datetime.date(year, 1, 1)))
     struct.pack_into('<I', a, 0x0e, RT.serial(opening.replace(year=year)))
-    put_str(a, 0x12, 33, '%d Major Leagues' % year)          # the load list clips past ~19 characters
-    put_str(a, 0x33, 33, 'World Series' if year >= 1903 else 'Pennant')
+    mlb = set(leagues) <= set(lahdb.MLB_LEAGUES)
+    # the load list clips past ~19 characters
+    put_str(a, 0x12, 33, '%d %s' % (year, 'Major Leagues' if mlb else 'Negro Leagues'))
+    put_str(a, 0x33, 33, ('World Series' if year >= 1903 else 'Pennant') if mlb else 'Negro World Series')
     asn.rewrite('a', a_off, bytes(a))
 
     # ---- leagues and divisions
@@ -650,7 +654,7 @@ def build(year, install, db=DB, name=None, log=print):
     dat_out = ctree.do_apply(dat, stat_edits(dat, lines))
 
     # ---- write
-    name = name or '%dL%d' % (len(slots), year)
+    name = name or '%d%s%d' % (len(slots), 'L' if set(leagues) <= set(lahdb.MLB_LEAGUES) else 'N', year)
     out = {'ASN': os.path.join(install, 'Assn', name + '.ASN'), 'PYR': os.path.join(install, 'Assn', name + '.PYR'),
            'PYF': os.path.join(install, 'Assn', name + '.PYF'), 'DAT': os.path.join(install, 'Stats', name + '.DAT')}
     with open(out['ASN'], 'wb') as fh:
@@ -673,14 +677,22 @@ def main(argv=None):
     ap.add_argument('--db', default=DB)
     ap.add_argument('--name', help='file name (max 8 chars), default <teams>L<year>')
     ap.add_argument('--templates', help='directory of minted structure templates (default %s)' % TEMPLATES)
+    ap.add_argument('--leagues', default=','.join(lahdb.MLB_LEAGUES),
+                    help='comma-separated Lahman lgIDs to build (default the majors; e.g. NN2,NAL for 1937-48)')
     a = ap.parse_args(argv)
-    if not 1871 <= a.year <= 2019:
-        ap.error('year must be 1871..2019 (the Lahman data range)')
+    leagues = tuple(x for x in a.leagues.upper().split(',') if x)
+    known = lahdb.MLB_LEAGUES + lahdb.NEGRO_LEAGUES
+    if not leagues or any(x not in known for x in leagues):
+        ap.error('--leagues: pick from %s' % ','.join(known))
+    span = lahdb.year_range(lahdb.connect(a.db), leagues)
+    if span is None or not span[0] <= a.year <= span[1]:
+        ap.error('year must be in %s, the range %s holds for %s' % ('%d..%d' % span if span else 'nothing', a.db,
+                                                                    ','.join(leagues)))
     if a.name and (len(a.name) > 8 or not a.name.isalnum()):
         ap.error('--name: up to 8 letters/digits')
     if a.templates:
         TEMPLATES = a.templates
-    build(a.year, a.install, a.db, a.name)
+    build(a.year, a.install, a.db, a.name, leagues=leagues)
     return 0
 
 
