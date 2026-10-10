@@ -26,6 +26,10 @@ bblaunch.exe starts Baseball.exe suspended and injects bbfix.dll. Official v1.1 
 
 ## Open threads
 - Stats sanity check: use in-game Association > History / Statistics / Standings to see champions + leaders per year; check whether production drops after 1997 stars retire (league mean age rose 28.7 -> 31.7 over 8 seasons; rookies avg CH/PH ~44.6/44.6).
+  Aging addressed 2026-10-09 by mods\aging.dll (src-latest/mods/aging.c): from the 2008 MLBPA97 state, three modded
+  seasons (2268/2268 games each, 0 crashes) took mean roster age 30.92 -> 30.13 -> 29.38 -> 28.97 (stock control
+  rollover: 30.81 -> 31.38), players 25 and under 168 -> 380, 33 and over 503 -> 318; per-team minimums held at 41
+  rostered and 17 pitchers. Retirement runs about 1% at 29-30, 18% at 33, 32% at 35, 54% at 39.
 - Mods (user's folder): 2001/2002 season ARCs restore via BBArch.exe (work). BBEdit98 not installed (needs Wine + VB6/Jet). bbnames/bbdraft are 16-bit DOS (need DOSBox).
 - Ideas the user wants: player creator (via free-agent pool), contract/salary system (game has none), rating model from Lahman stats (Lahman files were downloaded on the Mac; correlation results: contact~AVG, power~HR, speed~SB, endurance~GS).
 - Not yet tested on real Windows.
