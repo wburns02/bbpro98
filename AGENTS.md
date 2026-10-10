@@ -77,3 +77,16 @@ Public repo (MIT) of tools and research for FPS Baseball Pro '98. Python codecs 
 - Lahman database: build.py reads /mnt/nvme/bbpro98/lahman2025/lahman2025.sqlite (work/lahman/load_csv.py from the
   SABR 2025 CSV release, Negro Leagues 1920 to 1948 included). The CSV edition broke some unique keys; load_csv keeps
   those indexes without the constraint. After a new release, rerun work/lahman/teamnames.py.
+- ASN rosters (r.dat, 294 bytes): a 126-u16 id window at payload 42. Index 0..24 is the active roster, 25..54 the
+  reserves as (id, level) pairs, then two batting orders and two defensive alignments (eight ids each, 0xFFFF
+  between) and the pitching staff. Bench hitters appear only in the active slots. league._roster_of flattens the
+  window and the roster codec's write path re-sorts it, which wipes the lineups: change a roster by replacing ids in
+  place (news/aigm.apply_trade). The PYR has no team field; a player's team is the window that holds his id.
+- Ownership is the t record's deciphered byte 0x0c (1 Human, 0 Computer). Computer teams never trade with each other
+  (tr.dat has no team-to-team records); they only release and claim. news/aigm.py makes their preseason trades.
+- The in-game news reader (modmenu) shows a page title only in the window caption, which a Wine desktop with no
+  window manager never draws: bridge pages carry their own heading (modbridge._heading).
+- hosting/deploy.sh copies news/*.py plus an explicit list of data files (salary_table.json). A new runtime data
+  file under news/ must be added to that list, or the hosted feature silently does nothing.
+- Player development focus: news/modbridge.py writes <game>/Mods/focus.txt (pid birth kind assn) and aging.dll
+  re-reads it when it changes; at most 5 per association.
