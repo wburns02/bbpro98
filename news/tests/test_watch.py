@@ -1,6 +1,7 @@
 """watch.Watcher over a fake game directory: gamedata's readers are replaced by dicts, so no game files are needed."""
 import json
 import os
+import struct
 import sys
 
 import pytest
@@ -271,3 +272,174 @@ def test_scouting_writes_nothing_once_the_budget_is_spent(world, monkeypatch):
                         lambda f, b, c: {'headline': 'h', 'body': 'b', 'source': 'glm'})
     w.scan()
     assert not (data / '30L1998' / 'scout').exists() and '30L1998' in w.scouting_open
+
+
+def league_player(name, pos, born):
+    """A player as gamedata.players() gives him: the ratings the scouting pages read, all 50."""
+    return {'name': name, 'pos': pos, 'born': born, 'bats': 'R', 'throws': 'R', 'contact': 50, 'power': 50,
+            'speed': 50, 'stamina': 50, 'control': 50, 'strikeout': 50, 'fielding': 50}
+
+
+LEAGUE_PLAYERS = {100: league_player('Al Winner', 'RF', 1970), 101: league_player('Joe Old', 'P', 1960),
+                  200: league_player('Bo Loser', 'P', 1975), 300: league_player('Pat Smith', 'SS', 1971),
+                  400: league_player('Ann Bat', '1B', 1966)}
+
+
+@pytest.fixture
+def league(world, monkeypatch):
+    """world, with the rosters, free agents, players and career totals a test changes between scans. The PYR and DAT
+    exist, so moves are read; the PYF is written from the free agents by league_scan. Season lines are empty: moves
+    reads them only for season milestones, which test_moves covers."""
+    gd, data, st = world
+    st.update(rosters={1: [100, 101], 2: [200, 400]}, fa={300}, players=dict(LEAGUE_PLAYERS),
+              career={'bat': {400: {'hr': 499, 'h': 2100, 'sb': 10}}, 'pit': {101: {'w': 199, 'sv': 0, 'so': 0}}})
+    (gd / 'Assn' / '30L1998.PYR').write_bytes(b'pyr')
+    (gd / 'Stats' / '30L1998.DAT').write_bytes(b'dat')
+    monkeypatch.setattr(gamedata, 'association', lambda path: {
+        'name': '1998 Test',
+        'teams': {tid: dict(t, roster=list(st['rosters'].get(tid, []))) for tid, t in TEAMS.items()},
+        'games': [dict(g) for g in st['games']]})
+    monkeypatch.setattr(gamedata, 'players', lambda path: dict(st['players']))
+    monkeypatch.setattr(gamedata, 'season_lines', lambda path, scope=1: st['career'] if scope == 2
+                        else {'bat': {}, 'pit': {}})
+    return gd, data, st
+
+
+def write_pyf(gd, ids):
+    ids = sorted(ids)
+    (gd / 'Assn' / '30L1998.PYF').write_bytes(b'PPD:' + struct.pack('<Ih', 0, len(ids))
+                                              + struct.pack('<%dH' % len(ids), *ids))
+
+
+def league_scan(w, gd, st, settled=True):
+    write_pyf(gd, st['fa'])
+    if settled:                         # moves() waits until the PYR, PYF and DAT have sat SETTLE seconds
+        for p in list((gd / 'Assn').glob('30L1998.PY?')) + list((gd / 'Stats').glob('30L1998.DAT')):
+            os.utime(p, (1, 1))
+    w.seen.clear()
+    w.scan()
+
+
+def test_a_change_to_the_pyf_alone_makes_the_association_due_for_a_scan(league):
+    gd, data, st = league
+    w = watch.Watcher(str(gd), str(data), None, None, log=lambda s: None)
+    league_scan(w, gd, st)
+    asn = str(gd / 'Assn' / '30L1998.ASN')
+    before = w.signature('30L1998', asn)
+    write_pyf(gd, [])
+    assert w.signature('30L1998', asn) != before
+
+
+def moves_log(data):
+    return json.loads((data / '30L1998' / 'moves' / 'log.json').read_text())
+
+
+def move_notes(data):
+    d = data / '30L1998' / 'moves' / 'notes'
+    return {int(p.stem): json.loads(p.read_text()) for p in d.iterdir()} if d.is_dir() else {}
+
+
+def test_first_scan_only_takes_the_snapshot(league):
+    gd, data, st = league
+    league_scan(watch.Watcher(str(gd), str(data), None, None, log=lambda s: None), gd, st)
+    mdir = data / '30L1998' / 'moves'
+    assert json.loads((mdir / 'last.json').read_text())['year'] == 1998
+    assert not (mdir / 'log.json').exists() and not (mdir / 'notes').exists()
+
+
+def test_moves_between_two_scans_are_logged_and_the_notable_ones_get_notes(league):
+    gd, data, st = league
+    w = watch.Watcher(str(gd), str(data), None, None, log=lambda s: None)
+    league_scan(w, gd, st)
+    st.update(fa=set(), rosters={1: [100], 2: [200, 300, 400]})          # Pat Smith signed, Joe Old gone
+    st['players'][500] = league_player('Kim New', 'SS', 1977)
+    st['rosters'][2].append(500)                                          # a created player
+    st['career']['bat'][400]['hr'] = 500                                  # Ann Bat's 500th
+    league_scan(w, gd, st)
+    log = moves_log(data)
+    assert log['count'] == 4
+    assert [(e['kind'], e['name'], e['date'], e['year']) for e in log['events']] == [
+        ('milestone', 'Ann Bat', 'April 2', 1998), ('new', 'Kim New', 'April 2', 1998),
+        ('retired', 'Joe Old', 'April 2', 1998), ('signed', 'Pat Smith', 'April 2', 1998)]
+    assert [e.get('note') for e in log['events']] == [0, None, 2, None]
+    notes = move_notes(data)
+    assert sorted(notes) == [0, 2]
+    assert notes[0]['kind'] == 'move' and notes[0]['source'] == 'template' and notes[0]['reason'] == 'off'
+    assert notes[0]['headline'] == 'Ann Bat reached 500 career home runs'
+    assert notes[0]['event']['note'] == 0 and notes[0]['facts']['association'] == '1998 Test'
+    assert notes[2]['headline'] == 'Joe Old retires'
+
+    st.update(fa={100}, rosters={1: [], 2: [200, 300, 500]})             # Al Winner released, Ann Bat retires
+    league_scan(w, gd, st)
+    log = moves_log(data)
+    assert log['count'] == 6                                             # numbers go on from the full log
+    assert [(e['kind'], e.get('note')) for e in log['events'][4:]] == [('released', None), ('retired', 5)]
+    assert sorted(move_notes(data)) == [0, 2, 5]
+
+
+def test_the_log_keeps_its_last_events_and_the_count_of_all_of_them(league, monkeypatch):
+    gd, data, st = league
+    monkeypatch.setattr(watch, 'MOVE_KEEP', 2)
+    w = watch.Watcher(str(gd), str(data), None, None, log=lambda s: None)
+    league_scan(w, gd, st)
+    st['players'][500] = league_player('Kim New', 'SS', 1977)
+    st.update(fa=set(), rosters={1: [100], 2: [200, 400, 300, 500]})      # 101 retires; 300 signed; 500 created
+    league_scan(w, gd, st)
+    log = moves_log(data)
+    assert [e['kind'] for e in log['events']] == ['retired', 'signed'] and log['count'] == 3
+    assert [e.get('note') for e in log['events']] == [1, None]          # the retirement's note keeps its number
+    assert sorted(move_notes(data)) == [1]
+
+
+def test_model_notes_are_capped_per_scan_and_the_rest_are_backfill(league, monkeypatch):
+    gd, data, st = league
+    monkeypatch.setattr(watch, 'MOVE_CALLS', 2)
+    w = watch.Watcher(str(gd), str(data), object(), lambda *a: None, log=lambda s: None)
+    for name in ('columns', 'recaps', 'season_pieces'):
+        monkeypatch.setattr(w, name, lambda *a: None)
+    asked = []
+
+    def write(facts, budget, complete):
+        asked.append(facts['kind'])
+        return {'headline': 'A move', 'body': 'The league has a move to note.', 'source': 'glm'}
+
+    monkeypatch.setattr(watch.moves, 'write', write)
+    league_scan(w, gd, st)
+    st.update(rosters={1: [100], 2: [200]}, fa={300})
+    st['career']['bat'][400]['hr'] = 500
+    st['career']['pit'][200] = {'w': 160, 'sv': 0, 'so': 0}
+    league_scan(w, gd, st)                                              # three notable moves in one scan
+    assert asked == ['milestone', 'retired']
+    notes = move_notes(data)
+    assert [(n, notes[n]['source'], notes[n].get('reason')) for n in sorted(notes)] == [
+        (0, 'glm', None), (1, 'glm', None), (2, 'template', 'backfill')]
+
+
+def test_without_a_model_every_note_is_a_template_off(league):
+    gd, data, st = league
+    w = watch.Watcher(str(gd), str(data), None, None, log=lambda s: None)
+    league_scan(w, gd, st)
+    st['career']['bat'][400]['hr'] = 500
+    league_scan(w, gd, st)
+    assert [(n['source'], n['reason']) for n in move_notes(data).values()] == [('template', 'off')]
+
+
+@pytest.mark.parametrize('gone', ['30L1998.PYF', '30L1998.PYR'])
+def test_no_pyr_or_no_pyf_writes_no_moves(league, gone):
+    gd, data, st = league
+    league_scan(watch.Watcher(str(gd), str(data), None, None, log=lambda s: None), gd, st)
+    (gd / 'Assn' / gone).unlink()
+    st['career']['bat'][400]['hr'] = 500
+    watch.Watcher(str(gd), str(data), None, None, log=lambda s: None).scan()
+    assert not (data / '30L1998' / 'moves' / 'log.json').exists()
+    assert json.loads((data / '30L1998' / 'moves' / 'last.json').read_text())['where'] == {
+        '100': 1, '101': 1, '200': 2, '300': 0, '400': 2}
+
+
+def test_a_fresh_pyf_waits_for_a_later_scan(league):
+    gd, data, st = league
+    w = watch.Watcher(str(gd), str(data), None, None, log=lambda s: None)
+    league_scan(w, gd, st, settled=False)            # the PYF was just written: the set may be torn
+    assert not (data / '30L1998' / 'moves' / 'last.json').exists()
+    league_scan(w, gd, st)
+    assert (data / '30L1998' / 'moves' / 'last.json').exists()

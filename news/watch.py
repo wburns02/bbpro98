@@ -12,6 +12,8 @@ Data layout (server.py reads it):
     <data>/<ASSN>/feed/<MM>-<DD>.json                  one column per played date
     <data>/<ASSN>/preview.json, awards.json            season preview (once), season awards (once all games are played)
     <data>/<ASSN>/scout/<tid>.json                     one scouting report per team (once)
+    <data>/<ASSN>/moves/log.json, notes/<n>.json       roster moves and milestones, newest last; a note per notable one
+    <data>/<ASSN>/moves/last.json                      the snapshot the next scan diffs against
 
 The game files are only read. A box score is matched to its schedule game by teams and final score (gamedata); one
 that matches nothing yet (the association not saved since the game) is retried on later scans. Stories go to the
@@ -30,6 +32,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import feed      # noqa: E402
 import gamedata  # noqa: E402
 import hive      # noqa: E402
+import moves     # noqa: E402
 import recap     # noqa: E402
 import scout     # noqa: E402
 import season    # noqa: E402
@@ -38,6 +41,8 @@ import teamnames  # noqa: E402
 SETTLE = 5            # seconds a game file must sit unchanged before it is read
 LLM_DAYS = 3          # columns for the newest dates go to the model; older dates get the template
 SCOUT_CALLS = 3       # scouting reports asked of the model per scan, so a backfill never holds up box scores
+MOVE_CALLS = 3        # transaction notes asked of the model per scan; the rest of a scan's notes get the template
+MOVE_KEEP = 3000      # events kept in moves/log.json
 
 
 def now_iso():
@@ -92,12 +97,14 @@ class Watcher:
         self.waiting = set()    # box score keys already logged as unmatched
         self.captured = {}      # stem -> box score keys already in pending/ or recaps/
         self.scout_left = SCOUT_CALLS   # model scouting reports left in this scan
+        self.move_left = MOVE_CALLS     # model transaction notes left in this scan
         self.scouting_open = set()      # stems with teams still waiting for a scouting report
         self.names = teamnames.load(os.path.join(data_dir, 'teamnames.json'))   # full Lahman names; {} without it
 
     def signature(self, stem, asn_path):
-        stats = os.path.join(self.game, 'Stats')
+        stats, assn = os.path.join(self.game, 'Stats'), os.path.dirname(asn_path)
         files = [asn_path] + [os.path.join(stats, f) for f in os.listdir(stats) if f.upper().startswith(stem + '.')]
+        files += [p for p in (gamedata.find(assn, stem + '.PYR'), gamedata.find(assn, stem + '.PYF')) if p]   # moves
         sig = []
         for p in sorted(files):
             try:
@@ -109,6 +116,7 @@ class Watcher:
 
     def scan(self):
         self.scout_left = SCOUT_CALLS
+        self.move_left = MOVE_CALLS
         for stem, asn_path in sorted(associations(self.game).items()):
             try:
                 sig = self.signature(stem, asn_path)
@@ -139,6 +147,7 @@ class Watcher:
             'assn': stem, 'name': assoc['name'], 'updated': now_iso(), 'last_day': list(last) if last else None,
             'standings': feed.standings(assoc), 'leaders': feed.leaders(season, names, teams_played)})
         self.season_pieces(out, assoc, names, dat, pyr)
+        self.moves(out, assoc, pyr, dat)
 
     def season_pieces(self, out, assoc, names, dat, pyr=None):
         """The season preview (once per association), once every game is played the season awards, and the scouting
@@ -196,6 +205,54 @@ class Watcher:
                             roster=scout.roster(assoc, tid, players, year), created=now_iso()))
             self.log('%s scout %s (%s)' % (stem, team['abbrev'], piece['source']))
         self.scouting_open.discard(stem)
+
+    def moves(self, out, assoc, pyr, dat):
+        """Roster moves and milestones since the last scan (moves.py). The current snapshot is diffed against last.json;
+        the events go to the end of log.json, which keeps MOVE_KEEP and counts every event ever logged, so a note's
+        number never changes; each notable event gets a note; then the snapshot becomes last.json. Nothing is written
+        without the PYR, the PYF beside it (the free agents) or the stats (DAT), or while one is younger than SETTLE."""
+        if pyr is None or dat is None:
+            return
+        pyf = gamedata.find(os.path.dirname(pyr), os.path.splitext(os.path.basename(pyr))[0] + '.PYF')
+        if pyf is None:
+            return
+        if time.time() - max(os.stat(p).st_mtime for p in (pyr, pyf, dat)) < SETTLE:
+            return      # a torn set (PYR saved, PYF not yet) would log moves that never happened; the next scan retries
+        stem = os.path.basename(out)
+        mdir = os.path.join(out, 'moves')
+        cur = moves.snapshot(assoc, gamedata.players(pyr), gamedata.free_agents(pyf),
+                             gamedata.season_lines(dat, scope=2), gamedata.season_lines(dat, scope=1))
+        date = moves.date_text(feed.last_day(assoc))
+        prev = read_json(os.path.join(mdir, 'last.json'))
+        same = prev is not None and prev.get('year') == cur['year']
+        events = moves.diff(prev, cur, assoc['teams'], same_season=same)
+        log_path = os.path.join(mdir, 'log.json')
+        log = read_json(log_path) or {}
+        old = log.get('events')
+        kept = [e for e in old if isinstance(e, dict)] if isinstance(old, list) else []
+        count = log.get('count') if type(log.get('count')) is int else len(kept)
+        for n, ev in enumerate(events, count):
+            ev.update(date=date, year=cur['year'])
+            if moves.notable(ev, cur):
+                ev['note'] = n
+        if events:
+            write_json(log_path, {'events': (kept + events)[-MOVE_KEEP:], 'count': count + len(events)})
+            self.log('%s moves: %d' % (stem, len(events)))
+        for ev in events:
+            if 'note' not in ev:
+                continue
+            facts = moves.facts(ev, assoc['name'], date, cur['career'].get(str(ev['pid'])))
+            if self.complete is None:
+                piece = dict(moves.template(facts), source='template', reason='off')
+            elif self.move_left > 0:
+                self.move_left -= 1
+                piece = moves.write(facts, self.budget, self.complete)
+            else:
+                piece = dict(moves.template(facts), source='template', reason='backfill')
+            write_json(os.path.join(mdir, 'notes', '%d.json' % ev['note']),
+                       dict(piece, kind='move', event=ev, facts=facts, created=now_iso()))
+            self.log('%s move: %s %s (%s)' % (stem, ev['kind'], ev['name'], piece['source']))
+        write_json(os.path.join(mdir, 'last.json'), dict(cur, date=date))
 
     def capture(self, stem):
         """Copy every new box score of this association into <data>/<ASSN>/pending/ as parsed JSON. The game keeps
