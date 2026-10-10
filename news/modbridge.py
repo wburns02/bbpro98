@@ -768,7 +768,26 @@ def _ledger_for(ctx, stem, year):
         return None
     if not isinstance(led.get('trades'), list) or not isinstance(led.get('proposals'), list):
         return None
+    if not all(_entry_ok(t) for t in led['trades']) or not all(_entry_ok(p, True) for p in led['proposals']):
+        return None
     return led
+
+
+_GM_INTS = ('a', 'b', 'a_gives', 'b_gives')
+_GM_NAMES = ('a_name', 'b_name', 'a_gives_name', 'b_gives_name')
+_GM_STATUS = ('open', 'accepted', 'rejected', 'stale')
+
+
+def _entry_ok(e, proposal=False):
+    """True when a ledger trade (or proposal) has the fields the pages read with the right types: a hand-edited or
+    corrupt gm.json then counts as missing instead of failing every page."""
+    if not isinstance(e, dict):
+        return False
+    if not all(type(e.get(k)) is int for k in _GM_INTS) or not all(isinstance(e.get(k), str) for k in _GM_NAMES):
+        return False
+    if not all(e.get(k) is None or type(e.get(k)) is int for k in ('a_drops', 'b_drops')):
+        return False
+    return not proposal or e.get('status') in _GM_STATUS
 
 
 def _write_ledger(ctx, stem, led):

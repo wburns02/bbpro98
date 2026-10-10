@@ -317,3 +317,16 @@ def test_an_association_page_links_to_its_offseason_trades_after_player_developm
     head, _ = page(ctx, spool, '/news/TEST77/')
     assert links_of(head) == [('Player development', '/news/development/TEST77/'),
                               ('Offseason trades', '/news/gm/TEST77/')]
+
+
+def test_ledger_entry_shapes_are_checked():
+    import modbridge
+    good = {'a': 1, 'b': 2, 'a_gives': 110, 'b_gives': 210, 'a_drops': None, 'b_drops': 216,
+            'a_name': 'A', 'b_name': 'B', 'a_gives_name': 'x', 'b_gives_name': 'y'}
+    assert modbridge._entry_ok(good)
+    assert modbridge._entry_ok(dict(good, status='open'), True)
+    assert not modbridge._entry_ok(dict(good, status='maybe'), True)
+    assert not modbridge._entry_ok(dict(good, a_gives='110'))
+    assert not modbridge._entry_ok(dict(good, b_drops=1.5))
+    assert not modbridge._entry_ok({k: v for k, v in good.items() if k != 'a_name'})
+    assert not modbridge._entry_ok([good])
