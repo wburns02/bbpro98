@@ -1,7 +1,9 @@
 """The in-game Mods menu's bridge: a long-running host process that answers the requests a mod DLL writes into
 the game's Mods/spool directory. The game runs in a sandbox with no network, so the requests are answered here by the
-repo's own Python: league news pages (server.route), Create a Player (create.validate and createweb.commit), and a
-season built from the Lahman database (work/lahman/build.py, run as a subprocess). Standard library only.
+repo's own Python: league news pages (server.route), the player development pages under /news/development/ and the
+Mods/focus.txt they set (focus.py), which aging.dll reads at each offseason, Create a Player (create.validate and
+createweb.commit), and a season built from the Lahman database (work/lahman/build.py, run as a subprocess). Standard
+library only.
 
 The DLL writes q<ID>.tmp and renames it to q<ID>.req. The bridge claims the request by renaming it to q<ID>.work,
 writes r<ID>.tmp and renames that to r<ID>.rsp, then removes the .work file. parse_request reads a request, render
@@ -26,6 +28,7 @@ from html.parser import HTMLParser
 
 import create
 import createweb
+import focus
 import gamedata
 import server
 import watch
@@ -429,10 +432,20 @@ def _create(ctx, req):
     return _signed(spec, label, pid)
 
 
+def _news_reply(status, path, title, text, links):
+    """A news reply: the header (status, http, path, title, count and link.N) and the page's text."""
+    header = [('status', 'ok' if status == 200 else 'error'), ('http', str(status)), ('path', _plain(path)),
+              ('title', _plain(title)), ('count', str(len(links)))]
+    header += [('link.%d' % i, '%s\t%s' % (_plain(label), _plain(target))) for i, (label, target) in enumerate(links)]
+    return header, text
+
+
 def _news(ctx, req):
     path = req.get('path', '')
     if len(path) > MAX_VALUE or not NEWS_RE.fullmatch(path):
         return [('status', 'error')], 'Bad request.'
+    if _in_development(path):
+        return _development(ctx, path)
     data = pathlib.Path(ctx.data)     # server.route joins paths with /
     status, _, body, extra = server.route(data, path)
     for _ in range(3):
@@ -442,10 +455,10 @@ def _news(ctx, req):
         path = target
         status, _, body, extra = server.route(data, path)
     title, text, links = html_to_text(body.decode('utf-8', 'replace'), path)
-    header = [('status', 'ok' if status == 200 else 'error'), ('http', str(status)), ('path', _plain(path)),
-              ('title', _plain(title)), ('count', str(len(links)))]
-    header += [('link.%d' % i, '%s\t%s' % (_plain(label), _plain(target))) for i, (label, target) in enumerate(links)]
-    return header, text
+    stem = _assn_page_stem(ctx, path) if status == 200 else None
+    if stem is not None:
+        links.append(('Player development', '/news/development/%s/' % stem))
+    return _news_reply(status, path, title, text, links)
 
 
 def _run_build(ctx, year, kind='mlb'):
@@ -497,6 +510,212 @@ def _build(ctx, req):
     return header, '%s is already in the game (%s).' % (label, stem)
 
 
+# The player development pages under /news/development/ and the focus file they set (focus.py). The pages read the
+# association's ASN and PYR; the file is <game>/Mods/focus.txt, held by descriptor like the spool.
+FOCUS_FILE = 'focus.txt'
+FOCUS_TMP = 'focus.tmp'
+FULL_TEXT = '%d players in this association already have a focus. Clear one first.' % focus.MAX_PER_ASSN
+ASSN_PAGE_RE = re.compile(r'/news/([A-Za-z0-9]{1,8})/')
+_FOCUS_LOCK = threading.Lock()      # held for each read-modify-write of focus.txt
+
+
+def _in_development(path):
+    """True for /news/development and anything beneath it: those paths are the bridge's own, never server.route's."""
+    page = urllib.parse.urlsplit(path).path
+    return page == '/news/development' or page.startswith('/news/development/')
+
+
+def _assn_page_stem(ctx, path):
+    """The STEM of an association's news page (/news/<STEM>/, the path with no query), or None: the game's associations
+    only, matched without case."""
+    m = ASSN_PAGE_RE.fullmatch(urllib.parse.urlsplit(path).path)
+    if m is None:
+        return None
+    stem = m.group(1).upper()
+    return stem if stem in watch.associations(ctx.game) else None
+
+
+def _league(ctx, stem):
+    """What the development pages read of one association (STEM upper-cased): its label and season year, its teams (from
+    the ASN), and its players and birth serials (from the PYR). None when the game has no association with that STEM."""
+    stem = stem.upper()
+    asn = watch.associations(ctx.game).get(stem)
+    if asn is None:
+        return None
+    info = gamedata.association(asn)
+    pyr = gamedata.find(os.path.join(ctx.game, 'Assn'), stem + '.PYR')
+    return types.SimpleNamespace(stem=stem, label=createweb._label(stem, asn), year=info['season_year'],
+                                 teams=info['teams'], players=gamedata.players(pyr) if pyr else {},
+                                 births=focus.births(pyr) if pyr else {})
+
+
+def _mods_dir(game, make=False):
+    """A descriptor for <game>/Mods, opened from the game's descriptor without following a symlink. With make the
+    directory is made when missing (mkdir relative to the game's descriptor)."""
+    gfd = open_dir(game)
+    try:
+        if make:
+            try:
+                os.mkdir('Mods', dir_fd=gfd)
+            except FileExistsError:
+                pass
+        return os.open('Mods', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=gfd)
+    finally:
+        os.close(gfd)
+
+
+def _read_focus(game):
+    """The entries in <game>/Mods/focus.txt: none when Mods or the file is missing, or the file is not a regular file.
+    At most MAX_FILE bytes are read."""
+    try:
+        mods = _mods_dir(game)
+    except FileNotFoundError:
+        return []
+    try:
+        return focus.parse(_read(mods, FOCUS_FILE, focus.MAX_FILE).decode('latin-1'))
+    finally:
+        os.close(mods)
+
+
+def _write_focus(game, entries):
+    """Writes <game>/Mods/focus.txt, making Mods when missing. The text goes to focus.tmp in Mods (an old one removed,
+    then O_EXCL|O_NOFOLLOW) and is renamed over focus.txt through the Mods descriptor, which replaces a symlink rather
+    than writing through it."""
+    mods = _mods_dir(game, make=True)
+    try:
+        _remove(mods, FOCUS_TMP)
+        fd = os.open(FOCUS_TMP, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644, dir_fd=mods)
+        with os.fdopen(fd, 'wb') as fh:
+            fh.write(focus.format(entries).encode('latin-1'))
+        os.replace(FOCUS_TMP, FOCUS_FILE, src_dir_fd=mods, dst_dir_fd=mods)
+    finally:
+        os.close(mods)
+
+
+def _focus_of(entries, pid, birth):
+    """The kind a player is focused on, or None."""
+    entry = focus.find(entries, pid, birth)
+    return None if entry is None else entry['kind']
+
+
+def _who(p, year):
+    """'<name> (<pos>, <age>)', the age left out when the season year or the birth year is unknown."""
+    if year is None or p['born'] is None:
+        return '%s (%s)' % (p['name'], p['pos'])
+    return '%s (%s, %d)' % (p['name'], p['pos'], year - p['born'])
+
+
+def _player_page(lg, entries, pid, status, note=''):
+    """(status, path, title, text, links) for a player's page as entries leave him, after an optional note."""
+    p = lg.players[pid]
+    kind = _focus_of(entries, pid, lg.births[pid])
+    tid = next((t for t in sorted(lg.teams) if pid in lg.teams[t]['roster']), None)
+    base = '/news/development/%s/p/%d' % (lg.stem, pid)
+    lines = [note, ''] if note else []
+    lines += ['Current focus: %s' % kind if kind else 'No focus.']
+    lines += ['Team: %s' % lg.teams[tid]['name'] if tid is not None else 'Free agent']
+    links = [('Focus on %s' % k, '%s/set/%s' % (base, k)) for k in focus.kinds_for(p['pos'])]
+    if kind is not None:
+        links.append(('Clear focus', base + '/clear'))
+    if tid is not None:
+        links.append(('Back to %s' % lg.teams[tid]['name'], '/news/development/%s/team/%d' % (lg.stem, tid)))
+    links.append(('All teams', '/news/development/%s/' % lg.stem))
+    return status, base, _who(p, lg.year), '\n'.join(lines), links
+
+
+def _dev_association(ctx, stem):
+    lg = _league(ctx, stem)
+    if lg is None:
+        return None
+    entries = _read_focus(ctx.game)
+    count = sum(1 for e in entries if e['assn'] == lg.stem)
+    named = [e for e in entries if e['assn'] == lg.stem and e['pid'] in lg.players]
+    text = ['Players with a focus (%d of %d):' % (count, focus.MAX_PER_ASSN)]
+    text += ['%s: %s' % (lg.players[e['pid']]['name'], e['kind']) for e in named]
+    text += ['', 'Pick a team to choose a focus.']
+    links = [('%s: %s' % (lg.players[e['pid']]['name'], e['kind']), '/news/development/%s/p/%d' % (lg.stem, e['pid']))
+             for e in named]
+    links += [(team['name'] or 'Team %d' % tid, '/news/development/%s/team/%d' % (lg.stem, tid))
+              for tid, team in sorted(lg.teams.items())]
+    return 200, '/news/development/%s/' % lg.stem, 'Player development: %s' % lg.label, '\n'.join(text), links
+
+
+def _dev_team(ctx, stem, tid):
+    lg = _league(ctx, stem)
+    tid = int(tid)
+    if lg is None or tid not in lg.teams:
+        return None
+    team = lg.teams[tid]
+    entries = _read_focus(ctx.game)
+    named = sorted((pid for pid in team['roster'] if pid in lg.players), key=lambda pid: (lg.players[pid]['name'], pid))
+    hitters = [pid for pid in named if lg.players[pid]['pos'] != 'P']
+    pitchers = [pid for pid in named if lg.players[pid]['pos'] == 'P']
+    links = []
+    for pid in hitters + pitchers:
+        kind = _focus_of(entries, pid, lg.births[pid])
+        label = _who(lg.players[pid], lg.year) + ('' if kind is None else ': %s' % kind)
+        links.append((label, '/news/development/%s/p/%d' % (lg.stem, pid)))
+    links.append(('All teams', '/news/development/%s/' % lg.stem))
+    return (200, '/news/development/%s/team/%d' % (lg.stem, tid), '%s: development' % team['name'],
+            'Pick a player to set his focus.', links)
+
+
+def _dev_player(ctx, stem, pid):
+    lg = _league(ctx, stem)
+    pid = int(pid)
+    if lg is None or pid not in lg.players:
+        return None
+    return _player_page(lg, _read_focus(ctx.game), pid, 200)
+
+
+def _dev_set(ctx, stem, pid, kind):
+    lg = _league(ctx, stem)
+    pid = int(pid)
+    if lg is None or pid not in lg.players or kind not in focus.kinds_for(lg.players[pid]['pos']):
+        return None
+    with _FOCUS_LOCK:
+        entries = _read_focus(ctx.game)
+        try:
+            entries = focus.set_focus(entries, lg.stem, pid, lg.births[pid], kind)
+        except focus.FocusFull:
+            return _player_page(lg, entries, pid, 409, FULL_TEXT)
+        _write_focus(ctx.game, entries)
+    return _player_page(lg, entries, pid, 200, 'Focus set: %s.' % kind)
+
+
+def _dev_clear(ctx, stem, pid):
+    lg = _league(ctx, stem)
+    pid = int(pid)
+    if lg is None or pid not in lg.players:
+        return None
+    with _FOCUS_LOCK:
+        entries = focus.clear_focus(_read_focus(ctx.game), pid, lg.births[pid])
+        _write_focus(ctx.game, entries)
+    return _player_page(lg, entries, pid, 200, 'Focus cleared.')
+
+
+DEV_PAGES = (
+    (re.compile(r'/news/development/([A-Za-z0-9]{1,8})/'), _dev_association),
+    (re.compile(r'/news/development/([A-Za-z0-9]{1,8})/team/([0-9]{1,2})'), _dev_team),
+    (re.compile(r'/news/development/([A-Za-z0-9]{1,8})/p/([0-9]{1,5})'), _dev_player),
+    (re.compile(r'/news/development/([A-Za-z0-9]{1,8})/p/([0-9]{1,5})/set/([a-z]+)'), _dev_set),
+    (re.compile(r'/news/development/([A-Za-z0-9]{1,8})/p/([0-9]{1,5})/clear'), _dev_clear),
+)
+
+
+def _development(ctx, path):
+    """The reply for a path under /news/development: the page its route names, else Not found."""
+    built = None
+    for pattern, page in DEV_PAGES:
+        m = pattern.fullmatch(path)
+        if m is not None:
+            built = page(ctx, *m.groups())
+            break
+    if built is None:
+        return _news_reply(404, path, 'Not found', 'Not found.', [])
+    return _news_reply(*built)
+
+
 OPS = {'ping': _ping, 'assns': _assns, 'archetypes': _archetypes, 'create': _create, 'news': _news, 'build': _build}
 
 
@@ -544,9 +763,10 @@ def make_spool(game):
         os.close(fd)
 
 
-def _read(dfd, name):
-    """Up to MAX_REQUEST + 1 bytes of a request; b'' (a bad request) unless it is a regular file. The game side can
-    write the spool, so never follow a symlink and never block on a FIFO or device."""
+def _read(dfd, name, limit=MAX_REQUEST + 1):
+    """Up to limit bytes of a file (a request by default, so an oversize one shows); b'' (a bad request, or no entries
+    for focus.txt) unless it is a regular file. The game side can write the spool, so never follow a symlink and never
+    block on a FIFO or device."""
     try:
         fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=dfd)
     except OSError:             # ELOOP: a symlink
@@ -554,7 +774,7 @@ def _read(dfd, name):
     try:
         if not stat.S_ISREG(os.fstat(fd).st_mode):
             return b''
-        chunks, left = [], MAX_REQUEST + 1
+        chunks, left = [], limit
         while left > 0:
             chunk = os.read(fd, left)
             if not chunk:
