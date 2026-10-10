@@ -1044,3 +1044,155 @@ def test_replay_box_is_on_the_association_page_only_with_the_file(seeded):
 def test_replay_status_rounds_games_per_team(seeded):
     write(seeded.root / '30L1998' / 'replay.json', replay_file(played=80.6, scheduled=160.9))
     assert 'After 81 of 161 games per team' in seeded.get('/news/30L1998/replay')[2].decode()
+
+
+def contract(name, team, salary, years, left, cls, pos, age):
+    """One entry of a contracts file, as the watcher writes it."""
+    return {'team': team, 'salary': salary, 'years': years, 'left': left, 'signed': 1998, 'class': cls, 'name': name,
+            'pos': pos, 'age': age}
+
+
+def contract_event(kind, pid, name, team, salary=0, years=0, year=1998):
+    return {'kind': kind, 'pid': pid, 'name': name, 'team': team, 'salary': salary, 'years': years, 'year': year}
+
+
+def payroll_file(**over):
+    """A contracts file: the Yankees with one contract, the Red Sox with two."""
+    base = {
+        'kind': 'contracts', 'season_year': 1998, 'created': '2026-10-09T14:03:11',
+        'contracts': {'100': contract('Al Winner', 1, 2000000, 2, 2, 'fa', 'RF', 28),
+                      '200': contract('Bo Loser', 2, 500000, 1, 1, 'pre', 'P', 23),
+                      '400': contract('Ann Bat', 2, 2000000, 3, 3, 'fa', '1B', 32)},
+        'events': [],
+        'payroll': [
+            {'tid': 2, 'name': 'Boston Red Sox', 'players': 2, 'total': 2500000, 'average': 1250000, 'top': 2000000},
+            {'tid': 1, 'name': 'New York Yankees', 'players': 1, 'total': 2000000, 'average': 2000000, 'top': 2000000},
+        ],
+    }
+    base.update(over)
+    return base
+
+
+@pytest.fixture
+def payroll(seeded):
+    """seeded, plus the contracts file of 30L1998."""
+    write(seeded.root / '30L1998' / 'contracts.json', payroll_file())
+    return seeded
+
+
+def test_payroll_page_has_each_teams_payroll_with_money_and_a_link(payroll):
+    status, headers, body = payroll.get('/news/30L1998/payroll')
+    html = body.decode()
+    assert status == 200 and headers['content-type'] == HTML
+    assert '<title>1998 Major Leagues · Payroll</title>' in html
+    assert '<h1>Payroll</h1><p class="through">Season 1998</p>' in html
+    assert ('<tr><td class="t"><a href="/news/30L1998/payroll/2">Boston Red Sox</a></td><td>2</td><td>$2.5M</td>'
+            '<td>$1.2M</td><td>$2M</td></tr>') in html
+    assert '<a href="/news/30L1998/payroll/1">New York Yankees</a>' in html
+    assert html.index('Boston Red Sox') < html.index('New York Yankees')
+    assert_secure(headers, body)
+
+
+def test_recent_signings_are_newest_first_in_plain_words(payroll):
+    write(payroll.root / '30L1998' / 'contracts.json', payroll_file(events=[
+        contract_event('signed', 300, 'Pat Smith', 1, 1000000, 1),
+        contract_event('re-signed', 200, 'Bo Loser', 2, 500000, 1, 1999),
+        contract_event('retired', 101, 'Joe Old', None),
+        contract_event('moved', 100, 'Al Winner', 2),
+        contract_event('released', 400, 'Ann Bat', None),
+    ]))
+    html = payroll.get('/news/30L1998/payroll')[2].decode()
+    assert '<h2>Recent signings</h2>' in html
+    lines = ['<li>Ann Bat released</li>', '<li>Al Winner joins Boston Red Sox, contract travels</li>',
+             '<li>Bo Loser re-signs with Boston Red Sox: 1 yr, $500K</li>',
+             '<li>Pat Smith signs with New York Yankees: 1 yr, $1M</li>']
+    positions = [html.index(line) for line in lines]
+    assert positions == sorted(positions)
+    assert 'Joe Old' not in html
+
+
+def test_only_the_last_twenty_signings_show(payroll):
+    write(payroll.root / '30L1998' / 'contracts.json', payroll_file(
+        events=[contract_event('signed', 300 + i, 'Player %d' % i, 1, 1000000, 1) for i in range(25)]))
+    html = payroll.get('/news/30L1998/payroll')[2].decode()
+    assert 'Player 24 signs with' in html and 'Player 5 signs with' in html
+    assert 'Player 4 signs with' not in html
+
+
+def test_payroll_values_are_escaped_everywhere(payroll):
+    write(payroll.root / '30L1998' / 'contracts.json', payroll_file(
+        payroll=[{'tid': 1, 'name': '<b>Bad</b> & Co', 'players': 1, 'total': 2000000, 'average': 2000000,
+                  'top': 2000000}],
+        events=[contract_event('released', 100, '<img src=x onerror=alert(1)>', 1)]))
+    for path in ('/news/30L1998/payroll', '/news/30L1998/payroll/1', '/news/30L1998/'):
+        html = payroll.get(path)[2].decode()
+        assert '<b>Bad' not in html and '<img' not in html and '<script' not in html
+    html = payroll.get('/news/30L1998/payroll')[2].decode()
+    assert '&lt;b&gt;Bad&lt;/b&gt; &amp; Co' in html and '&lt;img src=x onerror=alert(1)&gt;' in html
+
+
+def test_team_page_lists_its_contracts_by_salary_then_name_with_status(payroll):
+    write(payroll.root / '30L1998' / 'contracts.json', payroll_file(contracts={
+        '100': contract('Al Winner', 1, 2000000, 2, 2, 'fa', 'RF', 28),
+        '200': contract('Bo Loser', 2, 500000, 1, 1, 'pre', 'P', 23),
+        '400': contract('Ann Bat', 2, 2000000, 3, 3, 'fa', '1B', 32),
+        '300': contract('Cal Arb', 2, 1000000, 1, 1, 'arb', 'SS', 27),
+        '301': contract('Ben Arb', 2, 1000000, 1, 1, 'arb', 'SS', 26),
+    }))
+    status, headers, body = payroll.get('/news/30L1998/payroll/2')
+    html = body.decode()
+    assert status == 200 and headers['content-type'] == HTML
+    assert '<title>Boston Red Sox · Payroll</title>' in html
+    assert '<caption>Contracts</caption>' in html
+    rows = re.findall(r'<tr>(.*?)</tr>', html)[1:]
+    assert [re.findall(r'<td[^>]*>([^<]*)</td>', r)[0] for r in rows] == ['Ann Bat', 'Ben Arb', 'Cal Arb', 'Bo Loser']
+    assert ('<td class="t">Ann Bat</td><td class="t">1B</td><td>32</td><td>$2M</td><td>3</td>'
+            '<td class="t">Free agent contract</td>') in html
+    assert '<td class="t">Ben Arb</td><td class="t">SS</td><td>26</td><td>$1M</td><td>1</td><td class="t">Arbitration</td>' in html
+    assert '<td class="t">Bo Loser</td><td class="t">P</td><td>23</td><td>$500K</td><td>1</td><td class="t">Pre-arb</td>' in html
+    assert 'Al Winner' not in html
+    assert_secure(headers, body)
+
+
+@pytest.mark.parametrize('path', [
+    '/news/30L1998/payroll/9', '/news/30L1998/payroll/100', '/news/30L1998/payroll/x', '/news/30L1998/payroll/02',
+    '/news/30L1998/payroll/', '/news/30L1998/payroll/2/x',
+])
+def test_bad_or_unknown_payroll_team_is_404(payroll, path):
+    assert payroll.get(path)[0] == 404
+
+
+@pytest.mark.parametrize('path', ['/news/30L1998/payroll', '/news/30L1998/payroll/2'])
+def test_missing_or_corrupt_or_other_kind_contracts_file_is_404(seeded, path):
+    assert seeded.get(path)[0] == 404
+    write(seeded.root / '30L1998' / 'contracts.json', '{"kind": "contracts", "payroll": ')
+    assert seeded.get(path)[0] == 404
+    write(seeded.root / '30L1998' / 'contracts.json', payroll_file(kind='replay'))
+    assert seeded.get(path)[0] == 404
+    write(seeded.root / '30L1998' / 'contracts.json', '[1, 2]')
+    assert seeded.get(path)[0] == 404
+
+
+def test_payroll_pages_with_no_contracts_or_events_say_so(payroll):
+    write(payroll.root / '30L1998' / 'contracts.json', payroll_file(payroll=[], events=[], season_year=None))
+    html = payroll.get('/news/30L1998/payroll')[2].decode()
+    assert '<p class="empty">No payrolls yet.</p>' in html and '<p class="empty">No signings yet.</p>' in html
+    assert '<p class="through">' not in html
+
+
+def test_payroll_box_has_the_top_three_teams_and_only_on_the_first_page(payroll):
+    teams = [{'tid': t, 'name': 'Team %d' % t, 'players': 1, 'total': 1000000 * (9 - t), 'average': 1, 'top': 1}
+             for t in range(1, 5)]
+    write(payroll.root / '30L1998' / 'contracts.json', payroll_file(payroll=teams))
+    write(payroll.root / '30L1998' / 'replay.json', replay_file())
+    html = payroll.get('/news/30L1998/')[2].decode()
+    assert ('<section class="payroll"><h2>Payroll</h2><ul><li><a href="/news/30L1998/payroll/1">Team 1</a>: $8M</li>'
+            '<li><a href="/news/30L1998/payroll/2">Team 2</a>: $7M</li><li><a href="/news/30L1998/payroll/3">Team 3'
+            '</a>: $6M</li></ul><p><a href="/news/30L1998/payroll">All payrolls</a></p></section>') in html
+    assert 'Team 4' not in html
+    assert html.index('class="replay"') < html.index('class="payroll"')      # after the replay box
+    assert 'class="payroll"' not in payroll.get('/news/30L1998/?page=2')[2].decode()
+
+
+def test_payroll_box_is_absent_without_the_contracts_file(seeded):
+    assert 'class="payroll"' not in seeded.get('/news/30L1998/')[2].decode()

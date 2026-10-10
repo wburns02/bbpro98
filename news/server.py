@@ -15,6 +15,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 
+import contracts
+
 PER_PAGE = 30
 TOP = 3
 SEP = ' · '
@@ -29,6 +31,8 @@ MONTHS = ('January', 'February', 'March', 'April', 'May', 'June', 'July', 'Augus
 LEADERS = (('avg', 'AVG'), ('hr', 'HR'), ('rbi', 'RBI'), ('w', 'W'), ('era', 'ERA'), ('so', 'SO'), ('sv', 'SV'))
 MOVES_BOX = 5       # newest transaction lines in the association's side column
 NOTE_RE = re.compile(r'[0-9]{1,6}')
+SIGNINGS = 20       # newest contract events on the payroll page
+CONTRACT_STATUS = {'pre': 'Pre-arb', 'arb': 'Arbitration', 'fa': 'Free agent contract'}
 STAT_WORDS = {'hr': 'home run', 'h': 'hit', 'sb': 'stolen base', 'w': 'win', 'sv': 'save', 'so_p': 'strikeout'}
 REPLAY_STATS = ('HR', 'AVG', 'RBI', 'SB', 'W', 'SV', 'SO', 'ERA')
 BYLINES = {'glm': 'Staff writer', 'template': 'Wire report'}
@@ -89,6 +93,10 @@ th.t, td.t { text-align: left; }
 .decision { font: 1rem var(--sans); margin: 4px 0; }
 .label { display: inline-block; width: 1.4em; font-weight: 700; color: var(--accent); }
 """
+
+
+class _Markup(str):
+    """HTML a page builder wrote itself: a table cell takes it as it is, where any other value is escaped."""
 
 
 def esc(value):
@@ -229,7 +237,8 @@ def _table(caption, heads, rows, text=1):
     left = range(text) if isinstance(text, int) else text
 
     def cells(values, tag):
-        return ''.join('<%s%s>%s</%s>' % (tag, ' class="t"' if i in left else '', esc(v), tag)
+        return ''.join('<%s%s>%s</%s>' % (tag, ' class="t"' if i in left else '',
+                                          v if isinstance(v, _Markup) else esc(v), tag)
                        for i, v in enumerate(values))
     body = ''.join('<tr>%s</tr>' % cells(r, 'td') for r in rows)
     return ('<div class="table-wrap"><table><caption>%s</caption><thead><tr>%s</tr></thead><tbody>%s</tbody>'
@@ -363,8 +372,9 @@ def _association(data_dir, assn, qs):
     moves = _moves_box(data_dir, assn) if page == 1 else ''
     season = _season_links(data_dir, assn) if page == 1 else ''
     replay = _replay_link(data_dir, assn) if page == 1 else ''
+    payroll = _payroll_box(data_dir, assn) if page == 1 else ''
     scouting = _scouting_links(data_dir, assn) if page == 1 else ''
-    side = (moves + season + replay + scouting + _standings_html(meta.get('standings'))
+    side = (moves + season + replay + payroll + scouting + _standings_html(meta.get('standings'))
             + _leaders_html(meta.get('leaders')))
     body = (_masthead(name, _through(meta)) + _nav()
             + '<div class="grid"><section class="lead">%s</section><aside class="side">%s</aside></div>'
@@ -424,7 +434,7 @@ def _story(data_dir, assn, key):
 
 
 def _season_file(data_dir, assn, which):
-    """The season file of that kind (which: 'preview', 'awards' or 'replay') as an object, else None."""
+    """The season file of that kind (which: 'preview', 'awards', 'replay' or 'contracts') as an object, else None."""
     rec = _read_obj(data_dir / assn / (which + '.json'))
     return rec if rec is not None and rec.get('kind') == which else None
 
@@ -776,6 +786,90 @@ def _moves_box(data_dir, assn):
             '<p><a href="/news/%s/moves">All transactions</a></p></section>' % (lines, esc(assn)))
 
 
+def _money(value):
+    """A dollar amount as contracts.money writes it; '' for anything that is not a number."""
+    return contracts.money(value) if _is_num(value) else ''
+
+
+def _team_row(rec, tid):
+    """The payroll row of team tid in a contracts file, or None."""
+    return next((r for r in _dicts(rec.get('payroll')) if _int(r, 'tid', None) == tid), None)
+
+
+def _team_html(assn, row):
+    """A payroll row's team name, linked to the team's payroll page when its tid is one the pages take; escaped."""
+    tid, name = _int(row, 'tid', None), _text(row.get('name'))
+    if tid is None or not TID_RE.fullmatch(str(tid)):
+        return esc(name)
+    return '<a href="/news/%s/payroll/%d">%s</a>' % (esc(assn), tid, esc(name))
+
+
+def _signing_line(ev, teams):
+    """One line for a contract event: a signing, a re-signing, a move or a release. '' for a kind the page does not name.
+    teams maps a tid to its name."""
+    kind, name = _text(ev.get('kind')), _text(ev.get('name'))
+    team = teams.get(_int(ev, 'team', None), '')
+    if kind in ('signed', 're-signed'):
+        verb = 'signs with' if kind == 'signed' else 're-signs with'
+        return '%s %s %s: %s yr, %s' % (name, verb, team, _text(ev.get('years')), _money(ev.get('salary')))
+    if kind == 'moved':
+        return '%s joins %s, contract travels' % (name, team)
+    if kind == 'released':
+        return '%s released' % name
+    return ''
+
+
+def _payroll_box(data_dir, assn):
+    """The Payroll box for the side column: the top TOP teams by payroll with their totals, and a link to the pages.
+    '' without a contracts file."""
+    rec = _season_file(data_dir, assn, 'contracts')
+    rows = _dicts(rec.get('payroll'))[:TOP] if rec is not None else []
+    if not rows:
+        return ''
+    items = ''.join('<li>%s: %s</li>' % (_team_html(assn, r), esc(_money(r.get('total')))) for r in rows)
+    return ('<section class="payroll"><h2>Payroll</h2><ul>%s</ul><p><a href="/news/%s/payroll">All payrolls</a></p>'
+            '</section>' % (items, esc(assn)))
+
+
+def _payroll(data_dir, assn):
+    """The payroll page: each team's players, payroll, average and top salary, then the recent signings, newest first.
+    404 when the contracts file is missing or of another kind."""
+    rec = _season_file(data_dir, assn, 'contracts')
+    if rec is None:
+        return _not_found()
+    name = _text(_d(_read_obj(data_dir / assn / 'meta.json')).get('name')) or assn
+    rows = _dicts(rec.get('payroll'))
+    teams = {_int(r, 'tid', None): _text(r.get('name')) for r in rows}
+    table = _table('Payrolls', ('Team', 'Players', 'Payroll', 'Average', 'Top'),
+                   [[_Markup(_team_html(assn, r)), r.get('players'), _money(r.get('total')), _money(r.get('average')),
+                     _money(r.get('top'))] for r in rows]) if rows else '<p class="empty">No payrolls yet.</p>'
+    lines = [line for line in (_signing_line(ev, teams) for ev in _dicts(rec.get('events'))) if line]
+    recent = ''.join('<li>%s</li>' % esc(line) for line in reversed(lines[-SIGNINGS:]))
+    signings = '<ul class="moves">%s</ul>' % recent if recent else '<p class="empty">No signings yet.</p>'
+    through = 'Season %d' % rec['season_year'] if type(rec.get('season_year')) is int else ''
+    body = (_masthead('Payroll', through) + _league_nav(assn, {'association': name})
+            + '<section>%s</section><section><h2>Recent signings</h2>%s</section>' % (table, signings))
+    return _page_reply(200, '%s · Payroll' % name, body)
+
+
+def _payroll_team(data_dir, assn, tid):
+    """One team's contracts, by salary then name: player, position, age, salary, years left and status. 404 when the
+    contracts file is missing or of another kind, or tid is not one of its teams."""
+    rec = _season_file(data_dir, assn, 'contracts')
+    row = _team_row(rec, tid) if rec is not None else None
+    if row is None:
+        return _not_found()
+    name = _text(_d(_read_obj(data_dir / assn / 'meta.json')).get('name')) or assn
+    mine = [c for c in _d(rec.get('contracts')).values() if isinstance(c, dict) and _int(c, 'team', None) == tid]
+    mine.sort(key=lambda c: (-_int(c, 'salary'), _text(c.get('name'))))
+    rows = [[c.get('name'), c.get('pos'), c.get('age'), _money(c.get('salary')), c.get('left'),
+             CONTRACT_STATUS.get(_text(c.get('class')), '')] for c in mine]
+    table = _table('Contracts', ('Player', 'Pos', 'Age', 'Salary', 'Years left', 'Status'), rows, text=(0, 1, 5))
+    body = (_masthead(_text(row.get('name')), 'Payroll') + _league_nav(assn, {'association': name})
+            + '<section><p><a href="/news/%s/payroll">All payrolls</a></p>%s</section>' % (esc(assn), table))
+    return _page_reply(200, '%s · Payroll' % _text(row.get('name')), body)
+
+
 def _status(data_dir):
     budget = _read_obj(data_dir / 'budget.json') or {}
     limits = _read_obj(data_dir / 'limits.json') or {}
@@ -843,6 +937,10 @@ def route(data_dir, target):
         return _transactions(data_dir, assn, qs)
     if len(rest) == 3 and rest[1] == 'moves' and NOTE_RE.fullmatch(rest[2]):
         return _move_note(data_dir, assn, rest[2])
+    if len(rest) == 2 and rest[1] == 'payroll':
+        return _payroll(data_dir, assn)
+    if len(rest) == 3 and rest[1] == 'payroll' and TID_RE.fullmatch(rest[2]) and str(int(rest[2])) == rest[2]:
+        return _payroll_team(data_dir, assn, int(rest[2]))     # canonical numbers only: '02' is not team 2's page
     return _not_found()
 
 
