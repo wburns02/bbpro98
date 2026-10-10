@@ -146,8 +146,18 @@ def medians(sal):
     return {year: statistics.median(v) for year, v in sorted(by_year.items())}
 
 
+def means(sal):
+    """{year: mean salary, to the dollar} over every salary row of the year."""
+    by_year = {}
+    for year, _, salary in sal:
+        by_year.setdefault(year, []).append(salary)
+    return {year: round(statistics.mean(v)) for year, v in sorted(by_year.items())}
+
+
 def fit(con):
-    """The salary table from an open database: {'source', 'years', 'ratio'}. ValueError when a role and class has no
+    """The salary table from an open database: {'source', 'years', 'means', 'ratio'}. years holds each season's median
+    salary, which the ratio cells are relative to, and means its mean salary, the level contracts.py prices a league
+    to. ValueError when a role and class has no
     priced row at all, since its cells could not be filled."""
     sal = salaries(con)
     med = medians(sal)
@@ -161,7 +171,8 @@ def fit(con):
         if all(x is None for x in cell):
             raise ValueError('no priced rows for %s %s' % (r, c))
         ratio[r][c] = fill(cell)
-    return {'source': SOURCE, 'years': {str(y): m for y, m in med.items()}, 'ratio': ratio}
+    return {'source': SOURCE, 'years': {str(y): m for y, m in med.items()},
+            'means': {str(y): m for y, m in means(sal).items()}, 'ratio': ratio}
 
 
 def main(argv=None):

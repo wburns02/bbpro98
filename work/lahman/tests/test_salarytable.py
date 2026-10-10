@@ -161,11 +161,13 @@ def test_json_has_the_contract_shape_with_sorted_keys_and_indent_one(db, tmp_pat
     assert S.main(['--db', db, '--out', str(out)]) is None
     text = out.read_text(encoding='utf-8')
     table = json.loads(text)
-    assert set(table) == {'source', 'years', 'ratio'} and table['source'] == S.SOURCE
+    assert set(table) == {'source', 'years', 'means', 'ratio'} and table['source'] == S.SOURCE
+    assert set(table['means']) == set(table['years']) and all(type(v) is int for v in table['means'].values())
     assert set(table['ratio']) == {'bat', 'pit'}
     assert all(sorted(table['ratio'][r]) == ['arb', 'fa', 'pre'] for r in ('bat', 'pit'))
     assert all(len(table['ratio'][r][c]) == 10 for r in ('bat', 'pit') for c in ('pre', 'arb', 'fa'))
-    assert text.startswith('{\n "ratio": {\n  "bat": {\n   "arb": [\n    0.75,\n')
+    assert text.startswith('{\n "means": {\n')
+    assert '\n "ratio": {\n  "bat": {\n   "arb": [\n    0.75,\n' in text
     assert text.endswith('}\n')
 
 
@@ -188,3 +190,8 @@ def test_a_role_and_class_with_no_priced_row_is_an_error(tmp_path):
     finally:
         con.close()
     assert not os.path.exists(tmp_path / 'short.json')
+
+
+def test_means_are_the_mean_of_every_salary_row_of_the_year():
+    sal = [(1990, 'a', 100), (1990, 'b', 200), (1990, 'c', 600), (1991, 'a', 7)]
+    assert S.means(sal) == {1990: 300, 1991: 7}

@@ -181,7 +181,9 @@ class Watcher:
                                  or not isinstance(prev.get('contracts'), dict)
                                  or not isinstance(prev.get('events'), list)):
             prev = None
-        state = contracts.update(prev, assoc, gamedata.players(pyr), assoc.get('season_year'), self.table)
+        found = replay.season_of(assoc['name'])
+        pay = contracts.NEGRO_PAY if found is not None and found[1] == replay.NEGRO_LEAGUES else 1.0
+        state = contracts.update(prev, assoc, gamedata.players(pyr), assoc.get('season_year'), self.table, pay)
         write_json(path, dict(state, kind='contracts', payroll=contracts.payroll(state['contracts'], assoc['teams']),
                               created=now_iso()))
 

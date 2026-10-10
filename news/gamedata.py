@@ -116,6 +116,15 @@ def _members(data):
     return out
 
 
+ACTIVE = 25     # the r.dat id window opens with the active roster, before the reserves' (id, level) pairs
+
+
+def _active_of(p):
+    """The active roster of an r.dat record, in window order: the first ACTIVE ids of the window at offset 42. The
+    reserves (pairs of id and level) and the lineup groups follow and are not in it."""
+    return [v for v in struct.unpack_from('<%dH' % ACTIVE, p, 42) if 100 <= v <= 9999]
+
+
 def association(asn_path):
     """Teams (with W-L), leagues, divisions and the regular-season schedule of one ASN file, as plain dicts."""
     with open(asn_path, 'rb') as fh:
@@ -133,6 +142,7 @@ def association(asn_path):
                 div_of[tid] = (leagues.get(p[1], ''), league._cstr(p, league.D_NAME[0], league.D_NAME[1] - 1))
     wl = {key: (p[1], p[2]) for key, p in mem.get('xs', []) if 1 <= key <= MAX_TEAM and len(p) >= 3}
     rosters = {key: league._roster_of(p) for key, p in mem.get('r', []) if 1 <= key <= MAX_TEAM}
+    actives = {key: _active_of(p) for key, p in mem.get('r', []) if 1 <= key <= MAX_TEAM}
     teams = {}
     for key, p in mem.get('t', []):
         if not 1 <= key <= MAX_TEAM:
@@ -142,7 +152,8 @@ def association(asn_path):
         teams[key] = {'tid': key, 'name': league._cstr(p, 0x12, league.NAME_FIELD - 1),
                       'abbrev': league._cstr(p, *league.T_ABBREV), 'city': league._cstr(p, *league.T_CITY8),
                       'stadium': league._cstr(p, *league.T_STADIUM), 'manager': league._cstr(p, *league.T_MANAGER),
-                      'league': lg, 'division': dv, 'w': w, 'l': l, 'roster': rosters.get(key, [])}
+                      'league': lg, 'division': dv, 'w': w, 'l': l, 'roster': rosters.get(key, []),
+                      'active': actives.get(key, [])}
     games = []
     for _, p in mem.get('s', []):
         if len(p) >= 17 and p[6] in teams and p[10] in teams and p[15] == 0:

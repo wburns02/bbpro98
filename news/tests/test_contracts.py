@@ -295,3 +295,92 @@ def test_payroll_rows_are_sorted_by_total_then_tid_with_average_and_top():
 def test_payroll_average_is_whole_dollars():
     contracts = {'1': {'team': 1, 'salary': 1000000}, '2': {'team': 1, 'salary': 1000001}, '3': {'team': 1, 'salary': 1}}
     assert C.payroll(contracts, {1: {'name': 'Ash'}})[0]['average'] == 666667
+
+
+def test_a_pass_after_an_empty_state_logs_no_signings():
+    assoc = {'teams': {1: {'name': 'A', 'roster': [100, 101]}}}
+    players = {100: {'name': 'X', 'pos': 'SS', 'born': 1970, 'contact': 50, 'power': 50, 'speed': 50, 'control': 0,
+                     'strikeout': 0, 'stamina': 0, 'fielding': 50},
+               101: {'name': 'Y', 'pos': 'P', 'born': 1972, 'contact': 0, 'power': 0, 'speed': 0, 'control': 60,
+                     'strikeout': 60, 'stamina': 60, 'fielding': None}}
+    table = {'years': {'2000': 1000000.0},
+             'ratio': {r: {c: [1.0] * 10 for c in C.CLASSES} for r in ('bat', 'pit')}}
+    empty = C.update(None, assoc, players, None, table)
+    state = C.update(empty, assoc, players, 2000, table)
+    assert set(state['contracts']) == {'100', '101'} and state['events'] == []
+
+
+def _league(active):
+    return {'teams': {1: {'name': 'A', 'roster': [100, 101, 102], 'active': active}}}
+
+
+def _people():
+    def bat(name, rating):
+        return {'name': name, 'pos': 'SS', 'born': 1972, 'contact': rating, 'power': rating, 'speed': rating,
+                'control': 0, 'strikeout': 0, 'stamina': 0, 'fielding': rating}
+    return {100: bat('A', 40), 101: bat('B', 60), 102: bat('C', 80)}
+
+
+def test_only_the_active_roster_signs():
+    state = C.update(None, _league([100, 101]), _people(), 2000, TABLE)
+    assert set(state['contracts']) == {'100', '101'}
+
+
+def test_a_sent_down_player_keeps_his_running_contract_and_an_expired_one_lapses_quietly():
+    first = C.update(None, _league([100, 101, 102]), _people(), 2000, TABLE)
+    assert first['contracts']['102']['left'] == 5
+    down = C.update(first, _league([100, 101]), _people(), 2000, TABLE)
+    assert down['contracts']['102'] == first['contracts']['102'] and down['events'] == []
+    later = C.update(down, _league([100, 101]), _people(), 2006, TABLE)
+    assert '102' not in later['contracts']
+    assert [e for e in later['events'] if e['pid'] == 102] == []
+
+
+def test_released_means_off_every_roster():
+    first = C.update(None, _league([100, 101, 102]), _people(), 2000, TABLE)
+    gone = {'teams': {1: {'name': 'A', 'roster': [100, 101], 'active': [100, 101]}}}
+    state = C.update(first, gone, _people(), 2000, TABLE)
+    assert [(e['kind'], e['pid']) for e in state['events']] == [('released', 102)]
+
+
+def test_salary_rises_within_a_decile_and_the_top_reaches_twice_the_last_cell():
+    table = {'years': {'2000': 1000000}, 'ratio': {r: {c: [float(i + 1) for i in range(10)] for c in C.CLASSES}
+                                                   for r in ('bat', 'pit')}}
+    assert C.salary(table, 'bat', 'fa', 5, 2000) == 5000000
+    assert C.salary(table, 'bat', 'fa', 5, 2000, 0.0) == 4500000
+    assert C.salary(table, 'bat', 'fa', 5, 2000, 1.0) == 5500000
+    assert C.salary(table, 'bat', 'fa', 1, 2000, 0.0) == 1000000
+    assert C.salary(table, 'bat', 'fa', 10, 2000, 1.0) == 20000000
+
+
+def test_within_decile_place():
+    assert C._place(0, 100) == (1, 0.0)
+    assert C._place(15, 100) == (2, 0.5)
+    d, frac = C._place(99, 100)
+    assert d == 10 and frac == pytest.approx(0.9)
+
+
+def test_rounding_steps_and_floor():
+    assert C._round(449) == 400 and C._round(20) == 100 and C._round(9949) == 9900
+    assert C._round(12345) == 12000 and C._round(1234567) == 1230000
+
+
+def test_level_reads_means_then_grows_and_joins_history_before():
+    table = dict(TABLE, means={'1985': 400000, '1986': 450000})
+    assert C.level(TABLE, 1990) is None
+    assert C.level(table, 1986) == 450000
+    assert C.level(table, 1988) == pytest.approx(450000 * 1.03 ** 2)
+    assert C.level(table, 1950) == 13000
+    assert C.level(table, 1984) == 329408
+    assert 13000 < C.level(table, 1955) < 17000
+    assert C.level(table, 1850) == 1500
+
+
+def test_new_salaries_are_priced_to_the_level_and_pay_scales_them():
+    table = dict(TABLE, means={str(y): 2000000 for y in range(1985, 2017)})
+    assoc = {'teams': {1: {'name': 'A', 'roster': [100, 101, 102], 'active': [100, 101, 102]}}}
+    full = C.update(None, assoc, _people(), 2000, table)
+    pays = [c['salary'] for c in full['contracts'].values()]
+    assert sum(pays) / len(pays) == pytest.approx(2000000, rel=0.01)
+    quarter = C.update(None, assoc, _people(), 2000, table, C.NEGRO_PAY)
+    assert sum(c['salary'] for c in quarter['contracts'].values()) == pytest.approx(sum(pays) / 4, rel=0.01)
