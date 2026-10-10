@@ -606,13 +606,20 @@ def _who(p, year):
     return '%s (%s, %d)' % (p['name'], p['pos'], year - p['born'])
 
 
+def _heading(title):
+    """A page title as the body's heading, underlined as html_to_text writes a page's h1: the in-game reader shows the
+    title only in the window caption, which a Wine desktop with no window manager never draws."""
+    return [title, '=' * len(title), '']
+
+
 def _player_page(lg, entries, pid, status, note=''):
     """(status, path, title, text, links) for a player's page as entries leave him, after an optional note."""
     p = lg.players[pid]
     kind = _focus_of(entries, pid, lg.births[pid])
     tid = next((t for t in sorted(lg.teams) if pid in lg.teams[t]['roster']), None)
     base = '/news/development/%s/p/%d' % (lg.stem, pid)
-    lines = [note, ''] if note else []
+    title = _who(p, lg.year)
+    lines = ([note, ''] if note else []) + _heading(title)
     lines += ['Current focus: %s' % kind if kind else 'No focus.']
     lines += ['Team: %s' % lg.teams[tid]['name'] if tid is not None else 'Free agent']
     links = [('Focus on %s' % k, '%s/set/%s' % (base, k)) for k in focus.kinds_for(p['pos'])]
@@ -621,7 +628,7 @@ def _player_page(lg, entries, pid, status, note=''):
     if tid is not None:
         links.append(('Back to %s' % lg.teams[tid]['name'], '/news/development/%s/team/%d' % (lg.stem, tid)))
     links.append(('All teams', '/news/development/%s/' % lg.stem))
-    return status, base, _who(p, lg.year), '\n'.join(lines), links
+    return status, base, title, '\n'.join(lines), links
 
 
 def _dev_association(ctx, stem):
@@ -631,14 +638,15 @@ def _dev_association(ctx, stem):
     entries = _read_focus(ctx.game)
     count = sum(1 for e in entries if e['assn'] == lg.stem)
     named = [e for e in entries if e['assn'] == lg.stem and e['pid'] in lg.players]
-    text = ['Players with a focus (%d of %d):' % (count, focus.MAX_PER_ASSN)]
+    title = 'Player development: %s' % lg.label
+    text = _heading(title) + ['Players with a focus (%d of %d):' % (count, focus.MAX_PER_ASSN)]
     text += ['%s: %s' % (lg.players[e['pid']]['name'], e['kind']) for e in named]
     text += ['', 'Pick a team to choose a focus.']
     links = [('%s: %s' % (lg.players[e['pid']]['name'], e['kind']), '/news/development/%s/p/%d' % (lg.stem, e['pid']))
              for e in named]
     links += [(team['name'] or 'Team %d' % tid, '/news/development/%s/team/%d' % (lg.stem, tid))
               for tid, team in sorted(lg.teams.items())]
-    return 200, '/news/development/%s/' % lg.stem, 'Player development: %s' % lg.label, '\n'.join(text), links
+    return 200, '/news/development/%s/' % lg.stem, title, '\n'.join(text), links
 
 
 def _dev_team(ctx, stem, tid):
@@ -657,8 +665,9 @@ def _dev_team(ctx, stem, tid):
         label = _who(lg.players[pid], lg.year) + ('' if kind is None else ': %s' % kind)
         links.append((label, '/news/development/%s/p/%d' % (lg.stem, pid)))
     links.append(('All teams', '/news/development/%s/' % lg.stem))
-    return (200, '/news/development/%s/team/%d' % (lg.stem, tid), '%s: development' % team['name'],
-            'Pick a player to set his focus.', links)
+    title = '%s: development' % team['name']
+    return (200, '/news/development/%s/team/%d' % (lg.stem, tid), title,
+            '\n'.join(_heading(title) + ['Pick a player to set his focus.']), links)
 
 
 def _dev_player(ctx, stem, pid):

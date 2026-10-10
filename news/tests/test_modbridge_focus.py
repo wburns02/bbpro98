@@ -105,7 +105,7 @@ def test_association_page_lists_the_teams_with_no_focus(dev):
     assert head == {'status': 'ok', 'http': '200', 'path': BASE + '/',
                     'title': 'Player development: 1977 Major Leagues', 'count': '2',
                     'link.0': 'Reds\t' + BASE + '/team/1', 'link.1': 'Cubs\t' + BASE + '/team/2'}
-    assert body.split('\n')[0] == 'Players with a focus (0 of 5):'
+    assert body.split('\n')[3] == 'Players with a focus (0 of 5):'
 
 
 def test_association_page_names_each_focused_player_in_file_order(dev):
@@ -142,7 +142,7 @@ def test_player_page_for_a_hitter_with_no_focus(dev):
     ctx, spool, _ = dev
     head, body = page(ctx, spool, BASE + '/p/100')
     assert head['status'] == 'ok' and head['http'] == '200' and head['title'] == 'Pat Doe (2B, 25)'
-    assert body.split('\n') == ['No focus.', 'Team: Reds']
+    assert body.split('\n')[3:] == ['No focus.', 'Team: Reds']
     assert links_of(head) == [('Focus on contact', BASE + '/p/100/set/contact'),
                               ('Focus on power', BASE + '/p/100/set/power'),
                               ('Focus on speed', BASE + '/p/100/set/speed'),
@@ -155,7 +155,7 @@ def test_player_page_for_a_pitcher_with_a_focus(dev):
     write_focus(game, focus.format([ent(205, serial(1948), 'stuff')]))
     head, body = page(ctx, spool, BASE + '/p/205')
     assert head['title'] == 'Bo Bee (P, 29)'
-    assert body.split('\n') == ['Current focus: stuff', 'Team: Reds']
+    assert body.split('\n')[3:] == ['Current focus: stuff', 'Team: Reds']
     assert links_of(head) == [('Focus on control', BASE + '/p/205/set/control'),
                               ('Focus on stuff', BASE + '/p/205/set/stuff'),
                               ('Focus on defense', BASE + '/p/205/set/defense'),
@@ -167,7 +167,7 @@ def test_a_player_on_no_roster_is_a_free_agent(dev):
     ctx, spool, _ = dev
     head, body = page(ctx, spool, BASE + '/p/400')
     assert head['title'] == 'Fr Ee (1B, 19)'
-    assert body.split('\n') == ['No focus.', 'Free agent']
+    assert body.split('\n')[3:] == ['No focus.', 'Free agent']
     labels = [label for label, _ in links_of(head)]
     assert not any(label.startswith('Back to') for label in labels)
     assert labels[-1] == 'All teams'
@@ -179,7 +179,8 @@ def test_set_writes_the_focus_file_and_shows_the_player(dev):
     ctx, spool, game = dev
     head, body = page(ctx, spool, BASE + '/p/100/set/power')
     assert head['status'] == 'ok' and head['http'] == '200' and head['path'] == BASE + '/p/100'
-    assert body.split('\n') == ['Focus set: power.', '', 'Current focus: power', 'Team: Reds']
+    lines = body.split('\n')
+    assert lines[:2] == ['Focus set: power.', ''] and lines[5:] == ['Current focus: power', 'Team: Reds']
     assert ('Clear focus', BASE + '/p/100/clear') in links_of(head)
     assert focus_file(game).read_text() == focus.format([ent(100, serial(1952), 'power')])
     assert sorted(os.listdir(game / 'Mods')) == ['focus.txt', 'spool']
@@ -198,7 +199,8 @@ def test_clear_removes_the_focus_and_shows_the_player(dev):
     write_focus(game, focus.format([ent(100, serial(1952), 'power'), ent(205, serial(1948), 'stuff')]))
     head, body = page(ctx, spool, BASE + '/p/100/clear')
     assert head['status'] == 'ok' and head['http'] == '200'
-    assert body.split('\n') == ['Focus cleared.', '', 'No focus.', 'Team: Reds']
+    lines = body.split('\n')
+    assert lines[:2] == ['Focus cleared.', ''] and lines[5:] == ['No focus.', 'Team: Reds']
     assert 'Clear focus' not in [label for label, _ in links_of(head)]
     assert entries_of(game) == [ent(205, serial(1948), 'stuff')]
 
@@ -251,7 +253,7 @@ def test_a_symlinked_focus_file_reads_as_none_and_is_never_written_through(dev, 
     (game / 'Mods').mkdir(exist_ok=True)
     os.symlink(victim, focus_file(game))
     _, body = page(ctx, spool, BASE + '/')
-    assert body.split('\n')[0] == 'Players with a focus (0 of 5):'
+    assert body.split('\n')[3] == 'Players with a focus (0 of 5):'
     head, _ = page(ctx, spool, BASE + '/p/100/set/power')
     assert head['status'] == 'ok'
     assert victim.read_bytes() == before
@@ -279,7 +281,7 @@ def test_a_focus_file_that_is_not_a_regular_file_reads_as_none(dev):
     ctx, spool, game = dev
     (game / 'Mods' / 'focus.txt').mkdir()
     _, body = page(ctx, spool, BASE + '/')
-    assert body.split('\n')[0] == 'Players with a focus (0 of 5):'
+    assert body.split('\n')[3] == 'Players with a focus (0 of 5):'
 
 
 def test_read_takes_at_most_max_file_bytes(dev):
@@ -299,7 +301,7 @@ def test_a_game_with_no_mods_directory_reads_as_no_focus_and_a_set_makes_it(site
     ctx = types.SimpleNamespace(game=str(game), data=str(data))
     assert not (game / 'Mods').exists()
     _, body = page(ctx, str(spool), BASE + '/')
-    assert body.split('\n')[0] == 'Players with a focus (0 of 5):'
+    assert body.split('\n')[3] == 'Players with a focus (0 of 5):'
     assert not (game / 'Mods').exists()
     head, _ = page(ctx, str(spool), BASE + '/p/100/set/power')
     assert head['status'] == 'ok'
@@ -333,3 +335,13 @@ def test_only_an_ok_association_page_gets_the_link(bridge, monkeypatch, path, st
     serve_pages(monkeypatch, {path: (status, b'<title>x</title><p>y</p>', ())})
     head, _ = page(ctx, spool, path)
     assert head['count'] == '0'
+
+
+def test_every_page_repeats_its_title_as_an_underlined_heading(dev):
+    ctx, spool, game = dev
+    for path in (BASE + '/', BASE + '/team/1', BASE + '/p/100'):
+        head, body = page(ctx, spool, path)
+        lines = body.split('\n')
+        assert lines[:3] == [head['title'], '=' * len(head['title']), '']
+    head, body = page(ctx, spool, BASE + '/p/100/set/power')
+    assert body.split('\n')[2:4] == [head['title'], '=' * len(head['title'])]
