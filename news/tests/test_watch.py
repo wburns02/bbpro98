@@ -551,3 +551,120 @@ def test_a_season_that_moved_on_leaves_the_old_scorecard_alone(world, monkeypatc
     w.seen.clear()
     w.scan()
     assert (data / '30L1998' / 'replay.json').read_text() == before
+
+
+@pytest.fixture
+def salary_table(tmp_path):
+    """A salary table with every year at $1M and a ratio by class alone: pre 0.5, arb 1.0, fa 2.0."""
+    path = tmp_path / 'salary_table.json'
+    ratio = {r: {'pre': [0.5] * 10, 'arb': [1.0] * 10, 'fa': [2.0] * 10} for r in ('bat', 'pit')}
+    path.write_text(json.dumps({'source': 'test', 'years': {str(y): 1000000 for y in range(1985, 2017)},
+                                'ratio': ratio}), encoding='utf-8')
+    return str(path)
+
+
+@pytest.fixture
+def season(league, monkeypatch):
+    """league, dated 1998: the league fixture's association has no season year of its own."""
+    named(monkeypatch, '1998 Test', season_year=1998)
+    return league
+
+
+def priced(gd, data, table):
+    return watch.Watcher(str(gd), str(data), None, None, log=lambda s: None, salary_table=table)
+
+
+def contract_file(data):
+    return json.loads((data / '30L1998' / 'contracts.json').read_text())
+
+
+def test_the_first_scan_prices_each_rostered_player_and_logs_no_signings(season, salary_table):
+    gd, data, st = season
+    league_scan(priced(gd, data, salary_table), gd, st)
+    c = contract_file(data)
+    assert c['kind'] == 'contracts' and c['season_year'] == 1998 and c['created'] and c['events'] == []
+    assert sorted(c['contracts']) == ['100', '101', '200', '400']
+    assert c['contracts']['100']['salary'] == 2000000 and c['contracts']['200']['salary'] == 500000
+    assert [(r['tid'], r['name'], r['players'], r['total']) for r in c['payroll']] == [
+        (1, 'Ash', 2, 4000000), (2, 'Birch', 2, 2500000)]
+
+
+def test_a_signing_counts_down_and_re_signs_when_it_runs_out(season, salary_table, monkeypatch):
+    gd, data, st = season
+    w = priced(gd, data, salary_table)
+    league_scan(w, gd, st)
+    st.update(fa=set(), rosters={1: [100, 101, 300], 2: [200, 400]})     # Pat Smith signs with Ash
+    league_scan(w, gd, st)
+    assert contract_file(data)['events'] == [
+        {'kind': 'signed', 'pid': 300, 'name': 'Pat Smith', 'team': 1, 'salary': 1000000, 'years': 1, 'year': 1998}]
+    named(monkeypatch, '1998 Test', season_year=1999)
+    league_scan(w, gd, st)
+    c = contract_file(data)
+    assert c['season_year'] == 1999
+    assert c['contracts']['100']['left'] == 1 and c['contracts']['400']['left'] == 2   # kept, counting down
+    assert [(e['kind'], e['pid']) for e in c['events']] == [
+        ('signed', 300), ('re-signed', 101), ('re-signed', 200), ('re-signed', 300)]
+
+
+def test_a_move_keeps_the_contract_and_a_release_is_logged(season, salary_table):
+    gd, data, st = season
+    w = priced(gd, data, salary_table)
+    league_scan(w, gd, st)
+    st.update(rosters={1: [101], 2: [100, 200, 400]})                   # Al Winner moves to Birch
+    league_scan(w, gd, st)
+    st.update(fa={200}, rosters={1: [101], 2: [100, 400]})              # Bo Loser is released
+    league_scan(w, gd, st)
+    c = contract_file(data)
+    assert c['events'] == [
+        {'kind': 'moved', 'pid': 100, 'name': 'Al Winner', 'team': 2, 'salary': 0, 'years': 0, 'year': 1998},
+        {'kind': 'released', 'pid': 200, 'name': 'Bo Loser', 'team': None, 'salary': 0, 'years': 0, 'year': 1998}]
+    assert c['contracts']['100']['team'] == 2 and c['contracts']['100']['salary'] == 2000000
+    assert sorted(c['contracts']) == ['100', '101', '400']
+
+
+def test_a_fresh_pyr_waits_for_a_settled_set(season, salary_table):
+    gd, data, st = season
+    w = priced(gd, data, salary_table)
+    league_scan(w, gd, st, settled=False)            # the league was just saved: the set may be torn
+    assert not (data / '30L1998' / 'contracts.json').exists()
+    league_scan(w, gd, st)
+    assert (data / '30L1998' / 'contracts.json').exists()
+
+
+def test_no_pyr_writes_no_contracts(world, salary_table):
+    gd, data, st = world
+    priced(gd, data, salary_table).scan()
+    assert not (data / '30L1998' / 'contracts.json').exists()
+    assert (data / '30L1998' / 'meta.json').exists()
+
+
+@pytest.mark.parametrize('content', [None, '[1, 2]', '{"years": {"1985": 1}}'])
+def test_a_missing_or_bad_salary_table_is_logged_once_and_the_rest_is_written(league, tmp_path, content):
+    gd, data, st = league
+    path = tmp_path / 'table.json'
+    if content is not None:
+        path.write_text(content, encoding='utf-8')
+    logs = []
+    w = watch.Watcher(str(gd), str(data), None, None, log=logs.append, salary_table=str(path))
+    league_scan(w, gd, st)
+    assert len([line for line in logs if line.startswith('contracts:')]) == 1
+    assert not (data / '30L1998' / 'contracts.json').exists()
+    assert (data / '30L1998' / 'moves' / 'last.json').exists() and (data / '30L1998' / 'meta.json').exists()
+
+
+def test_the_default_table_is_news_salary_table_next_to_watch(season, salary_table, monkeypatch):
+    gd, data, st = season
+    monkeypatch.setattr(watch, 'DEFAULT_TABLE', salary_table)
+    w = watch.Watcher(str(gd), str(data), None, None, log=lambda s: None)
+    assert w.table is not None
+    league_scan(w, gd, st)
+    assert (data / '30L1998' / 'contracts.json').exists()
+
+
+def test_a_season_with_no_year_prices_nothing(league, salary_table, monkeypatch):
+    gd, data, st = league
+    named(monkeypatch, '1998 Test', season_year=None)
+    league_scan(priced(gd, data, salary_table), gd, st)
+    c = contract_file(data)
+    assert c['season_year'] is None and c['contracts'] == {} and c['events'] == []
+    assert [(r['tid'], r['players']) for r in c['payroll']] == [(1, 0), (2, 0)]

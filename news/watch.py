@@ -14,6 +14,7 @@ Data layout (server.py reads it):
     <data>/<ASSN>/scout/<tid>.json                     one scouting report per team (once)
     <data>/<ASSN>/moves/log.json, notes/<n>.json       roster moves and milestones, newest last; a note per notable one
     <data>/<ASSN>/moves/last.json                      the snapshot the next scan diffs against
+    <data>/<ASSN>/contracts.json                       contracts and payrolls, priced from news/salary_table.json
     <data>/<ASSN>/replay.json                          the season against its Lahman namesake (with --db; replay.py)
 
 The game files are only read. A box score is matched to its schedule game by teams and final score (gamedata); one
@@ -32,6 +33,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import contracts  # noqa: E402
 import feed      # noqa: E402
 import gamedata  # noqa: E402
 import hive      # noqa: E402
@@ -47,6 +49,7 @@ LLM_DAYS = 3          # columns for the newest dates go to the model; older date
 SCOUT_CALLS = 3       # scouting reports asked of the model per scan, so a backfill never holds up box scores
 MOVE_CALLS = 3        # transaction notes asked of the model per scan; the rest of a scan's notes get the template
 MOVE_KEEP = 3000      # events kept in moves/log.json
+DEFAULT_TABLE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'salary_table.json')
 
 
 def now_iso():
@@ -95,7 +98,7 @@ def _llm_or_template(write, facts, budget, complete):
 
 
 class Watcher:
-    def __init__(self, game_dir, data_dir, budget, complete, log=print, db=None):
+    def __init__(self, game_dir, data_dir, budget, complete, log=print, db=None, salary_table=None):
         self.game, self.data, self.budget, self.complete, self.log = game_dir, data_dir, budget, complete, log
         self.db = db            # the Lahman database, opened read-only; None leaves out the replay scorecard
         self.seen = {}          # stem -> signature of its game files at the last full pass
@@ -107,6 +110,11 @@ class Watcher:
         self.real_seasons = {}  # (year, leagues) -> replay.real(): the database is read once per season
         self.off_season = set() # stems whose season_year is not the year their name gives: logged once
         self.names = teamnames.load(os.path.join(data_dir, 'teamnames.json'))   # full Lahman names; {} without it
+        try:    # the salary table the contracts are priced from; without it the contracts piece is skipped
+            self.table = contracts.load_table(DEFAULT_TABLE if salary_table is None else salary_table)
+        except (OSError, ValueError) as e:
+            self.table = None
+            self.log('contracts: no usable salary table (%s); contracts are skipped' % e)
 
     def signature(self, stem, asn_path):
         stats, assn = os.path.join(self.game, 'Stats'), os.path.dirname(asn_path)
@@ -155,7 +163,29 @@ class Watcher:
             'standings': feed.standings(assoc), 'leaders': feed.leaders(season, names, teams_played)})
         self.season_pieces(out, assoc, names, dat, pyr)
         self.moves(out, assoc, pyr, dat)
+        self.contracts_piece(out, assoc, pyr, dat)
         self.replay_piece(out, assoc, names, season)
+
+    def contracts_piece(self, out, assoc, pyr, dat):
+        """The contracts and payrolls (contracts.py), after moves: each rostered player's contract, ticked down at each
+        season rollover, and every team's payroll, written to contracts.json. Needs the PYR, the salary table and some
+        teams; no model. Waits while the PYR, the PYF beside it or the DAT is younger than SETTLE, as moves does."""
+        if self.table is None or pyr is None or not assoc['teams']:
+            return
+        pyf = gamedata.find(os.path.dirname(pyr), os.path.splitext(os.path.basename(pyr))[0] + '.PYF')
+        if time.time() - max(os.stat(p).st_mtime for p in (pyr, pyf, dat) if p) < SETTLE:
+            return      # a torn set would price contracts from a half-saved league; the next scan retries
+        path = os.path.join(out, 'contracts.json')
+        prev = read_json(path)
+        if prev is not None and (prev.get('kind') != 'contracts' or 'season_year' not in prev
+                                 or not isinstance(prev.get('contracts'), dict)
+                                 or not isinstance(prev.get('events'), list)):
+            prev = None
+        found = replay.season_of(assoc['name'])
+        pay = contracts.NEGRO_PAY if found is not None and found[1] == replay.NEGRO_LEAGUES else 1.0
+        state = contracts.update(prev, assoc, gamedata.players(pyr), assoc.get('season_year'), self.table, pay)
+        write_json(path, dict(state, kind='contracts', payroll=contracts.payroll(state['contracts'], assoc['teams']),
+                              created=now_iso()))
 
     def replay_piece(self, out, assoc, names, season):
         """The replay scorecard, written on every pass of a Lahman-named association while a database is given: this
