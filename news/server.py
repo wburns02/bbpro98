@@ -27,6 +27,9 @@ TID_RE = re.compile(r'[0-9]{1,2}')
 MONTHS = ('January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October',
           'November', 'December')
 LEADERS = (('avg', 'AVG'), ('hr', 'HR'), ('rbi', 'RBI'), ('w', 'W'), ('era', 'ERA'), ('so', 'SO'), ('sv', 'SV'))
+MOVES_BOX = 5       # newest transaction lines in the association's side column
+NOTE_RE = re.compile(r'[0-9]{1,6}')
+STAT_WORDS = {'hr': 'home run', 'h': 'hit', 'sb': 'stolen base', 'w': 'win', 'sv': 'save', 'so_p': 'strikeout'}
 BYLINES = {'glm': 'Staff writer', 'template': 'Wire report'}
 HTML_TYPE = 'text/html; charset=utf-8'
 JSON_TYPE = 'application/json'
@@ -66,6 +69,8 @@ h2 { font-size: 1.35rem; margin: 0 0 4px; }
 .feed, .story, .assn { border-top: 1px solid var(--faint); padding: 12px 0; }
 .feed p, .story p, .assn p { margin: 6px 0 0; }
 .index { list-style: none; margin: 0; padding: 0; }
+.moves { list-style: none; margin: 4px 0 12px; padding: 0; }
+.moves li { padding: 3px 0; border-bottom: 1px solid var(--faint); }
 .side section { border-top: 3px double var(--rule); padding-top: 8px; margin-bottom: 20px; }
 .side h2 { font: 700 .95rem var(--sans); letter-spacing: .08em; text-transform: uppercase; }
 .pager { display: flex; justify-content: space-between; font: .95rem var(--sans); border-top: 1px solid var(--faint);
@@ -294,16 +299,16 @@ def _story_row(assn, key, rec):
                _paras_html(_paragraphs(rec.get('body'))[:1])))
 
 
-def _page_href(assn, page):
-    return '/news/%s/' % assn if page == 1 else '/news/%s/?page=%d' % (assn, page)
+def _page_href(path, page):
+    return path if page == 1 else '%s?page=%d' % (path, page)
 
 
-def _pager(assn, page, total):
+def _pager(path, page, total, newer='Newer stories', older='Older stories'):
     links = []
     if page > 1:
-        links.append('<a href="%s">&larr; Newer stories</a>' % esc(_page_href(assn, page - 1)))
+        links.append('<a href="%s">&larr; %s</a>' % (esc(_page_href(path, page - 1)), newer))
     if page * PER_PAGE < total:
-        links.append('<a href="%s">Older stories &rarr;</a>' % esc(_page_href(assn, page + 1)))
+        links.append('<a href="%s">%s &rarr;</a>' % (esc(_page_href(path, page + 1)), older))
     return '<nav class="pager">%s</nav>' % ''.join(links) if links else ''
 
 
@@ -350,10 +355,11 @@ def _association(data_dir, assn, qs):
     elif not shown:
         lead.append('<p class="empty">No stories on this page.</p>')
     lead.extend(_story_row(assn, key, rec) for key, rec in shown)
-    lead.append(_pager(assn, page, len(stories)))
+    lead.append(_pager('/news/%s/' % assn, page, len(stories)))
+    moves = _moves_box(data_dir, assn) if page == 1 else ''
     season = _season_links(data_dir, assn) if page == 1 else ''
     scouting = _scouting_links(data_dir, assn) if page == 1 else ''
-    side = season + scouting + _standings_html(meta.get('standings')) + _leaders_html(meta.get('leaders'))
+    side = moves + season + scouting + _standings_html(meta.get('standings')) + _leaders_html(meta.get('leaders'))
     body = (_masthead(name, _through(meta)) + _nav()
             + '<div class="grid"><section class="lead">%s</section><aside class="side">%s</aside></div>'
             % (''.join(lead), side))
@@ -417,8 +423,8 @@ def _season_file(data_dir, assn, which):
     return rec if rec is not None and rec.get('kind') == which else None
 
 
-def _season_page(assn, rec, label, below):
-    """A season page in the game story layout: the body, then the markup in below."""
+def _story_layout(assn, rec, label, below):
+    """A page in the game story layout: the body, then the markup in below."""
     headline = _text(rec.get('headline'))
     parts = [
         _league_nav(assn, _d(rec.get('facts'))),
@@ -453,7 +459,7 @@ def _preview_page(assn, rec):
         rows = [[t.get('name'), t.get('manager'), _hitter_text(t.get('hitter')), _pitcher_text(t.get('pitcher'))]
                 for t in _dicts(div.get('teams'))]
         tables.append(_table(caption, ('Team', 'Manager', 'Top hitter', 'Top pitcher'), rows, text=4))
-    return _season_page(assn, rec, 'Season preview', tables)
+    return _story_layout(assn, rec, 'Season preview', tables)
 
 
 def _awards_page(assn, rec):
@@ -473,7 +479,7 @@ def _awards_page(assn, rec):
             tables.append(_table('Division champions', ('Division', 'Team', 'Record'), champs, text=2))
         league = _text(lg.get('league')).strip() or 'The league'
         sections.append('<section><h2>%s</h2>%s</section>' % (esc(league), ''.join(tables)))
-    return _season_page(assn, rec, 'Season awards', sections)
+    return _story_layout(assn, rec, 'Season awards', sections)
 
 
 def _season(data_dir, assn, which):
@@ -514,7 +520,7 @@ def _team_page(assn, tid, rec):
         _table('Hitters', ('Player', 'Pos', 'B/T', 'Age', 'Contact', 'Power', 'Speed', 'Field'), hitters, text=3),
         _table('Pitchers', ('Player', 'B/T', 'Age', 'Control', 'Strikeout', 'Stamina', 'Field'), pitchers, text=2),
     ]
-    return _season_page(assn, rec, 'Scouting report', tables)
+    return _story_layout(assn, rec, 'Scouting report', tables)
 
 
 def _team(data_dir, assn, tid):
@@ -523,6 +529,122 @@ def _team(data_dir, assn, tid):
     if rec is None or rec.get('kind') != 'scout':
         return _not_found()
     return _team_page(assn, tid, rec)
+
+
+def _move_log(data_dir, assn):
+    """The transaction log's events that have a line, oldest first; [] without a readable log."""
+    log = _read_obj(data_dir / assn / 'moves' / 'log.json')
+    return [ev for ev in _dicts(_d(log).get('events')) if _move_text(ev)]
+
+
+def _who(ev):
+    """'Pat Smith (SS, 27)': the name with its position and age where known."""
+    bits = [b for b in (_text(ev.get('pos')), _text(ev.get('age'))) if b]
+    name = _text(ev.get('name'))
+    return '%s (%s)' % (name, ', '.join(bits)) if bits else name
+
+
+def _milestone(ev):
+    """'reached 500 career home runs' or 'reached 40 home runs this season'; a stat not named here is given as it is."""
+    scope, _, key = _text(ev.get('stat')).partition(' ')
+    value, word = _text(ev.get('value')), STAT_WORDS.get(key)
+    if word is None or scope not in ('career', 'season'):
+        return 'reached %s %s' % (value, _text(ev.get('stat')))
+    if scope == 'season':
+        return 'reached %s %ss this season' % (value, word)
+    return 'reached %s career %ss' % (value, word)
+
+
+def _move_text(ev):
+    """One plain line for a logged event; '' for a kind the page does not name."""
+    kind, who = _text(ev.get('kind')), _who(ev)
+    frm, to = _text(ev.get('from')), _text(ev.get('to'))
+    if kind == 'signed':
+        return 'Signed: %s, %s to %s' % (who, frm, to)
+    if kind == 'released':
+        return 'Released: %s, %s to %s' % (who, frm, to)
+    if kind == 'moved':
+        return 'Moved: %s, %s to %s' % (who, frm, to)
+    if kind == 'new':
+        return 'New player: %s, %s' % (who, to)
+    if kind == 'retired':
+        return 'Retired: %s' % who
+    if kind == 'milestone':
+        return 'Milestone: %s%s %s' % (_text(ev.get('name')), ' (%s)' % to if to else '', _milestone(ev))
+    return ''
+
+
+def _move_html(assn_dir, assn, ev):
+    """A list item for a logged event, linked to its note when the note's file is there."""
+    text, n = _move_text(ev), ev.get('note')
+    if type(n) is int and NOTE_RE.fullmatch(str(n)) and (assn_dir / 'moves' / 'notes' / ('%d.json' % n)).is_file():
+        return '<li><a href="/news/%s/moves/%d">%s</a></li>' % (esc(assn), n, esc(text))
+    return '<li>%s</li>' % esc(text)
+
+
+def _offseason(date, year):
+    """'Offseason before 2008' for an event dated Offseason (the offseason ahead of that season), else ''."""
+    if date != 'Offseason':
+        return ''
+    return 'Offseason before %s' % year if year else 'Offseason'
+
+
+def _move_days(events):
+    """[(label, [event, ...])], newest date first. The log is in time order, so a run of events with the same date and
+    year is one day; the label is the date with the year after it, or 'Offseason before' the year."""
+    days, key = [], None
+    for ev in reversed(events):
+        now = (_text(ev.get('date')), _int(ev, 'year', None))
+        if now != key:
+            key = now
+            label = _offseason(now[0], _text(now[1])) or ', '.join(x for x in (now[0], _text(now[1])) if x)
+            days.append((label, []))
+        days[-1][1].append(ev)
+    return days
+
+
+def _transactions(data_dir, assn, qs):
+    """The Transactions page: roster moves and milestones, PER_PAGE dates a page, newest date first."""
+    meta = _read_obj(data_dir / assn / 'meta.json')
+    if meta is None:
+        return _not_found()
+    name = _text(meta.get('name')) or assn
+    days = _move_days(_move_log(data_dir, assn))
+    page = _page_no(qs)
+    shown = days[(page - 1) * PER_PAGE:page * PER_PAGE]
+    if not days:
+        lead = '<p class="empty">No transactions yet.</p>'
+    elif not shown:
+        lead = '<p class="empty">No dates on this page.</p>'
+    else:
+        lead = ''.join('<section><h2>%s</h2><ul class="moves">%s</ul></section>'
+                       % (esc(label), ''.join(_move_html(data_dir / assn, assn, ev) for ev in evs))
+                       for label, evs in shown)
+    pager = _pager('/news/%s/moves' % assn, page, len(days), 'Newer dates', 'Older dates')
+    body = (_masthead(name, _through(meta)) + _league_nav(assn, {'association': name})
+            + '<section class="story-page">%s%s</section>' % (lead, pager))
+    return _page_reply(200, '%s · Transactions' % name, body)
+
+
+def _move_note(data_dir, assn, n):
+    """A transaction note in the story layout; 404 when its file is missing, unreadable or not a note."""
+    rec = _read_obj(data_dir / assn / 'moves' / 'notes' / (n + '.json'))
+    if rec is None or rec.get('kind') != 'move':
+        return _not_found()
+    ev = _d(rec.get('event'))
+    date, year = _text(ev.get('date')), _text(ev.get('year'))
+    when = _offseason(date, year) or SEP.join(x for x in (date, year) if x)
+    return _story_layout(assn, rec, when or 'Transaction', [])
+
+
+def _moves_box(data_dir, assn):
+    """The Transactions box for the side column: the newest MOVES_BOX lines and a link to the page. '' for no events."""
+    events = _move_log(data_dir, assn)
+    if not events:
+        return ''
+    lines = ''.join(_move_html(data_dir / assn, assn, ev) for ev in reversed(events[-MOVES_BOX:]))
+    return ('<section class="transactions"><h2>Transactions</h2><ul class="moves">%s</ul>'
+            '<p><a href="/news/%s/moves">All transactions</a></p></section>' % (lines, esc(assn)))
 
 
 def _status(data_dir):
@@ -586,6 +708,10 @@ def route(data_dir, target):
         return _season(data_dir, assn, rest[1])
     if len(rest) == 3 and rest[1] == 'team' and TID_RE.fullmatch(rest[2]):
         return _team(data_dir, assn, rest[2])
+    if len(rest) == 2 and rest[1] == 'moves':
+        return _transactions(data_dir, assn, qs)
+    if len(rest) == 3 and rest[1] == 'moves' and NOTE_RE.fullmatch(rest[2]):
+        return _move_note(data_dir, assn, rest[2])
     return _not_found()
 
 

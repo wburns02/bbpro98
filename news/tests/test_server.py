@@ -780,3 +780,163 @@ def test_scouting_box_is_on_the_first_page_only(scouted):
     html1 = scouted.get('/news/30L1998/')[2].decode()
     html2 = scouted.get('/news/30L1998/?page=2')[2].decode()
     assert 'class="scouting"' in html1 and 'class="scouting"' not in html2
+
+
+def move(kind, pid, name, pos='SS', age=27, frm='Free agents', to='Boston Red Sox', date='June 3', year=1998,
+         note=None, **extra):
+    """A transaction log event in the shape the watcher writes."""
+    ev = {'kind': kind, 'pid': pid, 'name': name, 'pos': pos, 'age': age, 'from': frm, 'to': to, 'date': date,
+          'year': year}
+    if note is not None:
+        ev['note'] = note
+    ev.update(extra)
+    return ev
+
+
+def move_note(event, headline='Ann Bat reached 500 career home runs', body='Ann Bat is with Boston.',
+              source='template', **over):
+    """A notes/<n>.json in the shape the watcher writes."""
+    base = {
+        'kind': 'move', 'headline': headline, 'body': body, 'source': source, 'event': event,
+        'facts': {'association': '1998 Major Leagues', 'date': event.get('date', '')}, 'created': '2026-10-09T14:03:11',
+    }
+    if source == 'template':
+        base['reason'] = 'off'
+    base.update(over)
+    return base
+
+
+def moves_log(root, events):
+    write(root / '30L1998' / 'moves' / 'log.json', {'events': events, 'count': len(events)})
+
+
+MILESTONE = dict(stat='career hr', value=500, total=500, **{'from': '', 'to': 'Boston Red Sox'})
+
+
+def test_transactions_list_each_day_newest_first_in_plain_words(seeded):
+    moves_log(seeded.root, [
+        move('signed', 300, 'Pat Smith', date='June 3'),
+        move('milestone', 400, 'Ann Bat', pos='1B', age=32, date='June 4', **MILESTONE),
+        move('retired', 101, 'Joe Old', pos='P', age=38, frm='Ash', to='', date='Offseason'),
+    ])
+    status, headers, body = seeded.get('/news/30L1998/moves')
+    html = body.decode()
+    assert status == 200 and headers['content-type'] == HTML
+    assert '<title>1998 Major Leagues · Transactions</title>' in html
+    assert html.index('<h2>Offseason before 1998</h2>') < html.index('<h2>June 4, 1998</h2>') < html.index(
+        '<h2>June 3, 1998</h2>')
+    assert '<li>Signed: Pat Smith (SS, 27), Free agents to Boston Red Sox</li>' in html
+    assert '<li>Milestone: Ann Bat (Boston Red Sox) reached 500 career home runs</li>' in html
+    assert '<li>Retired: Joe Old (P, 38)</li>' in html
+    assert '<a href="/news/30L1998/">&larr; 1998 Major Leagues</a>' in html
+    assert_secure(headers, body)
+
+
+def test_an_offseason_day_is_headed_by_the_season_it_leads_into(seeded):
+    moves_log(seeded.root, [move('retired', 101, 'Joe Old', pos='P', age=38, frm='Ash', to='', date='Offseason',
+                                 year=2008)])
+    html = seeded.get('/news/30L1998/moves')[2].decode()
+    assert '<h2>Offseason before 2008</h2>' in html and 'Offseason, 2008' not in html
+    moves_log(seeded.root, [move('retired', 101, 'Joe Old', pos='P', age=38, frm='Ash', to='', date='Offseason',
+                                 year=None)])
+    assert '<h2>Offseason</h2>' in seeded.get('/news/30L1998/moves')[2].decode()
+
+
+def test_a_note_dated_in_the_offseason_says_so_on_its_dateline(seeded):
+    write(seeded.root / '30L1998' / 'moves' / 'notes' / '4.json', move_note(
+        move('signed', 300, 'Pat Smith', date='Offseason', year=2008)))
+    html = seeded.get('/news/30L1998/moves/4')[2].decode()
+    assert '<p class="dateline">Offseason before 2008</p>' in html
+
+
+def test_transaction_lines_escape_every_value(seeded):
+    moves_log(seeded.root, [move('signed', 300, '<img src=x onerror=1> & "Bo"', to='Ash & <i>Co</i>')])
+    html = seeded.get('/news/30L1998/moves')[2].decode()
+    assert '<img' not in html and '<i>' not in html
+    assert ('Signed: &lt;img src=x onerror=1&gt; &amp; &quot;Bo&quot; (SS, 27), Free agents to Ash &amp; '
+            '&lt;i&gt;Co&lt;/i&gt;') in html
+
+
+def test_transactions_are_paged_thirty_dates_a_page(seeded):
+    moves_log(seeded.root, [move('retired', 500 + i, 'Old %d' % i, date='April %d' % i) for i in range(1, 32)])
+    html1 = seeded.get('/news/30L1998/moves')[2].decode()
+    html2 = seeded.get('/news/30L1998/moves?page=2')[2].decode()
+    assert html1.count('<h2>') == 30 and html2.count('<h2>') == 1
+    assert 'April 31, 1998' in html1 and 'April 1, 1998' not in html1
+    assert 'April 1, 1998' in html2 and 'April 31, 1998' not in html2
+    assert 'href="/news/30L1998/moves?page=2"' in html1 and 'Older dates' in html1 and 'Older dates' not in html2
+    assert 'href="/news/30L1998/moves"' in html2 and 'Newer dates' in html2 and 'Newer dates' not in html1
+
+
+def test_transactions_without_events_or_with_only_unnamed_kinds_say_so(seeded):
+    assert 'No transactions yet.' in seeded.get('/news/30L1998/moves')[2].decode()
+    moves_log(seeded.root, [move('mystery', 300, 'Pat Smith')])
+    html = seeded.get('/news/30L1998/moves')[2].decode()
+    assert 'No transactions yet.' in html and 'Pat Smith' not in html
+
+
+def test_transactions_page_needs_the_association(seeded):
+    assert seeded.get('/news/NOPE/moves')[0] == 404
+    assert seeded.get('/news/30L1998/moves/')[0] == 404
+    assert seeded.get('/news/30L1998/moves?page=2&x=1')[0] == 200
+
+
+def test_a_line_with_a_note_links_to_it_and_one_without_does_not(seeded):
+    moves_log(seeded.root, [move('milestone', 400, 'Ann Bat', date='June 4', note=4, **MILESTONE),
+                            move('retired', 101, 'Joe Old', pos='P', age=38, frm='Ash', to='', note=5)])
+    write(seeded.root / '30L1998' / 'moves' / 'notes' / '4.json', move_note(move('milestone', 400, 'Ann Bat')))
+    html = seeded.get('/news/30L1998/moves')[2].decode()
+    assert ('<li><a href="/news/30L1998/moves/4">Milestone: Ann Bat (Boston Red Sox) reached 500 career home runs'
+            '</a></li>') in html
+    assert '<li>Retired: Joe Old (P, 38)</li>' in html and 'moves/5' not in html
+
+
+def test_note_page_is_the_story_layout_with_the_byline_and_the_escaped_text(seeded):
+    write(seeded.root / '30L1998' / 'moves' / 'notes' / '4.json', move_note(
+        move('milestone', 400, 'Ann Bat', pos='1B', age=32, date='June 4', year=1998, **MILESTONE),
+        headline='<b>Ann Bat</b> reaches 500', body='Ann Bat is with Boston.\nHe hit it & ran.', source='glm'))
+    status, headers, body = seeded.get('/news/30L1998/moves/4')
+    html = body.decode()
+    assert status == 200 and headers['content-type'] == HTML
+    assert '<title>&lt;b&gt;Ann Bat&lt;/b&gt; reaches 500</title>' in html
+    assert '<h1>&lt;b&gt;Ann Bat&lt;/b&gt; reaches 500</h1>' in html
+    assert '<p class="dateline">June 4 · 1998</p><p class="byline">Staff writer</p>' in html
+    assert '<p>Ann Bat is with Boston.</p><p>He hit it &amp; ran.</p>' in html
+    assert ('<p class="nav"><a href="/news/30L1998/">&larr; 1998 Major Leagues</a> &middot; '
+            '<a href="/news/">All leagues</a></p>') in html
+    assert_secure(headers, body)
+
+
+@pytest.mark.parametrize('path', ['/news/30L1998/moves/abc', '/news/30L1998/moves/1234567', '/news/30L1998/moves/9',
+                                  '/news/30L1998/moves/7', '/news/30L1998/moves/8', '/news/30L1998/moves/4/',
+                                  '/news/30L1998/moves/-1', '/news/30L1998/moves/4.json'])
+def test_bad_or_missing_or_unreadable_note_is_404(seeded, path):
+    write(seeded.root / '30L1998' / 'moves' / 'notes' / '4.json', move_note(move('signed', 300, 'Pat Smith')))
+    write(seeded.root / '30L1998' / 'moves' / 'notes' / '7.json', '{"kind": ')
+    write(seeded.root / '30L1998' / 'moves' / 'notes' / '8.json', dict(move_note(move('signed', 300, 'Pat')),
+                                                                       kind='recap'))
+    status, headers, body = seeded.get(path)
+    assert status == 404
+    assert_secure(headers, body)
+
+
+def test_side_box_shows_the_five_newest_lines_and_only_with_events(seeded):
+    assert 'class="transactions"' not in seeded.get('/news/30L1998/')[2].decode()
+    moves_log(seeded.root, [])
+    assert 'class="transactions"' not in seeded.get('/news/30L1998/')[2].decode()
+    moves_log(seeded.root, [move('retired', 100 + i, 'Player %d' % i, pos='P', age=None, frm='Ash', to='')
+                            for i in range(1, 8)])
+    html = seeded.get('/news/30L1998/')[2].decode()
+    assert ('<section class="transactions"><h2>Transactions</h2><ul class="moves">') in html
+    assert html.index('Retired: Player 7') < html.index('Retired: Player 3')
+    assert 'Retired: Player 2' not in html and 'Retired: Player 1' not in html
+    assert '<a href="/news/30L1998/moves">All transactions</a>' in html
+    assert html.index('class="transactions"') < html.index('<caption>American League East</caption>')
+
+
+def test_side_box_is_on_the_first_page_only(seeded):
+    moves_log(seeded.root, [move('signed', 300, 'Pat Smith')])
+    for i in range(31):
+        write(seeded.root / '30L1998' / 'recaps' / ('%016x.json' % i), story('%016x' % i, slot=i))
+    assert 'class="transactions"' in seeded.get('/news/30L1998/')[2].decode()
+    assert 'class="transactions"' not in seeded.get('/news/30L1998/?page=2')[2].decode()

@@ -150,12 +150,14 @@ def association(asn_path):
             games.append({'month': g['month'], 'day': g['day'], 'slot': g['slot'], 'away': g['away'],
                           'home': g['home'], 'away_runs': g['ar'], 'home_runs': g['hr'], 'played': g['played'],
                           'innings': g['innings']})
-    name = ''
+    name, season_year = '', None
     for key, p in mem.get('a', []):
         if key != league.TEMPLATE_KEY and len(p) >= league.ASN_TROPHY:
             name = league._cstr(p, league.ASN_NAME, league.ASN_STR - 1)
+            # The season date: a birth-style serial, read by _born. A career league keeps its name, not its year.
+            season_year = _born(struct.unpack_from('<I', p, 14)[0])
             break
-    return {'name': name, 'teams': teams, 'games': games}
+    return {'name': name, 'season_year': season_year, 'teams': teams, 'games': games}
 
 
 BAT_KEYS = ('ab', 'h', '2b', '3b', 'hr', 'rbi', 'bb', 'so', 'r', 'sb')
@@ -236,6 +238,17 @@ def find(directory, filename):
         if f.lower() == want:
             return os.path.join(directory, f)
     return None
+
+
+def free_agents(pyf_path):
+    """{player id} of the free agents in a PYF file: 'PPD:' at 0, a u32 at 4, an i16 count at 8, then count u16 ids at
+    10. Raises ValueError when the file is not one of these (a short or partly written file included)."""
+    with open(pyf_path, 'rb') as fh:
+        b = fh.read()
+    n = struct.unpack_from('<h', b, 8)[0] if len(b) >= 10 else -1
+    if b[:4] != b'PPD:' or n < 0 or len(b) < 10 + 2 * n:
+        raise ValueError('%s: not a PYF file' % pyf_path)
+    return set(struct.unpack_from('<%dH' % n, b, 10))
 
 
 def box_files(stats_dir, assn):
