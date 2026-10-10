@@ -90,3 +90,6 @@ Public repo (MIT) of tools and research for FPS Baseball Pro '98. Python codecs 
   file under news/ must be added to that list, or the hosted feature silently does nothing.
 - Player development focus: news/modbridge.py writes <game>/Mods/focus.txt (pid birth kind assn) and aging.dll
   re-reads it when it changes; at most 5 per association.
+- League News home (in game and on the web) lists the news watcher's data folders, not Assn/: an association shows
+  there only after a watcher pass. A scratch game needs `news/watch.py --game G --data D --once --no-llm` first, or its
+  association pages (and their Player development and Offseason trades links) cannot be reached from the menu.
