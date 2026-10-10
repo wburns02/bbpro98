@@ -130,8 +130,8 @@ def test_the_preseason_overview_offers_the_run(gm):
                     'link.1': 'Player development\t/news/development/TEST77/',
                     'link.2': 'League news\t/news/TEST77/'}
     assert body.split('\n') == [TITLE, '=' * len(TITLE), '', 'No trades yet this season.',
-                                "Computer-run teams trade bench players to fill each other's needs. "
-                                "Human-run teams only get proposals."]
+                                "Computer-run teams trade bench players to fill each other's needs.",
+                                'Human-run teams only get proposals.']
 
 
 def test_the_started_overview_says_when_trades_run_and_offers_no_run(gm, monkeypatch):
@@ -151,6 +151,13 @@ def test_the_overview_lists_the_season_trades_and_each_proposal_with_its_status(
                                     '2. Reds get Al Ames, Cubs get Cy Young (rejected)']
     assert links_of(head) == [('Accept 1', GM + '/accept/1'), ('Reject 1', GM + '/reject/1'),
                               ('Player development', '/news/development/TEST77/'), ('League news', '/news/TEST77/')]
+
+
+def test_a_season_with_no_proposals_says_none(gm):
+    write_ledger(gm, trades=[NAMED_TRADE], proposals=[])
+    head, body = page(gm.ctx, gm.spool, GM + '/')
+    assert body.split('\n')[3:] == ['Trades made (1):', 'Reds trade Pat Doe to Cubs for Bo Bee', '',
+                                    'Proposals for your teams:', 'None.']
 
 
 def test_a_ledger_for_an_older_season_counts_as_missing(gm):

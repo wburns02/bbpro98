@@ -850,13 +850,15 @@ def _gm_reply(ctx, lg, status=200, note=''):
                                                           p['a_gives_name'], p['status']))
             if p['status'] == 'open':
                 links += [('Accept %d' % n, base + 'accept/%d' % n), ('Reject %d' % n, base + 'reject/%d' % n)]
+        if not led['proposals']:
+            body.append('None.')
     else:
         body += ['No trades yet this season.']
         if lg.started:
             body += ['Trades run in the preseason, before the first game.']
         else:
-            body += ["Computer-run teams trade bench players to fill each other's needs. "
-                     "Human-run teams only get proposals."]
+            body += ["Computer-run teams trade bench players to fill each other's needs.",
+                     'Human-run teams only get proposals.']
             links += [('Run computer trades', base + 'run')]
     links += [('Player development', '/news/development/%s/' % lg.stem), ('League news', '/news/%s/' % lg.stem)]
     text = ([note, ''] if note else []) + _heading(title) + body
