@@ -20,6 +20,7 @@ path, `/websockify` included; a visitor without one gets the PIN form. A sign-in
 |---|---|---|
 | `systemd/bbpro98-xvfb.service` | `~/.config/systemd/user/` | virtual display `:52` |
 | `systemd/bbpro98-vnc.service` | same | x11vnc on that display, localhost only, shared |
+| `vnc-nudge.sh` | `/mnt/data/bbpro98/` (mode 755) | x11vnc `-afteraccept` hook: nudges the pointer so an idle game repaints for a new viewer |
 | `systemd/bbpro98-web.service` | same | websockify serving noVNC from the web dir |
 | `systemd/bbpro98-game.service` | same | the game; restarts when it exits |
 | `run-game.sh` | `/mnt/data/bbpro98/bin/` | starts `bblaunch.exe`, waits for the prefix's wineserver |
