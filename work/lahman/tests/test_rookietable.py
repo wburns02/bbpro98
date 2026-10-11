@@ -56,3 +56,22 @@ def test_header_shape():
     assert '#define RQ_POINTS 21' in h and '#define RQ_CLASSES %d' % len(T.CLASSES) in h
     assert h.count('/* h_contact */') == 2 and 'RC_P_PITCH' in h
     assert '{10,11,12,' in h
+
+
+def test_apply_tails_replaces_top_quantiles_and_notes_them():
+    tabs = {name: (list(range(T.POINTS)), list(range(10, 10 + T.POINTS))) for name, _, _ in T.CLASSES}
+    done = T.apply_tails(tabs, ['h_power=27,28,40'])
+    assert done == {'H_POWER': 3}
+    assert tabs['H_POWER'][1][-4:] == [27, 27, 28, 40] and tabs['H_POWER'][0] == list(range(T.POINTS))
+    assert tabs['H_CONTACT'][1] == list(range(10, 10 + T.POINTS))
+    h = T.header(tabs, 5, 6, 1997, done)
+    assert '27,27,28,40},  /* h_power (top 3 set by --tail) */' in h
+    assert h.count('/* h_power */') == 1          # the generated row keeps its plain label
+
+
+@pytest.mark.parametrize('spec', ['h_nope=50', 'h_power=', 'h_power=a,b', 'h_power=10', 'h_power=40,30',
+                                  'h_power=50,100', 'h_power=' + ','.join(['50'] * T.POINTS)])
+def test_apply_tails_rejects_bad_specs(spec):
+    tabs = {name: (list(range(T.POINTS)), list(range(10, 10 + T.POINTS))) for name, _, _ in T.CLASSES}
+    with pytest.raises(ValueError):
+        T.apply_tails(tabs, [spec])
