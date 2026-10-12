@@ -18,7 +18,9 @@ mods\rookies.dll   Generated players get ratings drawn like real players', so ne
 mods\playercard.dll  Click a player row on the League Statistics screen to open his career card.
 mods\modmenu.dll   The main menu's WWW SITE button opens a Mods window: the loaded mods, League News, Create a
                    Player and Build a Season. The three tools need the bridge below; without it they time out
-                   with a message and the game carries on.
+                   with a message and the game carries on. League Management's Create New Association opens the
+                   Build a Season window as New Association (pick the season year), with a button to the game's
+                   own structures dialog; [modmenu] newassn=0 leaves that command to the game.
 mods\steal.dll     Experimental base-stealing switch (off unless you set [steal] mode).
 bbfix.ini.sample   Copy to bbfix.ini and edit.
 SHA256SUMS.txt     Checksums of every file above.

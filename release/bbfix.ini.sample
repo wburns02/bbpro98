@@ -17,6 +17,8 @@ map=on
 [modmenu]
 ; enable=1 takes over the WWW SITE button; 0 leaves the stock button.
 enable=1
+; newassn=1 takes over League Management's Create New Association (a season-year window); 0 leaves the game's command.
+newassn=1
 
 [steal]
 ; pass (stock), zero, max, or scale with pct=100.

@@ -169,7 +169,7 @@ def main():
         shutil.rmtree(tree, ignore_errors=True)
         os.makedirs(os.path.join(tree, 'Assn'))
         os.makedirs(os.path.join(tree, 'Stats'))
-        ctx = types.SimpleNamespace(game=tree, data=tree)
+        ctx = types.SimpleNamespace(game=tree, data=tree, db=None, templates=None)
         sp = fresh('real')
         stop, err = threading.Event(), []
 
