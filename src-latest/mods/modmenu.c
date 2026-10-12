@@ -8,9 +8,11 @@
    Hook: detour on EZShell.dll VA 0x6a006370, the WWW SITE button handler, void __fastcall handler(menu_screen): this in
    ECX, no stack arguments, plain ret. Its prolog 81 ec 54 02 00 00 (sub esp,0x254) is position independent. The original
    is never called (it would open a browser).
-   New Association: detour on BBShell.dll VA 0x680068d0, menu_event_handler void __thiscall (void *self, short cmd),
-   ret 4. Its prolog 56 8b f1 66 8b 4c 24 08 (push esi; mov esi,ecx; mov cx,[esp+8]) is position independent. Only
-   command 0xe (MENU.DAT "Create New Association...") is taken; every other command runs the original via orig_menu.
+   New Association: detour on BBShell.dll VA 0x68004ef0, the screen-8 entry (screen table 0x6808aad0[8]) that the
+   "Create New Association..." menu item runs through its vtable (call [eax+0x28] at 0x68047262); void, no stack
+   arguments, plain ret. Its prolog 64 a1 00 00 00 00 (mov eax,fs:[0]) is position independent. The original runs when
+   the game's structures button is pressed or no window could be made. (0x680068d0 is the New Association screen's
+   own button handler: its command 0xe is the stock dialog's OK button, so it is not hooked.)
 
    Spool: a request is written as q<ID>.tmp and renamed to q<ID>.req in <exe dir>\Mods\spool\; the bridge (news/modbridge.py)
    answers with r<ID>.rsp, which the mod polls for on a 250 ms timer, reads, deletes and parses.
@@ -1396,19 +1398,16 @@ static int run_newassn(void) {
 static void (__attribute__((fastcall)) *orig_www)(void *self);
 static void __attribute__((fastcall)) BB_HANDLER h_www(void *self) { (void)self; run_menu(); }
 
-/* BBShell menu_event_handler (VA 0x680068d0): command 0xe is "Create New Association...", whose stock path is
-   FUN_68007050 (init_new_association, which names the dialog "New Association") and FUN_68005720. Other commands
-   pass through untouched. */
-#define CMD_NEW_ASSN 0xe
-static void (BB_THISCALL *orig_menu)(void *self, short cmd);
-static void BB_THISCALL h_menu(void *self, short cmd) {
-    if (cmd != CMD_NEW_ASSN || run_newassn()) orig_menu(self, cmd);
+/* BBShell screen-8 entry (VA 0x68004ef0): the "Create New Association..." menu item's action. It makes the New
+   Association screen object (0x6808d804) and opens the stock structures dialog (FUN_68005720). */
+static void (*orig_newassn)(void);
+static void h_newassn(void) {
+    if (run_newassn()) orig_newassn();
 }
 
 BB_EXPORT int bbmod_init(const BBModAPI *a) {
     static const uint8_t www_prolog[6] = {0x81, 0xec, 0x54, 0x02, 0x00, 0x00};   /* sub esp,0x254 */
-    /* push esi; mov esi,ecx; mov cx,[esp+8] */
-    static const uint8_t menu_prolog[8] = {0x56, 0x8b, 0xf1, 0x66, 0x8b, 0x4c, 0x24, 0x08};
+    static const uint8_t newassn_prolog[6] = {0x64, 0xa1, 0x00, 0x00, 0x00, 0x00};       /* mov eax,fs:[0] */
     api = a;
     if (a->version != BBMOD_API_VERSION) return 1;
     if (!a->ini_int("modmenu", "enable", 1)) {
@@ -1418,7 +1417,7 @@ BB_EXPORT int bbmod_init(const BBModAPI *a) {
     if (a->detour("EZShell.dll", 0x6a006370, www_prolog, 6, (void *)h_www, (void **)&orig_www) < 0) return 3;
     /* a refused New Association hook keeps the Mods menu: the game's command runs as stock */
     if (!a->ini_int("modmenu", "newassn", 1)) a->log("modmenu: New Association left to the game");
-    else if (a->detour("BBShell.dll", 0x680068d0, menu_prolog, 8, (void *)h_menu, (void **)&orig_menu) < 0)
+    else if (a->detour("BBShell.dll", 0x68004ef0, newassn_prolog, 6, (void *)h_newassn, (void **)&orig_newassn) < 0)
         a->log("modmenu: New Association hook refused");
     a->log("modmenu: registered");
     return 0;

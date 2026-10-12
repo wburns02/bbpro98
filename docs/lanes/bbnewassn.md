@@ -7,7 +7,7 @@ unchanged.
 ## What changed
 
 - `src-latest/mods/modmenu.c`
-  - detour on `BBShell.dll` VA `0x680068d0` (menu_event_handler), command `0xe` only; other commands go to `orig_menu`.
+  - detour on `BBShell.dll` VA `0x68004ef0` (the menu item's screen-8 entry; see Gate correction below).
   - the Build a Season window is now `open_build(owner, newassn)`: same class, same `build_proc`; the New Association
     mode adds the game's-structures button, a bridge check on open (`ping`), and a 290-pixel client height.
   - the message loop moved out of `run_menu` into `run_loop`, shared by both windows.
@@ -93,3 +93,24 @@ Setup: `[mods] load` includes `mods\modmenu.dll`; `[modmenu] newassn=1` or no ke
 
 Reading the result: step 4 is the proof the season was made. Steps 5 and 7 prove the stock path and the no-bridge
 text. Step 5 also shows the game is not left in a bad state: after our window closes, League Management works.
+
+## Gate correction (orchestrator, in game, 2026-10-12)
+
+The hook above was wrong. In the scratch game, a probe that logged every call to `0x680068d0` saw only `cmd=0` timer
+ticks while Main > Create New Association opened the stock dialog; `cmd=14` arrived only when the stock dialog's **OK**
+was pressed. `0x680068d0` is the New Association screen's own button handler (the gadget dialog 0xc callback
+`0x68006150` calls it), so the lane's detour left the menu stock and hijacked the stock OK button.
+
+What the menu really runs: the menu item calls its action through its vtable (`call [eax+0x28]` at `0x68047262`, a probe
+on the target logged return address `0x68047265`), and the action is `0x68004ef0`, screen table `0x6808aad0[8]`
+(dumped from the file: slot 8 = `0x68004ef0`). That function (not decompiled in the dumps) makes the 0x1ef8-byte screen
+object at `0x6808d804` and calls `FUN_68005720` (the stock dialog) when the object's flag at +4 is set. It is not
+reached through the screen switch `FUN_68046430` (a probe there saw only screen 6). Entry bytes `64 a1 00 00 00 00`
+(`mov eax,fs:[0]`), plain `ret`, no stack arguments. `FUN_68005720` itself cannot be detoured: its `mov ecx,0x6808dd10`
+at +3 is under a base relocation and bbfix refuses it.
+
+Fix: modmenu detours `0x68004ef0` (6 bytes) instead; the original runs when the game's structures button is pressed.
+Checked in the scratch game (:95, lane bridge with --db/--templates): the menu opens the New Association window with
+"Bridge: ready"; 1998 > Build gave "Built 1998 Major Leagues (30L1998)" and "1998 Major Leagues" in Load Association;
+"Game's own structures..." opens the stock dialog and its Cancel returns to Association Data with the menus working;
+Close leaves the game usable.
