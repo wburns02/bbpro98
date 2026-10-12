@@ -20,8 +20,12 @@ P_THROWS = 0x42         # 1 L, 2 R (THROWS)
 P_POS = 0x44            # 1..9: the position in POSITIONS
 P_CUR = 0x5d            # the current ratings block, bytes 0..99
 P_STRIKEOUT = 0x76
+P_PEAK = 0x46           # the peak ratings block, the same 23 entries as the current block (P_CUR) 0x17 bytes earlier
 R_CONTACT, R_POWER, R_SPEED, R_STAMINA, R_CONTROL, R_FIELD = 0, 1, 2, 5, 6, 14   # offsets in the ratings block
+RATING_INDEX = {'contact': 0, 'power': 1, 'speed': 2, 'arm': 3, 'hold': 4, 'stamina': 5, 'control': 6}
+PITCH_CODES = ('FB', 'CB', 'SI', 'SL', 'CU', 'SC', 'KN')    # block entries 7..13, in this order
 POSITIONS = ('P', 'C', '1B', '2B', '3B', 'SS', 'LF', 'CF', 'RF')
+FLD_SIZE = 150          # a fielding line: a scope, a type, the id, then 9 blocks of 8 u16 (stats.FIELDING)
 BATS = {1: 'L', 2: 'R', 3: 'S'}
 THROWS = {1: 'L', 2: 'R'}
 SIDE = 0x8000           # ORed into the ids of one side's rows in a box score
@@ -58,6 +62,25 @@ def names(pyr_path):
         name = _pname(p)
         if pid >= 100 and name:
             out[pid] = name
+    return out
+
+
+def record(pyr_path, pid):
+    """The deciphered 192-byte record of player pid in a PYR file, or None."""
+    for p in _records(pyr_path):
+        if p[0] | p[1] << 8 == pid:
+            return p
+    return None
+
+
+def ratings(p):
+    """{name: (now, peak)} from a deciphered PYR record: the hitting and pitching ratings by name (contact, power,
+    speed, arm, hold, stamina, control), the pitch slots by code (FB ... KN), the fielding by position code (P ... RF),
+    and strikeout as (now, None), which has no peak."""
+    out = {name: (p[P_CUR + i], p[P_PEAK + i]) for name, i in RATING_INDEX.items()}
+    out.update((code, (p[P_CUR + 7 + k], p[P_PEAK + 7 + k])) for k, code in enumerate(PITCH_CODES))
+    out.update((pos, (p[P_CUR + R_FIELD + k], p[P_PEAK + R_FIELD + k])) for k, pos in enumerate(POSITIONS))
+    out['strikeout'] = (p[P_STRIKEOUT], None)
     return out
 
 
@@ -238,6 +261,26 @@ def season_lines(dat_path, scope=1):
                 line = dict(zip(fields, u[3:]))
                 line['h'] = line['h1b'] + line['h2b'] + line['h3b'] + line['hr']
                 out[kind][u[2]] = line
+    return out
+
+
+def career_games(dat_path):
+    """{player id: {position: games}} from the fielding member (ft.dat, found by name) of a Stats DAT file: the career
+    scope's games at each position, for the players with any. Positions as in POSITIONS."""
+    with open(dat_path, 'rb') as fh:
+        d = fh.read()
+    _, by_mem, members, *_ = ctree.parse(d)
+    num = next((m['num'] for m in members if m['name'].lower() == 'ft.dat'), None)
+    out = {}
+    for r in by_mem.get(num, []):
+        p = d[r.off:r.off + r.pl]
+        if len(p) != FLD_SIZE or p[0] == 0xFF:
+            continue
+        u = _u16s(p)
+        if u[0] == 2 and u[1] == 2:
+            games = {POSITIONS[k]: u[3 + 8 * k + 2] for k in range(len(POSITIONS)) if u[3 + 8 * k + 2]}
+            if games:
+                out[u[2]] = games
     return out
 
 

@@ -14,6 +14,9 @@
    the game's structures button is pressed or no window could be made. (0x680068d0 is the New Association screen's
    own button handler: its command 0xe is the stock dialog's OK button, so it is not hooked.)
 
+   Export: mm_open_page(path) runs the News reader at path for another mod (playercard.dll's player card) and returns when
+   it is closed; 0 when the bridge answered, 1 when it did not.
+
    Spool: a request is written as q<ID>.tmp and renamed to q<ID>.req in <exe dir>\Mods\spool\; the bridge (news/modbridge.py)
    answers with r<ID>.rsp, which the mod polls for on a 250 ms timer, reads, deletes and parses.
 
@@ -1026,8 +1029,11 @@ typedef struct {
     char cur[PATH_LEN];
     char hist[HIST_MAX][PATH_LEN];
     int nhist;
+    char first[PATH_LEN];               /* the page the reader opens at */
     MMResp pg;                          /* the page on screen: its links are read from here */
 } NewsState;
+
+static int page_ok;                     /* set when the bridge answered a page while mm_open_page's reader is up */
 
 static void news_done(Win *w, MMResp *r, const char *err) {
     NewsState *st = (NewsState *)w;
@@ -1036,6 +1042,7 @@ static void news_done(Win *w, MMResp *r, const char *err) {
     int i, n;
     (void)err;
     if (!r) return;
+    page_ok = 1;
     t = mm_get(r, "title");
     SetWindowTextA(w->hwnd, t && *t ? t : "League News");
     t = mm_get(r, "path");
@@ -1117,7 +1124,7 @@ static LRESULT CALLBACK news_proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
         st->w.hwnd = h;
         open_windows++;
         build_news(st);
-        news_go(st, "/news/", 0);
+        news_go(st, st->first, 0);
         return 0;
     case WM_TIMER:
         if (wp == TIMER_POLL) win_poll(&st->w);
@@ -1147,15 +1154,20 @@ static LRESULT CALLBACK news_proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
     return DefWindowProcA(h, m, wp, lp);
 }
 
-static void open_news(HWND owner) {
+/* opens the reader at path; 0 when it could not be opened */
+static int open_reader(HWND owner, const char *path) {
     NewsState *st = calloc(1, sizeof *st);
-    if (!st) return;
+    if (!st) return 0;
+    snprintf(st->first, sizeof st->first, "%s", path);
     if (!make_win("BBModNews", "League News", 700, 500, owner, st)) {
         free(st);
-        return;
+        return 0;
     }
     EnableWindow(owner, FALSE);
+    return 1;
 }
+
+static void open_news(HWND owner) { open_reader(owner, "/news/"); }
 
 /* ---------------------------------------------------------------- Build a Season window */
 
@@ -1393,6 +1405,26 @@ static int run_newassn(void) {
     }
     run_loop(owner);
     return stock_asked;
+}
+
+/* The News reader at path, run like the menu (the same CBT hook and message loop) for another mod's window: a player
+   card's link to a page. Returns when the reader is closed. 0 when the bridge answered the page; 1 when it did not (no
+   spool, no answer in time, or a bad answer), in which case the reader shows the same message the menu shows. */
+BB_EXPORT int mm_open_page(const char *path) {
+    HWND owner;
+    init_once();
+    owner = GetActiveWindow();
+    if (!owner) owner = GetForegroundWindow();
+    open_windows = 0;
+    page_ok = 0;
+    cbt_hook = SetWindowsHookExA(WH_CBT, cbt_proc, 0, GetCurrentThreadId());
+    if (!open_reader(owner, path)) {
+        if (cbt_hook) UnhookWindowsHookEx(cbt_hook);
+        cbt_hook = 0;
+        return 1;
+    }
+    run_loop(owner);
+    return page_ok ? 0 : 1;
 }
 
 static void (__attribute__((fastcall)) *orig_www)(void *self);

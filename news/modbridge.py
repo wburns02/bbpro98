@@ -3,7 +3,8 @@ the game's Mods/spool directory. The game runs in a sandbox with no network, so 
 repo's own Python: league news pages (server.route), the player development pages under /news/development/ and the
 Mods/focus.txt they set (focus.py), which aging.dll reads at each offseason, the offseason trade pages under /news/gm/
 (aigm.py: the computer teams' preseason trades, written into the ASN, and each human team's proposals to accept or
-reject), Create a Player (create.validate and createweb.commit), and a season built from the Lahman database
+reject), the player cards under /news/card/ (the Team Statistics screen's click, playercard.dll), Create a Player
+(create.validate and createweb.commit), and a season built from the Lahman database
 (work/lahman/build.py, run as a subprocess). Standard library only.
 
 The DLL writes q<ID>.tmp and renames it to q<ID>.req. The bridge claims the request by renaming it to q<ID>.work,
@@ -33,6 +34,8 @@ import create
 import createweb
 import focus
 import gamedata
+import recap
+import scout
 import server
 import watch
 
@@ -454,6 +457,8 @@ def _news(ctx, req):
         return [('status', 'error')], 'Bad request.'
     if _in_development(path):
         return _development(ctx, path)
+    if _in_card(path):
+        return _card(ctx, path)
     if _in_gm(path):
         return _gm(ctx, path)
     data = pathlib.Path(ctx.data)     # server.route joins paths with /
@@ -565,7 +570,7 @@ def _league(ctx, stem):
     pyr = gamedata.find(os.path.join(ctx.game, 'Assn'), stem + '.PYR')
     return types.SimpleNamespace(stem=stem, label=createweb._label(stem, asn), year=info['season_year'],
                                  teams=info['teams'], players=gamedata.players(pyr) if pyr else {},
-                                 births=focus.births(pyr) if pyr else {})
+                                 births=focus.births(pyr) if pyr else {}, pyr=pyr)
 
 
 def _mods_dir(game, make=False):
@@ -743,6 +748,241 @@ def _development(ctx, path):
     if built is None:
         return _news_reply(404, path, 'Not found', 'Not found.', [])
     return _news_reply(*built)
+
+
+# The player card under /news/card/<STEM>/p/<pid>: what the game's card shows for one player, as text for the Mods menu's
+# reader. It reads the association's files (ASN, PYR, PYF, Stats) and the watcher's data folder, which need not have had
+# a pass. Ratings are shown now and at peak; a stats row is shown for each period the stats file has for him.
+CARD_RE = re.compile(r'/news/card/([A-Za-z0-9]{1,8})/p/([0-9]{1,5})')
+CARD_NEWS = 10                  # news items a card lists, newest first
+CARD_SCAN = 2000                # story files searched for a name: the newest by modification time
+CARD_PERIODS = ((0, 'Last 7 days'), (1, 'This season'), (3, 'Last season'), (2, 'Career'))     # (stats scope, label)
+BAT_COLS = ('G', 'AB', 'R', 'H', '2B', '3B', 'HR', 'RBI', 'BB', 'SO', 'SB', 'AVG', 'OBP', 'SLG')
+PIT_COLS = ('G', 'W', 'L', 'SV', 'IP', 'H', 'ER', 'BB', 'SO', 'HR', 'ERA', 'WHIP')
+HIT_RATINGS = ('contact', 'power', 'speed', 'arm')
+PIT_RATINGS = ('stamina', 'control', 'hold', 'strikeout')
+NO_RATING = '-'
+
+
+def _in_card(path):
+    """True for /news/card and anything beneath it: those pages are the bridge's own, never server.route's."""
+    page = urllib.parse.urlsplit(path).path
+    return page == '/news/card' or page.startswith('/news/card/')
+
+
+def _rate(num, den):
+    """A rate as the game prints it: .xyz, or 1.000 at one; '---' with nothing to divide by."""
+    if den <= 0:
+        return '---'
+    v = round(1000 * num / den)
+    return '%d.%03d' % divmod(v, 1000) if v >= 1000 else '.%03d' % v
+
+
+def _bat_row(label, b):
+    """One batting period as the card's row, from a gamedata.season_lines batting line."""
+    tb = b['h1b'] + 2 * b['h2b'] + 3 * b['h3b'] + 4 * b['hr']
+    counts = (b['g'], b['ab'], b['r'], b['h'], b['h2b'], b['h3b'], b['hr'], b['rbi'], b['bb'], b['so'], b['sb'])
+    on_base = b['h'] + b['bb'] + b['hbp']
+    reach = b['ab'] + b['bb'] + b['hbp'] + b['sf']
+    return [label] + [str(n) for n in counts] + [_rate(b['h'], b['ab']), _rate(on_base, reach), _rate(tb, b['ab'])]
+
+
+def _pit_row(label, q):
+    """One pitching period as the card's row, from a gamedata.season_lines pitching line."""
+    outs = q['outs']
+    era = '---' if not outs else '%.2f' % (27 * q['er'] / outs)
+    whip = '---' if not outs else '%.2f' % (3 * (q['h'] + q['bb']) / outs)
+    return [label, str(q['g']), str(q['w']), str(q['l']), str(q['sv']), '%d.%d' % divmod(outs, 3), str(q['h']),
+            str(q['er']), str(q['bb']), str(q['so']), str(q['hr']), era, whip]
+
+
+def _grade(value):
+    return NO_RATING if value is None else str(scout.grade(value))
+
+
+def _rating_rows(rec, pos):
+    """The card's rating rows (name, now grade, peak grade): a pitcher's own set and the pitches he has (now or peak
+    above zero), a hitter's four hitting ratings and his fielding at his own position."""
+    ratings = gamedata.ratings(rec)
+    if pos == 'P':
+        keys = PIT_RATINGS
+    else:
+        keys = HIT_RATINGS + ((pos,) if pos in gamedata.POSITIONS else ())
+    rows = []
+    for k in keys:
+        now, peak = ratings[k]
+        label = create.RATING_LABELS.get(k, 'Fielding (%s)' % k)
+        rows.append([label, _grade(now), _grade(peak)])
+    if pos == 'P':
+        for code in gamedata.PITCH_CODES:
+            now, peak = ratings[code]
+            if now or peak:
+                rows.append([create.PITCH_LABELS[code], _grade(now), _grade(peak)])
+    return rows
+
+
+def _off_roster(ctx, lg, pid):
+    """'Free agent' for a player in the association's free agent file, 'Retired' for one in none of the rosters, or 'Not
+    on a roster' when that file cannot be read."""
+    pyf = gamedata.find(os.path.join(ctx.game, 'Assn'), lg.stem + '.PYF')
+    try:
+        free = gamedata.free_agents(pyf) if pyf else None
+    except (OSError, ValueError):
+        free = None
+    if free is None:
+        return 'Not on a roster'
+    return 'Free agent' if pid in free else 'Retired'
+
+
+def _card_stats(ctx, lg, pid):
+    """(batting rows, pitching rows, career games by position) for one player from the association's Stats DAT: a row
+    for each period the file has him in, none when the association has no stats file."""
+    stats_dir = os.path.join(ctx.game, 'Stats')
+    dat = gamedata.find(stats_dir, lg.stem + '.DAT') if os.path.isdir(stats_dir) else None
+    if dat is None:
+        return [], [], {}
+    bat, pit = [], []
+    for scope, label in CARD_PERIODS:
+        lines = gamedata.season_lines(dat, scope)
+        if pid in lines['bat']:
+            bat.append(_bat_row(label, lines['bat'][pid]))
+        if pid in lines['pit']:
+            pit.append(_pit_row(label, lines['pit'][pid]))
+    return bat, pit, gamedata.career_games(dat).get(pid, {})
+
+
+def _strings_of(value):
+    """Every string inside a decoded JSON value."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for v in value.values():
+            yield from _strings_of(v)
+    elif isinstance(value, list):
+        for v in value:
+            yield from _strings_of(v)
+
+
+def _int_of(value):
+    return value if type(value) is int else 0
+
+
+def _move_key(ev):
+    """A transaction event's place in time as (season, month, day, 0). An offseason event is dated to the season before
+    the one it is named for, after that season's last day."""
+    year = _int_of(ev.get('year'))
+    date = ev.get('date') if isinstance(ev.get('date'), str) else ''
+    if date == 'Offseason':
+        return (year - 1, 13, 0, 0)
+    month, _, day = date.partition(' ')
+    if month in recap.MONTHS and day.isdigit():
+        return (year, recap.MONTHS.index(month) + 1, int(day), 0)
+    return (year, 0, 0, 0)
+
+
+def _recent_stories(folder):
+    """(key, story) for the CARD_SCAN newest story files of a watcher folder, by modification time."""
+    rdir = os.path.join(folder, 'recaps')
+    try:
+        names = [n for n in os.listdir(rdir) if n.endswith('.json') and server.KEY_RE.fullmatch(n[:-len('.json')])]
+    except OSError:
+        return []
+
+    def mtime(name):
+        try:
+            return os.path.getmtime(os.path.join(rdir, name))
+        except OSError:
+            return 0.0
+    out = []
+    for name in sorted(names, key=mtime, reverse=True)[:CARD_SCAN]:
+        rec = server._read_obj(os.path.join(rdir, name))
+        if rec is not None:
+            out.append((name[:-len('.json')], rec))
+    return out
+
+
+def _watch_folder(ctx, stem):
+    """The watcher's data folder for an association (matched without case), or None when there is none."""
+    if not os.path.isdir(ctx.data):
+        return None
+    folder = gamedata.find(ctx.data, stem)
+    return folder if folder and os.path.isdir(folder) else None
+
+
+def _card_news(folder, lg, pid):
+    """The news that names a player, newest first, as (label, path): the game stories from the watcher's folder whose
+    text has his name (a story's place in time is its season, which is the association's, then month, day and slot),
+    and the transaction log's events for his id (_move_key). [] with no folder."""
+    if folder is None:
+        return []
+    stem, year = os.path.basename(folder), lg.year or 0
+    pattern = re.compile(r'(?<!\w)%s(?!\w)' % re.escape(lg.players[pid]['name']))
+    items = []
+    for key, rec in _recent_stories(folder):
+        if pattern.search(' '.join(_strings_of(rec))):
+            head = rec.get('headline')
+            label = head if isinstance(head, str) and head else '(untitled)'
+            items.append(((year, _int_of(rec.get('month')), _int_of(rec.get('day')), _int_of(rec.get('slot'))), label,
+                          '/news/%s/%s' % (stem, key)))
+    log = server._read_obj(os.path.join(folder, 'moves', 'log.json'))
+    events = log.get('events') if isinstance(log, dict) else None
+    for ev in events if isinstance(events, list) else []:
+        label = server._move_text(ev) if isinstance(ev, dict) and ev.get('pid') == pid else ''
+        if label:
+            note, path = ev.get('note'), '/news/%s/moves' % stem
+            if type(note) is int and server.NOTE_RE.fullmatch(str(note)) and \
+                    os.path.isfile(os.path.join(folder, 'moves', 'notes', '%d.json' % note)):
+                path = '/news/%s/moves/%d' % (stem, note)
+            items.append((_move_key(ev), label, path))
+    items.sort(key=lambda item: item[0], reverse=True)
+    return [(label, path) for _, label, path in items[:CARD_NEWS]]
+
+
+def _card_page(ctx, stem, pid):
+    """(title, text, links) for a player's card, or None when the game has no such association or player."""
+    lg = _league(ctx, stem)
+    if lg is None or pid not in lg.players:
+        return None
+    p, rec = lg.players[pid], gamedata.record(lg.pyr, pid)
+    tid = next((t for t in sorted(lg.teams) if pid in lg.teams[t]['roster']), None)
+    team = (lg.teams[tid]['name'] or 'Team %d' % tid) if tid is not None else _off_roster(ctx, lg, pid)
+    title = _who(p, lg.year)
+    lines = _heading(title) + ['Team: %s' % team, 'Position: %s' % (p['pos'] or '?')]
+    if lg.year is not None and p['born'] is not None:
+        lines.append('Age: %d' % (lg.year - p['born']))
+    if p['bats'] or p['throws']:
+        lines.append('Bats/throws: %s/%s' % (p['bats'] or '?', p['throws'] or '?'))
+    rows = _rating_rows(rec, p['pos'])
+    if rows:
+        lines += [''] + _grid([['Ratings', 'Now', 'Peak']] + rows)
+    bat, pit, games = _card_stats(ctx, lg, pid)
+    if bat:
+        lines += [''] + _grid([['Batting'] + list(BAT_COLS)] + bat)
+    if pit:
+        lines += [''] + _grid([['Pitching'] + list(PIT_COLS)] + pit)
+    if not bat and not pit:
+        lines += ['', 'No batting or pitching lines in the stats file.']
+    if games:
+        lines += ['', 'Career games by position: ' + ', '.join('%s %d' % (pos, games[pos])
+                                                              for pos in gamedata.POSITIONS if pos in games)]
+    kind = _focus_of(_read_focus(ctx.game), pid, lg.births[pid])
+    lines += ['', 'Current focus: %s' % kind if kind else 'No focus.']
+    folder = _watch_folder(ctx, lg.stem)
+    news = _card_news(folder, lg, pid)
+    lines += ['', 'News'] + (['- %s' % label for label, _ in news] or ['No news yet.'])
+    links = list(news) + [('Player development', '/news/development/%s/p/%d' % (lg.stem, pid))]
+    if folder is not None:
+        links.append(('Association news', '/news/%s/' % os.path.basename(folder)))
+    return title, '\n'.join(lines), links
+
+
+def _card(ctx, path):
+    """The reply for a path under /news/card: the player's card, else Not found."""
+    m = CARD_RE.fullmatch(urllib.parse.urlsplit(path).path)
+    built = _card_page(ctx, m.group(1), int(m.group(2))) if m else None
+    if built is None:
+        return _news_reply(404, path, 'Not found', 'No such association or player.' if m else 'Not found.', [])
+    return _news_reply(200, path, *built)
 
 
 # The offseason trades under /news/gm/ (aigm.py). The season's ledger is <data>/<STEM>/gm.json; the ASN is written only
