@@ -38,8 +38,8 @@ Public repo (MIT) of tools and research for FPS Baseball Pro '98. Python codecs 
   pointer input, and at season end the 'Updating association data' box stays on screen even with input. Move the
   pointer before every screenshot (seasonloop.look) and judge the season by games played, not by the screen.
 - An in-game season step (seasonloop.season, a plan step that sims) must open the League Schedule (ctrl+k from
-  Association Data) before Action > Simulate...; from any other screen the menu item is absent and the step waits for
-  nothing. A full season takes 60 to 90 minutes: never run it through `capped` (its 1800 s timeout kills the sim
+  Association Data) before Action > Simulate...; from Association Data that click opens Reset Teams instead and the
+  run sims nothing. A full season takes 60 to 90 minutes: never run it through `capped` (its 1800 s timeout kills the sim
   mid-write), use a plain `timeout 7800` in the background.
 - Lahman pitch ratings: never copy a donor's pitches verbatim; shift them to the fitted stuff (ratings.stuff). Sim ERA
   moves about 0.1 per point of mean pitch rating, so one cloned ace arsenal gives a sub-1.00 ERA.
