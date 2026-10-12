@@ -1060,14 +1060,24 @@ def _career(ctx, lg, pid, kind, first, last, born):
         r['team'] = _short_team(r['team'])            # the archive keeps the team's full name
     stats_dir = os.path.join(ctx.game, 'Stats')
     dat = gamedata.find(stats_dir, lg.stem + '.DAT') if os.path.isdir(stats_dir) else None
+    keys = history.BAT_KEYS if kind == 'bat' else history.PIT_KEYS
     if dat is not None and lg.year is not None and not any(r['year'] == lg.year for r in sim):
         line = gamedata.season_lines(dat, 1)[kind].get(pid)
         tid = next((t for t in sorted(lg.teams) if pid in lg.teams[t]['roster']), None)
         if line and line.get('g'):
-            keys = history.BAT_KEYS if kind == 'bat' else history.PIT_KEYS
             sim.append(dict({k: line.get(k, 0) for k in keys}, year=lg.year,
                             team=_short_team(lg.teams[tid]['name']) if tid is not None else ''))
-    return history.merge(real, sim, start), lid
+    rows = history.merge(real, sim, start)
+    other = None
+    career = gamedata.season_lines(dat, 2)[kind].get(pid) if dat is not None else None
+    if career:
+        listed = history.totals(rows, kind)
+        diff = {k: career.get(k, 0) - listed[k] for k in keys}
+        if diff['g'] > 0:
+            # Games the game counts in his career that no row lists (played before archiving). When some stat is short
+            # the career line comes from other data than the rows (stock MLBPA files): report the games only.
+            other = diff if all(v >= 0 for v in diff.values()) else {'g': diff['g'], 'short': True}
+    return rows, lid, other
 
 
 def _career_cells(year, team, line, kind):
@@ -1087,19 +1097,30 @@ def _card_tab_body(ctx, lg, pid, tab, page, p, rec, base, who):
                 'note': None if rows else 'No %s lines in the stats file yet.' % tab}
     if tab == 'career':
         kind = 'pit' if p['pos'] == 'P' else 'bat'
-        rows, lid = _career(ctx, lg, pid, kind, *who)
+        rows, lid, other = _career(ctx, lg, pid, kind, *who)
         cells = [{'cells': _career_cells(r['year'], r['team'], r, kind), 'color': 'yellow' if r['sim'] else 'white'}
                  for r in rows]
-        if rows:
-            tot = history.totals(rows, kind)
-            cells.append({'cells': _career_cells('Total', '%d yr' % tot['seasons'], tot, kind), 'bold': True})
+        line = other if other is not None and not other.get('short') else None
+        if line is not None:
+            at = next((i for i, r in enumerate(rows) if r['sim']), len(rows))     # before the association's seasons
+            cells.insert(at, {'cells': _career_cells('Other', '', line, kind), 'color': 'yellow'})
+        if cells:
+            tot = history.totals(rows + ([line] if line is not None else []), kind)
+            cells.append({'cells': _career_cells('Total', '%d yr' % len(rows) if rows else '', tot, kind),
+                          'bold': True})
         pages = max(1, -(-len(cells) // CAREER_ROWS))
         page = min(page, pages - 1)
         cols = ['Year', 'Team'] + list(BAT_COLS if kind == 'bat' else PIT_COLS)
-        note = ('White: real major league seasons. Yellow: seasons in this association.' if lid else
-                'Seasons in this association.') if rows else 'No seasons on record yet.'
+        if line is not None:
+            note = 'Other: career games the game kept with no season.'
+        elif other is not None:
+            note = 'The game counts %d more career games; those seasons were not archived.' % other['g']
+        else:
+            note = None if cells else 'No seasons on record yet.'
         return {'kind': 'table', 'columns': cols, 'rows': cells[page * CAREER_ROWS:(page + 1) * CAREER_ROWS],
-                'caption': 'Career %s, page %d of %d' % ('pitching' if kind == 'pit' else 'batting', page + 1, pages),
+                'caption': 'Career %s, page %d of %d%s' % ('pitching' if kind == 'pit' else 'batting', page + 1, pages,
+                                                            '.   White: real seasons.   Yellow: this association.'
+                                                            if lid else ''),
                 'note': note, 'prev': '%s/career/%d' % (base, page - 1) if page > 0 else None,
                 'next': '%s/career/%d' % (base, page + 1) if page + 1 < pages else None}
     if tab == 'news':
@@ -1124,8 +1145,9 @@ def _card_tab_body(ctx, lg, pid, tab, page, p, rec, base, who):
     _, _, games = _card_stats(ctx, lg, pid)
     kind = _focus_of(_read_focus(ctx.game), pid, lg.births[pid])
     facts = [('Focus', kind or 'none')]
-    if games:
-        facts.append(('Games', ', '.join('%s %d' % (g, games[g]) for g in gamedata.POSITIONS if g in games)))
+    if games:                                   # the column fits one position: the one he has played most
+        top = max((g for g in gamedata.POSITIONS if g in games), key=lambda g: games[g])
+        facts.append(('Games', '%s %d' % (top, games[top])))
     seed = zlib.crc32(('%s|%s' % (p['name'], lg.births.get(pid))).encode('latin-1', 'replace'))
     tid = next((t for t in sorted(lg.teams) if pid in lg.teams[t]['roster']), None)
     team = lg.teams[tid]['name'] if tid is not None else ''

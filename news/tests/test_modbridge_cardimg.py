@@ -164,7 +164,7 @@ def test_career_tab_joins_real_seasons_the_archive_and_totals(pic, tmp_path):
     assert body['rows'][0]['cells'][hr] == str(1974 % 40) and body['rows'][3]['cells'][hr] == '2'
     assert body['rows'][-1]['cells'][hr] == str(1974 % 40 + 1975 % 40 + 1976 % 40 + 2)
     assert body['prev'] is None and body['next'] is None
-    assert body['note'].startswith('White: real')
+    assert body['caption'].endswith('Yellow: this association.') and body['note'] is None
     assert [sel for _, _, sel in cards[-1]['tabs']] == [False, False, False, True, False]
 
 
@@ -174,14 +174,14 @@ def test_career_pages_twenty_rows_with_prev_and_next(pic):
     head, _ = page(ctx, spool, BASE + '/career')
     first = cards[-1]['body']
     assert len(first['rows']) == 20 and first['prev'] is None and first['next'] == BASE + '/career/1'
-    assert first['caption'] == 'Career batting, page 1 of 2'
+    assert first['caption'].startswith('Career batting, page 1 of 2.')
     assert (BASE + '/career/1') in [t for _, t in hots(head)]
     page(ctx, spool, BASE + '/career/1')
     second = cards[-1]['body']
     assert len(second['rows']) == 7 and second['rows'][-1]['cells'][0] == 'Total'
     assert second['prev'] == BASE + '/career/0' and second['next'] is None
     head, _ = page(ctx, spool, BASE + '/career/99')          # past the end: the last page
-    assert cards[-1]['body']['caption'] == 'Career batting, page 2 of 2' and head['path'] == BASE + '/career/99'
+    assert cards[-1]['body']['caption'].startswith('Career batting, page 2 of 2') and head['path'] == BASE + '/career/99'
 
 
 def test_career_without_a_database_lists_only_this_association(pic):
@@ -190,7 +190,7 @@ def test_career_without_a_database_lists_only_this_association(pic):
     page(ctx, spool, BASE + '/career')
     body = cards[-1]['body']
     assert [r['cells'][0] for r in body['rows']] == ['1976', 'Total']
-    assert body['note'] == 'Seasons in this association.'
+    assert body['caption'] == 'Career batting, page 1 of 1' and body['note'] is None
 
 
 def test_career_of_a_player_with_no_seasons_says_so(pic):
@@ -318,4 +318,44 @@ def test_real_install_career_has_chipper_jones_real_seasons(tmp_path, monkeypatc
     assert {'1993', '1995', '1996'} <= set(real_rows) and not any(int(y) >= 1997 for y in real_rows)
     assert real_rows['1995']['cells'][1] == 'ATL' and real_rows['1995']['cells'][hr] == '23'
     assert real_rows['1996']['cells'][hr] == '30'
-    assert body['note'].startswith('White: real')
+    assert body['caption'].endswith('Yellow: this association.')
+
+
+def test_career_lists_games_no_season_holds_as_other(pic, monkeypatch):
+    """The stats file's career line counts 40 games more than the listed seasons: an Other row holds them, before the
+    association's seasons, and the total equals the game's career."""
+    ctx, spool, cards = pic
+    lahman(ctx.db, [1975, 1976])
+    history.archive_season(ctx.data, 'TEST77', 1977, {'bat': {100: {'g': 10, 'hr': 2}}})
+    career = dict({k: 10 ** 6 for k in history.BAT_KEYS}, g=350, hr=2 + 1975 % 40 + 1976 % 40 + 9)
+    monkeypatch.setattr(gamedata, 'find', lambda d, name: os.path.join(d, name) if name.endswith('.DAT')
+                        else _find(d, name))
+    monkeypatch.setattr(gamedata, 'season_lines',
+                        lambda dat, scope: {'bat': {100: career} if scope == 2 else {}, 'pit': {}})
+    page(ctx, spool, BASE + '/career')
+    body = cards[-1]['body']
+    cols = body['columns']
+    got = [(r['cells'][0], r['cells'][cols.index('G')], r['cells'][cols.index('HR')]) for r in body['rows']]
+    assert got == [('1975', '150', str(1975 % 40)), ('1976', '150', str(1976 % 40)), ('Other', '40', '9'),
+                   ('1977', '10', '2'), ('Total', '350', str(career['hr']))]
+    assert body['rows'][-1]['cells'][1] == '3 yr' and body['note'] == 'Other: career games the game kept with no season.'
+
+
+_find = gamedata.find
+
+
+def test_career_line_from_other_data_gives_a_note_not_a_row(pic, monkeypatch):
+    """A stock file's career line counts more games but fewer home runs than the Lahman rows: no Other row (it would
+    show negative or zeroed stats), a note with the games instead, and the total stays the sum of the rows."""
+    ctx, spool, cards = pic
+    lahman(ctx.db, [1975, 1976])
+    career = {'g': 340, 'hr': 1}
+    monkeypatch.setattr(gamedata, 'find', lambda d, name: os.path.join(d, name) if name.endswith('.DAT')
+                        else _find(d, name))
+    monkeypatch.setattr(gamedata, 'season_lines',
+                        lambda dat, scope: {'bat': {100: career} if scope == 2 else {}, 'pit': {}})
+    page(ctx, spool, BASE + '/career')
+    body = cards[-1]['body']
+    assert [r['cells'][0] for r in body['rows']] == ['1975', '1976', 'Total']
+    assert body['rows'][-1]['cells'][body['columns'].index('G')] == '300'
+    assert body['note'] == 'The game counts 40 more career games; those seasons were not archived.'
