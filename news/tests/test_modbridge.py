@@ -466,7 +466,8 @@ def test_build_reports_a_season_already_in_the_game(bridge, site, monkeypatch, n
     calls = fake_build(monkeypatch, game)
     head, body = ask(ctx, spool, 'op=build\nyear=1927')
     assert head == {'status': 'ok', 'existed': '1', 'stem': '16L1927', 'label': '1927 Major Leagues'}
-    assert body == '1927 Major Leagues is already in the game (16L1927).'
+    assert body == ('1927 Major Leagues is already in the game (16L1927).\n\n'
+                    + modbridge.LOAD_TEXT % '1927 Major Leagues')
     assert calls == []
 
 
@@ -488,7 +489,7 @@ def test_build_success_runs_build_py_and_names_the_season(bridge, site, monkeypa
     calls = fake_build(monkeypatch, site[0], stdout=stdout)
     head, body = ask(ctx, spool, 'op=build\nyear=1927')
     assert head == {'status': 'ok', 'existed': '0', 'stem': '16L1927', 'label': '1927 Major Leagues'}
-    assert body == ('Built 1927 Major Leagues (16L1927). Pick it from the association list.\n\n'
+    assert body == ('Built 1927 Major Leagues (16L1927).\n\n' + modbridge.LOAD_TEXT % '1927 Major Leagues' + '\n\n'
                     + '\n'.join('line %d' % i for i in range(2, 12)))
     cmd, kw = calls[0]
     assert cmd[1:] == [modbridge.BUILD_PY, '--year', '1927', '--install', ctx.game, '--db', ctx.db,

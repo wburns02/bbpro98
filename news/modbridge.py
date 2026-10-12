@@ -491,9 +491,13 @@ def _run_build(ctx, year, kind='mlb'):
     if run.returncode == 0 and stem is not None:
         label = createweb._label(stem, asn)
         header = [('status', 'ok'), ('existed', '0'), ('stem', stem), ('label', _plain(label))]
-        return header, _paragraphs('Built %s (%s). Pick it from the association list.' % (label, stem),
-                                   _tail(run.stdout))
+        return header, _paragraphs('Built %s (%s).' % (label, stem), LOAD_TEXT % label, _tail(run.stdout))
     return [('status', 'error')], _paragraphs('The build failed.', _tail(run.stdout, run.stderr))
+
+
+# The game stays on the association it had open; a new one has to be loaded by hand, and the list shows ten rows.
+LOAD_TEXT = ('To play it, close this window and choose Main > Load Association, then pick "%s" '
+             '(scroll the list with the mouse wheel if it is not shown).')
 
 
 def _build(ctx, req):
@@ -525,7 +529,7 @@ def _build(ctx, req):
             _BUILD.release()
     label = createweb._label(stem, asn)
     header = [('status', 'ok'), ('existed', '1'), ('stem', stem), ('label', _plain(label))]
-    return header, '%s is already in the game (%s).' % (label, stem)
+    return header, _paragraphs('%s is already in the game (%s).' % (label, stem), LOAD_TEXT % label)
 
 
 # The player development pages under /news/development/ and the focus file they set (focus.py). The pages read the
