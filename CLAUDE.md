@@ -112,3 +112,12 @@ Public repo (MIT) of tools and research for FPS Baseball Pro '98. Python codecs 
   (FUN_68043ae0) from a mod: the screen has not loaded those rows and the body draw jumps to a garbage address. Scroll
   by pressing the group's arrow ids through the handler's own path (FUN_68072020 per group, then the mgr+0xc0
   callback), as playercard.c apply_wheel does. Dialog gadget rects are dialog-relative, the handler's x and y are not.
+- Player card picture pages: a card tab is a 680x450 BMP the bridge draws with the game's own FNX fonts and BB0.PAL
+  (news/cardimg.py), written as r<ID>.bmp before the .rsp (header image=1, hot.N = x,y,w,h then a path). Without the
+  fonts the bridge falls back to the text card. Nothing may draw past x 668 (the body's right edge).
+- Career tab rows: real Lahman seasons before history.start_year(stem), then the seasons news/watch.py archived to
+  <data>/<STEM>/history/<year>.json at season end. A build seeds the real last season into the DAT as 'last season' and
+  the watcher archives it, so history.drop_seeded removes archived rows before the start year the stem names. The
+  DAT career line (scope 2) can count games played before archiving existed: an Other row holds the rest only when no
+  stat comes out negative (stock MLBPA files carry career lines that disagree with Lahman), else a note gives the games.
+- Portraits (news/portrait.py) are generated from the player's inputs only. Never add real photos or likenesses.
