@@ -274,17 +274,19 @@ def test_merge_drops_real_seasons_from_start_on():
     assert rows == [dict(season(1995), sim=False), dict(season(1998, 'LAN'), sim=True)]
 
 
-def test_merge_ignores_sim_rows_before_start():
-    """A 30L2025 build seeds the real 2024 season as 'last season' and the watcher archives it: the real row stays."""
-    rows = history.merge([season(2023), season(2024)], [season(2024, ''), season(2025)], start=2025)
-    assert rows == [dict(season(2023), sim=False), dict(season(2024), sim=False), dict(season(2025), sim=True)]
-
-
 def test_merge_sim_row_wins_a_shared_year_and_sorts_by_year():
     real = [season(1997)]
     rows = history.merge(real, [season(1997, 'LAN'), season(1996, 'BOS')])
     assert rows == [dict(season(1996, 'BOS'), sim=True), dict(season(1997, 'LAN'), sim=True)]
     assert real == [season(1997)]      # the inputs are not changed
+
+
+def test_drop_seeded_keeps_sim_rows_from_the_named_start_year_only():
+    """A 30L2025 build seeds the real 2024 season as 'last season' and the watcher archives it."""
+    sim = [season(2024, ''), season(2025)]
+    assert history.drop_seeded(sim, '30L2025') == [season(2025)]
+    assert history.drop_seeded([season(1996), season(1997)], 'MLBPA97') == [season(1997)]
+    assert history.drop_seeded(sim, '08NEW001') == sim and history.drop_seeded(sim, 'TEST77') == sim
 
 
 def test_totals_sums_each_key_and_counts_the_seasons():

@@ -1056,6 +1056,7 @@ def _career(ctx, lg, pid, kind, first, last, born):
         except sqlite3.Error:
             lid, real = None, []
     sim = history.sim_seasons(ctx.data, lg.stem, pid, kind) if os.path.isdir(ctx.data) else []
+    sim = history.drop_seeded(sim, lg.stem)
     for r in sim:
         r['team'] = _short_team(r['team'])            # the archive keeps the team's full name
     stats_dir = os.path.join(ctx.game, 'Stats')

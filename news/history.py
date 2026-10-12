@@ -195,15 +195,22 @@ def sim_seasons(data_dir, stem, pid, kind):
 
 
 def merge(real, sim, start=None):
-    """The rows of a career: the real seasons before start (all of them when start is None), and the sim seasons from
-    start on (a sim row before start is the build's copy of a real season, kept as 'last season'). A year that has a
-    sim row keeps only that row. Every row is a copy with 'sim': False (real) or True (sim), sorted by year."""
-    sim = [row for row in sim if start is None or row['year'] >= start]
+    """The rows of a career: the real seasons before start (all of them when start is None), and the sim seasons. A
+    year that has a sim row keeps only that row. Every row is a copy with 'sim': False (real) or True (sim), sorted by
+    year."""
     sim_years = {row['year'] for row in sim}
     kept = [dict(row, sim=False) for row in real
             if (start is None or row['year'] < start) and row['year'] not in sim_years]
     kept += [dict(row, sim=True) for row in sim]
     return sorted(kept, key=lambda row: row['year'])
+
+
+def drop_seeded(sim, stem):
+    """sim without the rows before the start year stem names (30L2025: 2025, MLBPA97: 1997). Such a row is the build's
+    copy of a real season, seeded as 'last season' and archived by the watcher, not a season the game played. A stem
+    that names no start year (an expansion or custom association) keeps every row."""
+    start = start_year(stem)
+    return list(sim) if start is None else [row for row in sim if row['year'] >= start]
 
 
 def totals(rows, kind):
