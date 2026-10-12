@@ -311,11 +311,13 @@ def _table(img, pal, tf, body):
     for w in widths:
         lefts.append(x)
         x += w
-    total = x - 12
+    total = min(x, 668) - 12            # columns that still do not fit are cut at the table's right edge
 
     def cell(text, i, y, bh, colour, bold):
         left, w = lefts[i], widths[i]
-        box = (left, y, left + w, y + bh)
+        if left >= 668:
+            return
+        box = (left, y, min(left + w, 668), y + bh)
         ty = _vc(tf, y, 13)
         for dx in ((0, 1) if bold else (0,)):
             if i == 0:

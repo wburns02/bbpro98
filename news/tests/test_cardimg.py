@@ -277,3 +277,13 @@ def test_missing_keys_and_odd_values(fonts):
                      'portrait': 'junk'}}
     bmp, hot = render(card, fonts)
     assert bmp[:2] == b'BM' and hot == []
+
+
+
+def test_table_too_wide_even_after_the_cut_stays_inside_the_body(fonts):
+    """Fifty columns cannot fit even with column 0 cut to nothing: no body pixel outside x 12..668 changes."""
+    body = {'kind': 'table', 'columns': ['C%d' % i for i in range(50)], 'rows': [{'cells': ['x'] * 50}]}
+    _, _, at, _ = draw(fonts, body=body)
+    for y in range(92, 428):
+        for x in list(range(0, 12)) + list(range(669, 680)):
+            assert at(x, y) == cardimg.GREEN, (x, y)
