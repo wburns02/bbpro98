@@ -16,12 +16,27 @@ mods\aging.dll     Veterans decline and retire by age and ability, so a career l
 mods\rookies.dll   Generated players get ratings drawn like real players', so new stars appear once the old
                    ones retire.
 mods\playercard.dll  Click a player row on the League Statistics screen to open his career card.
+mods\modmenu.dll   The main menu's WWW SITE button opens a Mods window: the loaded mods, League News, Create a
+                   Player and Build a Season. The three tools need the bridge below; without it they time out
+                   with a message and the game carries on.
 mods\steal.dll     Experimental base-stealing switch (off unless you set [steal] mode).
 bbfix.ini.sample   Copy to bbfix.ini and edit.
 SHA256SUMS.txt     Checksums of every file above.
 
-The in-game Mods menu (modmenu.dll) is not in this zip: it needs the news bridge (news/modbridge.py in the
-source) running beside the game, which is only set up for the Linux hosting scripts.
+The Mods menu's bridge
+----------------------
+The game cannot reach the network, so modmenu.dll leaves requests as files in <game>\Mods\spool and a small
+Python program from the source answers them. It runs on Linux beside a Wine install (Python 3, standard library):
+
+  git clone https://github.com/wburns02/bbpro98 && cd bbpro98
+  G=~/.wine/drive_c/Sierra/BBPRO_98                 # your game folder (holds Assn and Stats)
+  mkdir -p ~/bbnews ~/bbnews-backup
+  python3 news/watch.py --game "$G" --data ~/bbnews --once --no-llm      # League News pages for your leagues
+  python3 news/modbridge.py --game "$G" --data ~/bbnews --backup ~/bbnews-backup
+
+Leave modbridge.py running while you play. Run watch.py without --once to keep the news current as you play.
+Build a Season also needs --db (a Lahman database, work/lahman/load_csv.py) and --templates (minted with
+work/lahman); without them it says it is not set up. Create a Player copies each file it changes to --backup first.
 
 Install
 -------

@@ -396,6 +396,16 @@ def test_build_refuses_an_unknown_league(bridge, monkeypatch):
     assert calls == []
 
 
+@pytest.mark.parametrize('field', ['db', 'templates'])
+def test_build_without_a_database_or_templates_says_it_is_not_set_up(bridge, monkeypatch, field):
+    ctx, spool = bridge
+    setattr(ctx, field, None)
+    calls = fake_build(monkeypatch, None)
+    head, body = ask(ctx, spool, 'op=build\nyear=1942')
+    assert head == {'status': 'error'} and body == modbridge.NO_BUILD_TEXT
+    assert calls == []
+
+
 def test_build_refuses_a_kind_the_database_lacks(bridge, monkeypatch):
     ctx, spool = bridge
     ctx.ranges = {'mlb': (1871, 2019)}

@@ -416,6 +416,7 @@ typedef struct { Win w; HWND list; } MenuState;
 static const struct { const char *name, *desc; } MOD_DESC[] = {
     {"playercard", "Player card: click a player on a Statistics screen."},
     {"aging", "Aging: players decline and retire by age and ability."},
+    {"rookies", "Rookies: generated players rated like real ones."},
     {"modmenu", "This menu."},
     {"simtrace", "Sim trace: debug log of every play."},
     {"seed", "Seed: fixed random seed for testing."},

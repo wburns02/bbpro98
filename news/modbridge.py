@@ -53,6 +53,8 @@ BUILD_PY = os.path.join(REPO, 'work', 'lahman', 'build.py')
 KINDS = {'mlb': ('NA,NL,AA,UA,PL,AL,FL', 'L', 'MLB'), 'negro': ('NNL,ECL,ANL,EWL,NSL,NN2,NAL', 'N', 'Negro Leagues')}
 RANGES = {'mlb': (1871, 2025), 'negro': (1920, 1948)}
 BUSY_TEXT = 'A season is already being built. Try again when it finishes.'
+NO_BUILD_TEXT = ('Build a Season is not set up here: start the bridge with --db (a Lahman database) and '
+                 '--templates (the minted structure templates).')
 WAIT_TEXT = 'Computer-run teams sign free agents on their own, so if you wait he may land somewhere else.'
 KEY_RE = re.compile(r'[a-z0-9_]{1,24}')
 ARSENAL_RE = re.compile(r'p_(%s)_(now|ceil)' % '|'.join(create.PITCH_SLOTS))   # capitalised, as create.PITCH_SLOTS is
@@ -491,6 +493,8 @@ def _build(ctx, req):
     if kind not in KINDS:
         return [('status', 'error')], 'Bad request.'
     _, letter, title = KINDS[kind]
+    if not (ctx.db and ctx.templates):
+        return [('status', 'error')], NO_BUILD_TEXT
     span = getattr(ctx, 'ranges', RANGES).get(kind)
     if span is None:
         return [('status', 'error')], 'This database has no %s seasons.' % title
@@ -1203,8 +1207,9 @@ def main(argv=None):
     ap.add_argument('--game', required=True, help='the game directory (holds Assn/ and Stats/)')
     ap.add_argument('--data', required=True, help='the news data directory (the ledger goes in created/)')
     ap.add_argument('--backup', required=True, help='where the files are copied before each write')
-    ap.add_argument('--db', required=True, help='the Lahman database (build.py opens it read-only)')
-    ap.add_argument('--templates', required=True, help='the directory of minted structure templates')
+    ap.add_argument('--db', help='the Lahman database (build.py opens it read-only); without it and --templates, '
+                    'Build a Season answers that it is not set up')
+    ap.add_argument('--templates', help='the directory of minted structure templates')
     ap.add_argument('--donor', help='the stock PYR the new player is seeded from (default: <game>/Assn/MLBPA96E.PYR)')
     ap.add_argument('--poll', type=float, default=0.25, help='seconds between looks at the spool')
     args = ap.parse_args(argv)
@@ -1217,7 +1222,8 @@ def main(argv=None):
     if not os.path.isdir(args.data):
         ap.error('not a directory: %s' % args.data)
     ctx = types.SimpleNamespace(game=args.game, data=args.data, backup=args.backup, donor=donor, db=args.db,
-                                templates=args.templates, proc='/proc', ranges=year_ranges(args.db))
+                                templates=args.templates, proc='/proc',
+                                ranges=year_ranges(args.db) if args.db else dict(RANGES))
     try:
         serve(ctx, args.poll)
     except KeyboardInterrupt:

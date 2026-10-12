@@ -2,7 +2,8 @@
 
 [mods]
 ; Mods to load at startup, comma separated, paths relative to the game folder.
-load=mods\aging.dll,mods\rookies.dll,mods\playercard.dll
+; modmenu.dll turns the main menu's WWW SITE button into a Mods window; its tools need the bridge (README.txt).
+load=mods\aging.dll,mods\rookies.dll,mods\playercard.dll,mods\modmenu.dll
 
 [aging]
 ; decline=on|off: peak ratings fall with age.  retire=curve|pass: retire by age and ability, or the stock rule.
@@ -12,6 +13,10 @@ retire=curve
 [rookies]
 ; map=on|off: draw generated players' ratings like real ones.
 map=on
+
+[modmenu]
+; enable=1 takes over the WWW SITE button; 0 leaves the stock button.
+enable=1
 
 [steal]
 ; pass (stock), zero, max, or scale with pct=100.
