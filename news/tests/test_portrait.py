@@ -148,6 +148,17 @@ def test_face_is_drawn_darker_than_the_background():
     assert max(level(img, x, y) for x in range(55, 66) for y in range(61, 72)) <= 10
 
 
+def test_neck_shows_at_most_ten_pixels():
+    for seed in range(6):
+        for kw in ({}, dict(power=80, era=1890, pos='P'), dict(power=20, era=2010, age=45)):
+            img = portrait.portrait(seed, bats='S', **kw)
+            chin = next(y for y in range(80, 100) if level(img, 60, y) <= 1)     # the chin outline
+            run = 0
+            while level(img, 60, chin + 1 + run) in (6, 8):                       # neck-level pixels down to the jersey
+                run += 1
+            assert 0 < run <= 10, (seed, kw)
+
+
 def test_corners_are_darker_than_the_background_top():
     img = portrait.portrait(8)
     top = level(img, 60, 10)
