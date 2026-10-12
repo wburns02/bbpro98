@@ -1,8 +1,9 @@
 # Lane bbexpand: add teams and leagues to a career association
 
-Status: codec and feasibility stage done. `work/lahman/expand.py` writes a new association from a preseason one;
-`work/lahman/tests/test_expand.py` runs it on a copy of 16L1927 and decodes every file it writes. Not run in game yet
-(section 8).
+Status: built and run in game. `work/lahman/expand.py` writes a new association from a preseason one;
+`work/lahman/tests/test_expand.py` runs it on a copy of 16L1927 and decodes every file it writes. An 18-team 18X1927
+(16L1927 plus PHO and DEN in the NL) loaded and played a full season in the scratch game on 2026-10-12 (section 8,
+Results). Not run: a season rollover and a 30-team association.
 
 ## Verdict
 
@@ -105,11 +106,15 @@ read a templates directory other than the default.
 
 ```
 python3 work/lahman/expand.py --install DIR --assn STEM --templates DIR \
-    --add "LEAGUE:DIVISION:City:Name:ABR" [--add ...] [--new-league NAME] --out-stem NEWSTEM
+    --add "LEAGUE:DIVISION:City:Name:ABR" [--add ...] [--new-league NAME] [--name NAME] --out-stem NEWSTEM
 ```
 
+- The new association's name (the label in the load list) is `--name`, else `NEWSTEM <source name>` cut to 32
+  characters (18X1927 reads "18X1927 1927 Major League Baseball"). The list sorts by label and clips it past about 19
+  characters, so a copied name gave two identical rows (found in the in-game check, section 8).
+
 - LEAGUE is a league's name or abbreviation (or the `--new-league` name). DIVISION is a division's name or a 1-based
-  index (16L1927's single divisions have blank names; use `1`). The team name is `City Name` (31 characters at most);
+  index (16L1927's single divisions have blank names; use `1`). The team name is `City Name` (16 characters at most: the game saves 16, section 8);
   the abbreviation is up to 3 letters or digits.
 - Refusals (`ExpandError`, exit 2, nothing written): a game played or a team record this season; out stem already
   present; a duplicate team name or abbreviation (against the source and within the adds); an unknown league; a shape
@@ -143,7 +148,7 @@ Checked for T18 (the one case 16L1927 can reach; T20 is refused for depth, teste
 team count and leagues; new teams named, Computer, no manager; original teams keep name, manager, park, ownership;
 PYR byte-identical; every window id a real player, no player on two teams, every roster 25 active with ≥ 10 pitchers
 and ≥ 9 fielders; original teams lose only drafted players and gain only free agents; schedule equal to the template's;
-season dates, association name and trophy unchanged; stats player rows unchanged; lineup, rotation and bullpen ids on
+season dates and trophy unchanged, association name led by the out stem; stats player rows unchanged; lineup, rotation and bullpen ids on
 the roster; log names every new team.
 
 Refusals: a played season (MLBPA97: 169 games), no shape (16 + 1 = `[8],[9]`), duplicate team name and abbreviation,
@@ -208,14 +213,14 @@ mkdir -p $SCRATCH/game/Assn $SCRATCH/game/Stats
 cp <work_install>/Assn/16L1927.{ASN,PYR,PYF} $SCRATCH/game/Assn/
 cp <work_install>/Stats/16L1927.DAT $SCRATCH/game/Stats/
 python3 work/lahman/expand.py --install $SCRATCH/game --assn 16L1927 --templates /mnt/nvme/bbpro98/lahman/templates \
-    --add "NL:1:Phoenix:Desert Dogs:PHO" --add "NL:1:Denver:Mile High:DEN" --out-stem 18X1927
+    --add "NL:1:Phoenix:Dogs:PHO" --add "NL:1:Denver:Mile High:DEN" --out-stem 18X1927
 ```
 
 Then, in the scratch game (harness lane, its own Wine prefix; `news/watch.py --game G --data D --once --no-llm` first if
 the association pages must open):
 
-1. Association list. 18X1927 has the same league name as 16L1927 ("1927 Major League Baseball"), so the list shows two
-   rows with one label. Pick the row by its file (the `seasonloop.season` wrong_association guard catches a wrong one).
+1. Association list. 18X1927 reads "18X1927 1927 Major..." (the stem leads the copied name; before that change the
+   list showed two rows with one label). The `seasonloop.season` wrong_association guard still catches a wrong row.
    Association Data: AL 8 teams, NL 10 teams, division fields blank; check the screen does not ask to save on exit.
 2. Preseason, team keys 17 (PHO) and 18 (DEN): the roster for each shows 25 active and at least 10 pitchers; the
    batting order has no blank slot (LINEUP.DLL crashes on a 0 in the order; build.py landmine).
@@ -230,11 +235,29 @@ the association pages must open):
 7. Player records: the PYR is byte-identical to 16L1927's (the test asserts this on disk; check it again after the sim
    and the rollover, since the game writes the PYR at rollover).
 
+### Results, 2026-10-12 (harness lane 2, `plan_season.json`, gate files in /mnt/nvme/bbpro98/lanes/bbexpand/gate)
+
+- 1. Load list shows "18X1927 1927 Major...", one row; Association Data shows AL and NL, division fields blank, Career.
+- 4. Season: 1426 of 1426 regular games played, one mid-season amateur draft (seasonloop ran it). Per team, scheduled
+  and played both equal the template: keys 1 to 8 154 each, keys 9 to 18 162 each. No team off by one.
+- 5. Rosters after the season (r records, active plus reserves including the draftees): 35 to 43 players, 17 to 21
+  pitchers per team. PHO 40/19, DEN 39/19.
+- 7. The PYR is not byte-identical after a season, and should not be expected to be: the draft added 478 players (512
+  to 990), none removed, and the game rewrote in-season fields of all 512 original records (bytes 2 to 63, ratings and
+  condition). Names and birth dates of all 512 are unchanged. The byte-identical check holds for expand.py's output
+  before the game runs (the test asserts it).
+- Found and fixed: the game saves 16 characters of a team name and a NUL at byte 16, though the record holds 32. The
+  season cut "Phoenix Desert Dogs" to "Phoenix Desert D". Stock names abbreviate to fit ("Phila. Athletics").
+  `NAME_FIELD` is now 16 and `parse_add` refuses a longer name (test, and a positive control at 31 fails it).
+- Open: a new team's manager. expand.py blanks the manager field's first byte and the template's tail stays ("\0erry
+  Collins"); after the season the field reads "\0ob O'Farrell", so the manager screen shows no name for PHO and DEN.
+  Not checked on screen. Item 6 (rollover) not run.
+
 MLBPA97 is not an input: the tool refuses it (games played), and no template of its target shape exists yet.
 
 ## 9. Open questions for Will
 
 - A template of the target shape for MLBPA97 (e.g. 30 teams, NL and AL 5/5/5) has to be minted in the game. Is that the
   intended first case, and which teams and divisions should the two new teams join?
-- Team names: the `City Name` form in the add ("Phoenix Desert Dogs") is my choice; the stock names are one-word
+- Team names: the `City Name` form in the add ("Phoenix Dogs", 16 characters at most) is my choice; the stock names are one-word
   cities in MLBPA97 (`Atlanta`, `Florida`). Say if the name field should take the city alone.

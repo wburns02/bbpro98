@@ -2,7 +2,7 @@
 """Add teams, or a league, to a career association at the season boundary (preseason, no games played).
 
     python3 work/lahman/expand.py --install DIR --assn STEM --templates DIR \
-        --add "NL:Eastern:Phoenix:Desert Dogs:PHO" [--add ...] [--new-league NAME] --out-stem NEWSTEM
+        --add "NL:Eastern:Phoenix:Dogs:PHO" [--add ...] [--new-league NAME] --out-stem NEWSTEM
 
 The source association STEM is only read. NEWSTEM is written beside it: Assn/NEWSTEM.ASN/.PYR/.PYF (+ .apc/.eos/.pyc
 when STEM has them) and Stats/NEWSTEM.DAT. The target shape is the source's league and division sizes plus the added
@@ -30,7 +30,9 @@ PICKS = 30                      # draft picks per new team: the 25-man active ro
 ACTIVE, RESERVE, MIN_PIT, MIN_HIT = B.ACTIVE, B.RESERVE, B.MIN_PIT, B.MIN_HIT
 PID0 = 100                      # player id = 100 + index in the PYR (build.py: nid = 100 + len(new_recs))
 SIDE_EXT = ('apc', 'eos', 'pyc')    # per-association files carried over (champions, awards, old free-agent list)
-NAME_FIELD = 31                 # team name characters (the field is 32 bytes with its NUL)
+NAME_FIELD = 16                 # team name characters: the record has 32 bytes, but the game saves 16 and a NUL
+                                # (an 18X1927 season cut 'Phoenix Desert Dogs' to 'Phoenix Desert D'; stock names
+                                # abbreviate to fit, 'Phila. Athletics', 'St.L. Cardinals')
 
 
 class ExpandError(ValueError):
@@ -89,7 +91,7 @@ def roster_of(rp, n_players):
 # ---------------------------------------------------------------- new teams and the target shape
 
 def parse_add(spec):
-    """'LEAGUE:DIVISION:City:Name:ABR' -> dict. The team name is 'City Name' (31 characters at most)."""
+    """'LEAGUE:DIVISION:City:Name:ABR' -> dict. The team name is 'City Name' (16 characters at most)."""
     parts = [x.strip() for x in spec.split(':')]
     if len(parts) != 5 or not all(parts):
         raise ExpandError('--add %r: want LEAGUE:DIVISION:City:Name:ABR' % spec)
@@ -284,7 +286,7 @@ def value_of_fn(recs):
     return value_of
 
 
-def expand(install, assn, templates, adds, out_stem, new_league=None, log=print):
+def expand(install, assn, templates, adds, out_stem, new_league=None, name=None, log=print):
     """Write out_stem beside assn in install. Returns a summary dict; raises ExpandError with the reason on refusal."""
     if not (out_stem and len(out_stem) <= 8 and out_stem.isalnum()):
         raise ExpandError('--out-stem: up to 8 letters/digits')
@@ -392,6 +394,9 @@ def expand(install, assn, templates, adds, out_stem, new_league=None, log=print)
     a_off, a_tmpl = tasm.recs['a'][0]
     a_new = bytearray(src.recs['a'][0][1])
     a_new[0] = a_tmpl[0]
+    # a copied name puts two identical rows in the load list (sorted by name, clipped past ~19 characters); lead with
+    # the stem so the new one can be told apart
+    put_str(a_new, 0x12, 33, name or '%s %s' % (out_stem, cstr(a_new, 0x12, 33)))
     rw('a', a_off, a_tmpl, a_new)
 
     new_by_key = {a['key']: a for a in new_teams}
@@ -495,9 +500,10 @@ def main(argv=None):
                     help='LEAGUE:DIVISION:City:Name:ABR, repeatable')
     ap.add_argument('--new-league', help='add the new teams as a new league of this name (their league is that name)')
     ap.add_argument('--out-stem', required=True, help='the new association stem, up to 8 letters/digits')
+    ap.add_argument('--name', help='the new association name (default: the stem, then the source name)')
     a = ap.parse_args(argv)
     try:
-        expand(a.install, a.assn, a.templates, a.add, a.out_stem, a.new_league)
+        expand(a.install, a.assn, a.templates, a.add, a.out_stem, a.new_league, a.name)
     except ExpandError as e:
         print('refused: %s' % e, file=sys.stderr)
         return 2

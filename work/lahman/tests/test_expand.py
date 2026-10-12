@@ -19,7 +19,7 @@ SCRATCH = os.environ.get('SCRATCH', '/mnt/nvme/bbpro98/tmp')
 # shape -> (adds, the league sizes the output must have). The one shape 16L1927 can reach with its thin rosters is T18
 # (two NL teams go to the end of the NL slots, every old key stays put). T20 (two more per league) is refused for depth.
 CASES = {
-    'T18': (['NL:1:Phoenix:Desert Dogs:PHO', 'NL:1:Denver:Mile High:DEN'], [[8], [10]]),
+    'T18': (['NL:1:Phoenix:Dogs:PHO', 'NL:1:Denver:Mile High:DEN'], [[8], [10]]),
 }
 
 
@@ -102,7 +102,7 @@ def test_team_count_and_leagues(expanded):
 def test_new_teams_named_and_computer(expanded):
     asn = AsnFile(expanded['out']['asn'])
     by_abbr = {cstr(p, 0x45, 3): p for _, p in asn.recs['t']}
-    names = {'PHO': 'Phoenix Desert Dogs', 'DEN': 'Denver Mile High', 'TBA': 'Tampa Bay Rays',
+    names = {'PHO': 'Phoenix Dogs', 'DEN': 'Denver Mile High', 'TBA': 'Tampa Bay Rays',
              'MIA': 'Miami Sea Breeze'}
     for abbr in _new_abbr(expanded):
         p = by_abbr[abbr]
@@ -178,7 +178,8 @@ def test_season_date_and_association(expanded):
     out = AsnFile(expanded['out']['asn'])
     a_src, a_out = src.recs['a'][0][1], out.recs['a'][0][1]
     assert a_out[0x0a:0x12] == a_src[0x0a:0x12]          # the two season dates
-    assert a_out[0x12:0x33] == a_src[0x12:0x33]          # the association name
+    stem = '%sX1927' % expanded['key'][1:]
+    assert X.cstr(a_out, 0x12, 33) == ('%s %s' % (stem, X.cstr(a_src, 0x12, 33)))[:32]   # told apart in the load list
     assert a_out[0x33:0x54] == a_src[0x33:0x54]          # the trophy
 
 
@@ -317,7 +318,7 @@ def test_refuses_a_season_already_played():
     try:
         _copy('MLBPA97', root, ['MLBPA97.ASN', 'MLBPA97.PYR', 'MLBPA97.pyf'], 'mlbpa97.DAT')
         with pytest.raises(X.ExpandError, match='games played'):
-            X.expand(root, 'MLBPA97', TEMPLATES, ['NL:Eastern:Phoenix:Desert Dogs:PHO'], 'NOPE1997')
+            X.expand(root, 'MLBPA97', TEMPLATES, ['NL:Eastern:Phoenix:Dogs:PHO'], 'NOPE1997')
         assert not os.path.exists(os.path.join(root, 'Assn', 'NOPE1997.ASN'))
     finally:
         shutil.rmtree(root)
@@ -329,7 +330,7 @@ def test_refuses_two_leagues_without_the_free_agents_to_seat_them():
     root = tempfile.mkdtemp(prefix='bbexpand-depth-', dir=SCRATCH)
     try:
         _copy('16L1927', root, ['16L1927.ASN', '16L1927.PYR', '16L1927.PYF'], '16L1927.DAT')
-        adds = ['AL:1:Tampa:Bay Rays:TBA', 'AL:1:Miami:Sea Breeze:MIA', 'NL:1:Phoenix:Desert Dogs:PHO',
+        adds = ['AL:1:Tampa:Bay Rays:TBA', 'AL:1:Miami:Sea Breeze:MIA', 'NL:1:Phoenix:Dogs:PHO',
                 'NL:1:Denver:Mile High:DEN']
         with pytest.raises(X.ExpandError, match='not enough free agents'):
             X.expand(root, '16L1927', TEMPLATES, adds, '20X1927')
@@ -352,12 +353,12 @@ def test_slots_of_the_two_league_shape_move_the_old_teams():
     t20_slots = B.template_slots(AsnFile(_read(_one(os.path.join(TEMPLATES, 'T20'), '*.ASN'))),
                                  structure.SHAPES['T20'])
     keymap, new = X.assign_slots(_layout(['AL:1:Tampa:Bay Rays:TBA', 'AL:1:Miami:Sea Breeze:MIA'],
-                                         ['NL:1:Phoenix:Desert Dogs:PHO', 'NL:1:Denver:Mile High:DEN']), t20_slots)
+                                         ['NL:1:Phoenix:Dogs:PHO', 'NL:1:Denver:Mile High:DEN']), t20_slots)
     assert keymap == {**{k: k for k in range(1, 9)}, **{k: k + 2 for k in range(9, 17)}}
     assert sorted(a['key'] for a in new) == [9, 10, 19, 20]
     t18_slots = B.template_slots(AsnFile(_read(_one(os.path.join(TEMPLATES, 'T18'), '*.ASN'))),
                                  structure.SHAPES['T18'])
-    keymap, new = X.assign_slots(_layout([], ['NL:1:Phoenix:Desert Dogs:PHO', 'NL:1:Denver:Mile High:DEN']), t18_slots)
+    keymap, new = X.assign_slots(_layout([], ['NL:1:Phoenix:Dogs:PHO', 'NL:1:Denver:Mile High:DEN']), t18_slots)
     assert keymap == {k: k for k in range(1, 17)}
     assert sorted(a['key'] for a in new) == [17, 18]
 
@@ -369,7 +370,7 @@ def test_refuses_a_shape_with_no_template():
         _copy('16L1927', root, ['16L1927.ASN', '16L1927.PYR', '16L1927.PYF'], '16L1927.DAT')
         # 16 + 1 gives [8],[9]: no shape in structure.SHAPES.
         with pytest.raises(X.ExpandError, match='no shape'):
-            X.expand(root, '16L1927', TEMPLATES, ['NL:1:Phoenix:Desert Dogs:PHO'], '17X1927')
+            X.expand(root, '16L1927', TEMPLATES, ['NL:1:Phoenix:Dogs:PHO'], '17X1927')
     finally:
         shutil.rmtree(root)
 
@@ -380,10 +381,10 @@ def test_refuses_a_duplicate_team():
     try:
         _copy('16L1927', root, ['16L1927.ASN', '16L1927.PYR', '16L1927.PYF'], '16L1927.DAT')
         with pytest.raises(X.ExpandError, match='already'):
-            X.expand(root, '16L1927', TEMPLATES, ['NL:1:Phoenix:Desert Dogs:BOS', 'NL:1:Denver:Mile High:DEN'],
+            X.expand(root, '16L1927', TEMPLATES, ['NL:1:Phoenix:Dogs:BOS', 'NL:1:Denver:Mile High:DEN'],
                      '18X1927')
         with pytest.raises(X.ExpandError, match='no league'):
-            X.expand(root, '16L1927', TEMPLATES, ['XX:1:Phoenix:Desert Dogs:PHO', 'NL:1:Denver:Mile High:DEN'],
+            X.expand(root, '16L1927', TEMPLATES, ['XX:1:Phoenix:Dogs:PHO', 'NL:1:Denver:Mile High:DEN'],
                      '18X1927')
     finally:
         shutil.rmtree(root)
@@ -405,13 +406,16 @@ def test_refuses_when_free_agents_run_out():
 
 def test_parse_add_rejects_bad_specs():
     with pytest.raises(X.ExpandError):
-        X.parse_add('NL:East:Phoenix:Desert Dogs')
+        X.parse_add('NL:East:Phoenix:Dogs')
     with pytest.raises(X.ExpandError):
-        X.parse_add('NL:East:Phoenix:Desert Dogs:PHOENIX')
+        X.parse_add('NL:East:Phoenix:Dogs:PHOENIX')
     with pytest.raises(X.ExpandError):
         X.parse_add('NL:East:A Very Long City Name Here:A Very Long Team Name Here:PHO')
-    add = X.parse_add('nl:East:Phoenix:Desert Dogs:pho')
-    assert add['name'] == 'Phoenix Desert Dogs' and add['abbrev'] == 'PHO'
+    with pytest.raises(X.ExpandError):
+        X.parse_add('NL:East:Phoenix:Desert Dogs:PHO')     # 19 characters; the game saves 16
+    assert X.parse_add('NL:East:St. Louis:Browns:SLB')['name'] == 'St. Louis Browns'   # 16, the stock maximum
+    add = X.parse_add('nl:East:Phoenix:Dogs:pho')
+    assert add['name'] == 'Phoenix Dogs' and add['abbrev'] == 'PHO'
 
 
 def test_pool_codec_keeps_stale_tail():
