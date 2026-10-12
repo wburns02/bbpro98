@@ -6,18 +6,21 @@
    Hook: detour on the gadget manager's event handler FUN_68043d20 (ushort __thiscall (mgr, x, y, buttons, code, p5),
    ret 0x14), which sees every input tick. The body column gadgets 9..0x12 (and the widened columns 0x30..0x33 from
    bbfix [widen]) carry flag 0x20, so the game's own hit test (flags & 0x60) never routes a click to them; the mod
-   hit-tests them itself on the left button's rising edge while the stats screen is up (its callback 6800d460 is at
-   mgr+0xc0). Gadget rects are shorts at +0xe x, +0x10 y, +0x12 w, +0x14 h; rows are 11 pixels high. The visible row
-   maps to the table row through FUN_68043bf0(&g_GadgetMgr, screen+0x694 scroll group, row), as
-   StatsGrid_CellCallback 6800ec00 does. StatsGrid_FillRowCells 6805c930 fills the stat cells and then writes the
-   player id (type 0x2000) into the cell after them: cell 10 stock, cell 14 when bbfix [widen] has patched that
-   "push 10" at 6805cb0b to 14, so the mod reads the cell index from that instruction.
-   The association name is (*(char ***)screen->asn)[0x25] (FUN_6803da90 builds "STATS\<name>.DAT" from it).
+   hit-tests them itself on the left button's rising edge while a stats screen is up. The callback at mgr+0xc0 names
+   the screen (SCREENS: League 6800d460, Team 68036ec0). Gadget rects are shorts at +0xe x, +0x10 y, +0x12 w, +0x14 h;
+   rows are 11 pixels high. The visible row maps to the table row through FUN_68043bf0(&g_GadgetMgr, screen's scroll
+   group, row), as StatsGrid_CellCallback 6800ec00 does. StatsGrid_FillRowCells 6805c930 fills the stat cells and then
+   writes the player id (type 0x2000) into the cell after them: cell 10 stock, cell 14 when bbfix [widen] has patched
+   that "push 10" at 6805cb0b to 14, so the mod reads the cell index from that instruction. Both screens fill their
+   rows through 6805c930, so the same cell applies to both.
+   The association name is (*(char ***)(screen+8))[0x25] (FUN_6803da90 builds "STATS\<name>.DAT" from it); both
+   screens store the same singleton (FUN_68046580) at +8.
    When modmenu.dll is loaded (GetModuleHandleA), the click opens /news/card/<assn>/p/<pid> in its News reader through
    its export mm_open_page; the built-in card above opens when modmenu is absent or the bridge does not answer.
-   The Team Statistics screen (dialog 0x14) is not hooked: its state object is not proven (bbcard.md).
+   The screen objects, offsets and addresses are in bbcard.md (Round 2).
 
-   bbfix.ini:  [mods] load=mods\playercard.dll      [playercard] enable=1  probe=0 (1 = log each click and its row)
+   bbfix.ini:  [mods] load=mods\playercard.dll      [playercard] enable=1  probe=0 (1 = log each left click: the
+   callback at mgr+0xc0, both screen objects, the hit gadget and row, and the outcome)
    Build:  /mnt/nvme/bbpro98/zigenv/bin/python -m ziglang cc -target x86-windows-gnu -O2 -shared -Isrc-latest
            -o playercard.dll src-latest/mods/playercard.c -lgdi32 -luser32 */
 #include <windows.h>
@@ -33,11 +36,34 @@ static int probe;
 
 #define MGR_VA 0x6808dd10u
 #define MAP_ROW_VA 0x68043bf0u          /* ushort __thiscall (mgr, short scroll_group, short visible_row), ret 8 */
-#define STATS_CB_VA 0x6800d460u         /* the stats screen's gadget callback (mgr+0xc0 while it is up) */
-#define STATS_SCREEN_VA 0x6808d818u     /* the stats screen object */
 #define ID_PUSH_VA 0x6805cb0bu        /* push <id cell> (6a 0a stock, 6a 0e under bbfix [widen]) */
+#define CUR_SCREEN_VA 0x6808da50u       /* the screen id FUN_68038ef0 last installed (probe only) */
+#define TEAM_OBJ_VA 0x6808da24u         /* the Team Statistics object pointer (probe only) */
 #define ROW_H 11                        /* list row height in pixels (fixed font of the stats grid) */
 #define MAXLINES 40
+
+/* The two stats screens, told apart by the callback at mgr+0xc0 (FUN_68038ef0 writes it; nothing clears it when the
+   screen closes, so the probe logs the screen id global to show a stale one).
+   League: ctor 6800ccc0, object pointer in 0x6808d818, id 7 at +0 (6800cd5a), asn at +8 (6800cd73), row table at +0x3c,
+   scroll group (short) at +0x694, body gadgets 9..0x12 and the widened 0x30..0x33 (ext).
+   Team: ctor 680367e0, object pointer in 0x6808da24, id 0x14 at +0, asn at +8 (680368ba), row table at +0x14, scroll
+   group (short) at +0xfa (zeroed in the ctor at 680369c6), body gadgets 9..0x12 (FUN_68036dc0's init loop), object
+   allocated as 0x5f4 bytes (68036212). Row table layout (count u16 at +0, rows at +4, 0xa0 a row, 8-byte cells)
+   is the one FUN_68060740 reads. */
+typedef struct {
+    const char *name;
+    uint32_t cb_va;      /* gadget callback at mgr+0xc0 while the screen is up */
+    uint32_t obj_va;     /* pointer global holding the screen object */
+    int table_off;       /* row table inside the object */
+    int group_off;       /* scroll group, a short */
+    int size;            /* bytes of the object the mod reads */
+    int ext;             /* body gadgets 0x30..0x33 also belong to the screen */
+} StatsScreen;
+
+static const StatsScreen SCREENS[2] = {
+    {"League", 0x6800d460u, 0x6808d818u, 0x3c, 0x694, 0x6a0, 1},
+    {"Team",   0x68036ec0u, 0x6808da24u, 0x14, 0xfa,  0x5f4, 0},
+};
 
 /* ---------------------------------------------------------------- stats file */
 
@@ -291,10 +317,11 @@ static void show_card(void) {
 
 static int readable(const void *p, size_t n) { return p && !IsBadReadPtr(p, n); }
 
-/* A left click (button edge) inside a body column of the stats screen: the visible row under it, else -1. */
-static int hit_row(uint8_t *mgr, int x, int y, int *gid_out) {
+/* A left click (button edge) inside a body column of a stats screen: the visible row under it, else -1. The body is
+   gadgets 9..0x12, and 0x30..0x33 too when ext (League under bbfix [widen]). */
+static int hit_row(uint8_t *mgr, int x, int y, int ext, int *gid_out, int *gy_out) {
     uint32_t *vt = *(uint32_t **)mgr;
-    for (int id = 9; id <= 0x33; id++) {
+    for (int id = 9; id <= (ext ? 0x33 : 0x12); id++) {
         if (id == 0x13) id = 0x30;
         uint8_t *g = ((uint8_t * (BB_THISCALL *)(void *, int)) vt[0x48 / 4])(mgr, id);
         /* body columns carry flag 0x20 (input-inert, so the game's hit test, flags & 0x60, skips them); 0x40 marks a
@@ -303,9 +330,23 @@ static int hit_row(uint8_t *mgr, int x, int y, int *gid_out) {
         int gx = *(int16_t *)(g + 0xe), gy = *(int16_t *)(g + 0x10), gw = *(int16_t *)(g + 0x12), gh = *(int16_t *)(g + 0x14);
         if (x < gx || x >= gx + gw || y < gy || y >= gy + gh) continue;
         *gid_out = id;
+        *gy_out = gy;
         return (y - gy) / ROW_H;
     }
     return -1;
+}
+
+/* The stats screen whose callback is at mgr+0xc0, or 0. */
+static const StatsScreen *screen_at(const uint8_t *mgr) {
+    void *cb = *(void *const *)(mgr + 0xc0);
+    for (int i = 0; i < 2; i++)
+        if (cb && cb == api->addr("BBShell.dll", SCREENS[i].cb_va)) return &SCREENS[i];
+    return 0;
+}
+
+static uint32_t global_u32(uint32_t va) {
+    const uint32_t *p = api->addr("BBShell.dll", va);
+    return readable(p, 4) ? *p : 0;
 }
 
 /* The player's card in modmenu's News reader (mm_open_page, /news/card/<assn>/p/<pid>): true when the bridge answered and
@@ -329,16 +370,23 @@ static int card_in_reader(const char *stem, unsigned pid) {
     return rc == 0;
 }
 
-static void open_card(void *screen, int gid, int vis) {
+/* Why a click on a stats screen opened no card (probe only). */
+static void none(const char *why) {
+    if (probe) api->log("playercard probe: no card: %s", why);
+}
+
+static void open_card(const StatsScreen *s, uint8_t *screen, int gid, int gy, int vis) {
     uint8_t *mgr = (uint8_t *)api->addr("BBShell.dll", MGR_VA);
     void *map_fn = api->addr("BBShell.dll", MAP_ROW_VA);
-    if (!mgr || !map_fn || !readable(screen, 0x6a0)) return;
-    int16_t group = *(int16_t *)((uint8_t *)screen + 0x694);
+    if (!mgr || !map_fn) return;
+    int16_t group = *(int16_t *)(screen + s->group_off);
     uint16_t row = ((uint16_t (BB_THISCALL *)(void *, int, int))map_fn)(mgr, group, vis);
-    uint8_t *tab = (uint8_t *)screen + 0x3c;
+    uint8_t *tab = screen + s->table_off;
     uint16_t nrows = *(uint16_t *)tab;
     uint8_t *rows = *(uint8_t **)(tab + 4);
-    if (row >= nrows || !readable(rows + row * 0xa0, 0xa0)) return;
+    if (probe) api->log("playercard probe: %s hit gadget %#x gy=%d vis=%d -> scroll group %d, table row %u of %u", s->name,
+                        gid, gy, vis, group, row, nrows);
+    if (row >= nrows || !readable(rows, (size_t)(row + 1) * 0xa0)) { none("visible row not in the table"); return; }
     uint8_t *rr = rows + row * 0xa0;
     const uint8_t *push = (const uint8_t *)api->addr("BBShell.dll", ID_PUSH_VA);
     if (!readable(push, 2) || push[0] != 0x6a || (push[1] != 10 && push[1] != 14)) {
@@ -348,13 +396,14 @@ static void open_card(void *screen, int gid, int vis) {
     int cell = push[1];
     int32_t type = *(int32_t *)(rr + cell * 8);
     unsigned pid = *(uint16_t *)(rr + cell * 8 + 4);
-    if (probe) api->log("playercard probe: gadget %#x vis=%d row=%u/%u cell %d type=%#x pid=%u name='%.31s'", gid, vis, row,
-                        nrows, cell, type, pid, (char *)rr + 0x80);
-    if (type != 0x2000 || pid < 100) return;                   /* the id cell; ids below 100 are teams */
+    if (probe) api->log("playercard probe: %s row %u cell %d type=%#x pid=%u name='%.31s'", s->name, row, cell, type, pid,
+                        (char *)rr + 0x80);
+    if (type != 0x2000) { none("the id cell is not type 0x2000"); return; }
+    if (pid < 100) { none("the id is below 100 (a team row)"); return; }   /* ids below 100 are teams */
     char name[40];
     snprintf(name, sizeof name, "%.31s", (char *)rr + 0x80);
     if (!name[0] || (uint8_t)name[0] < 32) snprintf(name, sizeof name, "Player %u", pid);
-    void *asn = *(void **)((uint8_t *)screen + 8);
+    void *asn = *(void **)(screen + 8);
     char **inner = readable(asn, 4) ? *(char ***)asn : 0;
     const char *an = readable(inner, 0x98) ? inner[0x25] : 0;
     if (!readable(an, 1) || !an[0]) { api->log("playercard: association name not found"); return; }
@@ -375,20 +424,29 @@ static void open_card(void *screen, int gid, int vis) {
 
 static uint16_t (BB_THISCALL *orig_event)(void *mgr, int x, int y, int buttons, int code, int p5);
 
+/* A left button press on a stats screen. The probe line logs what the click saw before any card is resolved. */
+static void on_click(uint8_t *mgr, int x, int y) {
+    const StatsScreen *s = screen_at(mgr);
+    uint8_t *screen = s ? *(uint8_t **)api->addr("BBShell.dll", s->obj_va) : 0;
+    if (probe)
+        api->log("playercard probe: click x=%d y=%d mgr+0xc0=%p screen=%s obj=%p team_obj=%#x cur_screen=%#x",
+                 (int16_t)x, (int16_t)y, *(void **)(mgr + 0xc0), s ? s->name : "none", (void *)screen,
+                 global_u32(TEAM_OBJ_VA), global_u32(CUR_SCREEN_VA));
+    if (!s || !readable(screen, s->size)) return;
+    int gid = 0, gy = 0;
+    int vis = hit_row(mgr, (int16_t)x, (int16_t)y, s->ext, &gid, &gy);
+    if (vis < 0) { none("no body cell under the click"); return; }
+    open_card(s, screen, gid, gy, vis);
+}
+
 /* The gadget manager's event handler, called for every input tick with the mouse position (client coordinates of
    the screen) and the button state (bit 0 = left). Body list gadgets are not hit-tested by the game, so the click is
-   taken here: on the left button going down, on the stats screen (its callback is installed at mgr+0xc0). */
+   taken here: on the left button going down. */
 static uint16_t BB_THISCALL h_event(void *mgr, int x, int y, int buttons, int code, int p5) {
     static int was_down;
     uint16_t r = orig_event(mgr, x, y, buttons, code, p5);
     int down = buttons & 1;
-    if (down && !was_down && mgr == api->addr("BBShell.dll", MGR_VA) &&
-        *(void **)((uint8_t *)mgr + 0xc0) == api->addr("BBShell.dll", STATS_CB_VA)) {
-        void *screen = *(void **)api->addr("BBShell.dll", STATS_SCREEN_VA);
-        int gid = 0, vis = hit_row((uint8_t *)mgr, (int16_t)x, (int16_t)y, &gid);
-        if (probe) api->log("playercard probe: click x=%d y=%d gadget %#x vis=%d", (int16_t)x, (int16_t)y, gid, vis);
-        if (vis >= 0 && screen) open_card(screen, gid, vis);
-    }
+    if (down && !was_down && mgr == api->addr("BBShell.dll", MGR_VA)) on_click((uint8_t *)mgr, x, y);
     was_down = down;
     return r;
 }

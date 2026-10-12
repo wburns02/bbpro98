@@ -21,9 +21,9 @@ offset broken (P_PEAK 0x47), `test_hitter_card_shows_now_and_peak_grades` fails.
 
 Builds with the lane's command, zero warnings: `modmenu.dll` and `playercard.dll`.
 
-## Team Statistics screen: what is proven and what is open
+## Team Statistics screen: what is proven and what is open (round 1, superseded by Round 2 below)
 
-Not hooked. The brief allows only proven targets, and the state object for this screen is not proven.
+Not hooked in round 1. The state object was not proven then; Round 2 proves it and hooks the screen.
 
 Proven (decompile dump `BBShell/_all.c` and the install files, read only):
 - The screen is dialog 0x14. `SHELL.VOL` has a REQ record titled "Team Statistics -" whose number is 0x14. The League
@@ -89,3 +89,100 @@ Setup: bbfix.ini has `load=mods\modmenu.dll` and `load=mods\playercard.dll`, the
   the reader keeps the 404 page and the built-in card does not open.
 - `test_modbridge_card.py` is a separate file, as `test_modbridge_focus.py` is, because `test_modbridge.py` is already
   700 lines.
+
+## Round 2: Team Statistics (dialog 0x14) is hooked
+
+### What changed
+
+- `src-latest/mods/playercard.c`: `SCREENS[]` holds the League and Team stats screens. A left press (rising edge in
+  `h_event`) reads the callback at mgr+0xc0, takes that screen's object from its pointer global, hit-tests its body
+  gadgets, maps the visible row through `FUN_68043bf0` with the screen's scroll group, reads the id cell and opens the
+  card as in round 1 (`mm_open_page` with `/news/card/<assn>/p/<pid>`, built-in card as fallback).
+- Team values: callback 0x68036ec0, object pointer global 0x6808da24, row table at +0x14, scroll group (short) at +0xfa,
+  body gadgets 9..0x12 only (the widened 0x30..0x33 belong to League), readable object size 0x5f4.
+- League values are unchanged (table +0x3c, group +0x694, size 0x6a0, body 9..0x12 and 0x30..0x33).
+- `probe=1` logs every left press, whatever the callback: mgr+0xc0, the screen it names, the League and Team object
+  pointers (`obj`, `team_obj`), the current screen id global 0x6808da50 (`cur_screen`), the hit gadget with its top y
+  (`gy`), the visible row and table row, the id cell with its type, pid and name, and `no card: <why>` when none opens.
+
+### Evidence (BBShell.dll VAs; objdump -d -M intel; dump line numbers are `BBShell/_all.c`)
+
+Object and callback:
+- 0x68036246 `mov ds:0x6808da24,eax`: the Team object. The ctor `FUN_680367e0` is called at 0x68036236 with ecx = esi,
+  and esi comes from the allocator 0x680367c0 with 0x5f4 (`push 0x5f4` at 0x68036212).
+- 0x680361fe..0x68036206: if the global is set and `[obj] == 0x14`, the open goes straight to 0x6803624b (the code's own
+  "already built" test).
+- 0x6803627a..0x68036280: `mov ecx, ds:0x6808da24; call 0x68036b80` is the install. It is the only direct call to
+  `FUN_68036b80`, and the image holds no dword that is 0x68036b80, so no indirect call either (scanned). It runs only when
+  `di == 0` at 0x68036258.
+- `FUN_68036dc0` (`_all.c:40909`) calls `FUN_68038ef0(0x14, …, 0x68036ec0)`. The 4th argument is `push 0x68036ec0` at 0x68036dcd.
+  `FUN_68038ef0` writes the callback to `_DAT_6808ddd0` (`_all.c:42292`), which is mgr+0xc0 (0x6808dd10 + 0xc0).
+- 0x68036ec0 is the callback body: `mov ecx, ds:0x6808da24; push eax; call 0x68037080`. The callback uses the same global,
+  so the global is the object that owns the table.
+
+Row table and id cell:
+- `FUN_68036c40` fills the team rows through `StatsGrid_FillRowCells` 6805c930, called at 0x68036cb8, 0x68036cd2 and
+  0x68036d8b. The table is at obj+0x14 (`lea edi,[esi+0x14]` at 0x68037030 for the click read).
+- Layout (`FUN_68060740`, 0x68060740, the same reader League uses): count u16 at table+0, rows pointer at table+4, row
+  stride 0xa0, cell i at row+8i (type int32, value at +4), name at row+0x80.
+- The id cell is written at 6805cb0b: `push 0x2000` (6805cb06), `push 0xa` (6a 0a), then `call 0x680606a0`. Stock: cell 10.
+- bbfix [widen] (`src-latest/bbfix.c:270`, site "term") patches that push to 14. Its other sites, "bound" (6805cafb,
+  `cmp bp,0xa` to 14) and "slot" (6805cae2), are in the same function (6805c930 to 6805cb1b).
+
+Answer to the brief's widen question: yes. [widen] moves the Team id cell the way it does on League, because both screens
+fill their rows through 6805c930. The mod reads the push at runtime (`ID_PUSH_VA`), so the card uses cell 14 under widen.
+Not checked in game.
+- Side effect (by reading, not checked in game): the game's own `FUN_68036fd0` still reads cell 10 (`push 0xa` at
+  0x6803703c). It is called from `FUN_68036c40` at 0x68036da5 and from `FUN_68037080` at 0x680370a1 (header clicks).
+  Under widen cell 10 is a stat cell, so its id list (`FUN_68053e20`, 0x68037069) is empty. The card does not use it.
+
+Association name:
+- Team ctor: `call 0x68046580` at 0x680368b2, `mov [ecx+8],eax` at 0x680368ba. The League ctor `FUN_6800ccc0` does the same
+  at 0x6800cd6b and 0x6800cd73 (`mov [ecx],7` at 0x6800cd5a gives its id). `FUN_68046580` returns the one singleton
+  `DAT_6808e0fc`, so both screens name the same association.
+- Name: `(*(char ***)(obj+8))[0x25]`, the same read as League (`FUN_6803da90`, `_all.c:46419`, builds "STATS\<name>.DAT").
+
+Scroll group and body:
+- obj+0xfa is zeroed in the ctor (0x680369c6) and set by `FUN_68036dc0` from `FUN_68043810(mgr, 8, 6, 7, 9, rows, …)`.
+- The body loop in `FUN_68036dc0` runs ids 9..0x12 (`FUN_680436c0`/`FUN_68043400`, `_all.c:40909`).
+
+### Open (settle in game, the probe logs each)
+
+1. First open. The open function at 0x680361b0 (registered in the request table at `.data` 0x6808ab20, from the call at
+   0x68021380) sets `di = 1` after it creates the object (0x68036242). That path skips the install (0x68036255..0x68036258) and calls `FUN_68066fc0` instead. Whether the
+   callback is set after the first open is not settled by reading. Check whether the first click on a fresh Team open logs
+   `mgr+0xc0=0x68036ec0`; if not and the second open does, the install is on the second open only.
+2. Stale callback. `_DAT_6808ddd0` (mgr+0xc0) is written only by `FUN_68038ef0`, and nothing clears it on close. After the
+   Team screen closes, mgr+0xc0 keeps 0x68036ec0 until another screen installs its callback. The round-1 League path has
+   the same exposure. The probe's `cur_screen` (0x6808da50, set by `FUN_68038ef0`) shows which screen was last installed.
+3. Row pitch on the team grid is assumed 11 px (`ROW_H`, the League grid). The probe's `gy` and the hit row check it.
+4. Roster screens (Team menu): still open, as in round 1.
+
+### In-game checks (orchestrator)
+
+Setup: as round 1, plus `[playercard] probe=1` in bbfix.ini. Run once with `[widen] enable=1` and once with `enable=0`.
+
+1. Team card. Team menu > Team Statistics (Season). Click a player's name. The News reader opens with the card (round-1
+   check 1). The log has, in order: `click ... mgr+0xc0=0x68036ec0 screen=Team obj=0x... team_obj=0x... cur_screen=0x14`,
+   `Team hit gadget 0x9..0x12 gy=... vis=... -> scroll group ..., table row ... of ...`, `Team row ... cell 14 type=0x2000 pid=...`
+   (cell 10 with widen off), then `playercard: pid ... in the News reader -> 0`.
+2. Rows. Click the top, middle and bottom visible rows. Each gives its own pid, and the card's name matches the row.
+3. Second open. Close the screen, reopen it from the Team menu and click a name. Log mgr+0xc0 and obj on the first and the
+   second open (open item 1).
+4. Stale check. Close Team Statistics, then click on the screen you return to. The log must show `screen=none` or a
+   non-team callback; a Team card there is a bug (open item 2).
+5. Widen. Step 1 with enable=0 must log cell 10 and step 1 with enable=1 must log cell 14. Both must show the card.
+6. League still works (round-1 checks 1 to 5).
+
+### Choices made (round 2)
+
+- The Team body is gadgets 9..0x12 only. The widened 0x30..0x33 are not initialised by the Team install, so they are not
+  tested.
+- A screen-id check on the object (`[obj] == 0x14`) is not used in the click path. The probe logs the id global instead,
+  because 0x6808da50 is written by more than one installer (`_all.c:42248`, `42291`, `42345`) and its value for a
+  League screen after a child dialog was not established.
+- The League constants and checks are unchanged except that they now come from `SCREENS[]`.
+
+Build: `playercard.dll` and `modmenu.dll` with the lane command, zero warnings; `playercard.c` also clean under
+`-Wall -Wextra`. Tests: `python3 -m pytest news/tests -q`: 898 passed, 1 skipped (the same 1950 skip as round 1).
+`capped` is not installed here, so the run was plain pytest. No Python changed in round 2.
