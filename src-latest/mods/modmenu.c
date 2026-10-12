@@ -2,11 +2,17 @@
    loaded from bbfix.ini and opens three tools that run in the host: Create a Player (a form that creates a player in an
    association's free agent pool), League News (a text browser over the league news pages) and Build a Season (builds a
    playable association for any MLB season 1871..2025, or a Negro Leagues season 1920..1948, from the Lahman
-   database).
+   database). Create New Association (League Management) opens the same Build window as New Association, with a button
+   to the game's own structures dialog (bbfix.ini [modmenu] newassn=0 leaves the game's command alone).
 
    Hook: detour on EZShell.dll VA 0x6a006370, the WWW SITE button handler, void __fastcall handler(menu_screen): this in
    ECX, no stack arguments, plain ret. Its prolog 81 ec 54 02 00 00 (sub esp,0x254) is position independent. The original
    is never called (it would open a browser).
+   New Association: detour on BBShell.dll VA 0x68004ef0, the screen-8 entry (screen table 0x6808aad0[8]) that the
+   "Create New Association..." menu item runs through its vtable (call [eax+0x28] at 0x68047262); void, no stack
+   arguments, plain ret. Its prolog 64 a1 00 00 00 00 (mov eax,fs:[0]) is position independent. The original runs when
+   the game's structures button is pressed or no window could be made. (0x680068d0 is the New Association screen's
+   own button handler: its command 0xe is the stock dialog's OK button, so it is not hooked.)
 
    Export: mm_open_page(path) runs the News reader at path for another mod (playercard.dll's player card) and returns when
    it is closed; 0 when the bridge answered, 1 when it did not.
@@ -215,6 +221,7 @@ static void mm_cancel(const char *id) {
 #define IDC_CREATE 10
 #define IDC_NEWS 11
 #define IDC_BUILD 12
+#define IDC_STOCK 44                        /* New Association only: the game's own structures dialog */
 #define MSG_NOSPOOL "The mods bridge is not set up (no Mods\\spool folder)."
 #define MSG_NOANSWER "No answer from the mods bridge. Is it running?"
 #define MSG_BADANSWER "The mods bridge sent a bad answer."
@@ -237,7 +244,7 @@ static int open_windows, classes_ok;
 
 static void open_create(HWND owner);
 static void open_news(HWND owner);
-static void open_build(HWND owner);
+static int open_build(HWND owner, int newassn);
 
 static HWND mk(HWND p, const char *cls, const char *txt, DWORD style, int x, int y, int w, int h, int id) {
     HWND c = CreateWindowExA(0, cls, txt, WS_CHILD | WS_VISIBLE | style, x, y, w, h, p, (HMENU)(INT_PTR)id, hinst, 0);
@@ -324,10 +331,13 @@ static void init_once(void) {
     classes_ok = 1;
 }
 
+/* Close and the game's structures button stay usable while a request is out: each one closes the window */
 static BOOL CALLBACK busy_cb(HWND c, LPARAM busy) {
     char cls[16];
+    int id;
     GetClassNameA(c, cls, sizeof cls);
-    if (!strcmp(cls, "Button") && GetDlgCtrlID(c) != IDC_CLOSE) EnableWindow(c, !busy);
+    id = GetDlgCtrlID(c);
+    if (!strcmp(cls, "Button") && id != IDC_CLOSE && id != IDC_STOCK) EnableWindow(c, !busy);
     return TRUE;
 }
 
@@ -402,6 +412,8 @@ static void win_close(Win *w) {
 static void win_destroyed(Win *w) {
     HWND o = GetWindow(w->hwnd, GW_OWNER);
     open_windows--;
+    /* run_loop tests open_windows only after a message: wake it when the last window goes */
+    if (open_windows == 0) PostThreadMessageA(GetCurrentThreadId(), WM_NULL, 0, 0);
     if (w->busy) {
         mm_cancel(w->id);
         w->busy = 0;
@@ -523,7 +535,7 @@ static LRESULT CALLBACK menu_proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
         switch (LOWORD(wp)) {
         case IDC_CREATE: open_create(h); break;
         case IDC_NEWS: open_news(h); break;
-        case IDC_BUILD: open_build(h); break;
+        case IDC_BUILD: open_build(h, 0); break;
         case IDC_CLOSE: win_close(&st->w); break;
         }
         return 0;
@@ -1163,7 +1175,9 @@ static void open_news(HWND owner) { open_reader(owner, "/news/"); }
 #define IDC_GO 42
 #define IDC_NEGRO 43
 
-typedef struct { Win w; HWND year, negro; } BuildState;
+/* newassn: the window opened by Create New Association (same window, a stock button, a bridge check on open) */
+typedef struct { Win w; HWND year, negro, go; int newassn; } BuildState;
+static int stock_asked;                     /* the game's structures button was pressed; run_newassn reads it */
 
 static void build_done(Win *w, MMResp *r, const char *err) {
     const char *s;
@@ -1200,6 +1214,27 @@ static void build_go(BuildState *st) {
     win_request(&st->w, "build", kv, 2, BUILD_TIMEOUT_MS);
 }
 
+/* the New Association window's first request: is the bridge answering, and can it build a season? The bridge says
+   so in ping's build header; when it cannot, its reason (NO_BUILD_TEXT) is the body and Build stays off. */
+static void newassn_ping_done(Win *w, MMResp *r, const char *err) {
+    BuildState *st = (BuildState *)w;
+    const char *b;
+    (void)err;
+    if (!r) {                                   /* no answer: win_error has put the reason on screen */
+        EnableWindow(st->go, FALSE);
+        return;
+    }
+    b = mm_get(r, "build");
+    if (b && !strcmp(b, "1")) {
+        SetWindowTextA(w->status, "Bridge: ready");
+    } else {
+        SetWindowTextA(w->msg, r->body);
+        SetWindowTextA(w->status, "Build is off: the bridge is not set up for seasons.");
+        EnableWindow(st->go, FALSE);
+    }
+    mm_free(r);
+}
+
 static LRESULT CALLBACK build_proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
     BuildState *st = (BuildState *)GetWindowLongPtrA(h, GWLP_USERDATA);
     switch (m) {
@@ -1211,7 +1246,7 @@ static LRESULT CALLBACK build_proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
         lbl(h, "Season (1871 to 2025):", 10, 13, 150, 20);
         st->year = mk(h, "EDIT", "", WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL | ES_NUMBER, 165, 10, 60, 22, IDC_YEAR);
         SendMessageA(st->year, EM_LIMITTEXT, 4, 0);
-        btn(h, "Build", 235, 9, 90, 26, IDC_GO);
+        st->go = btn(h, "Build", 235, 9, 90, 26, IDC_GO);
         st->negro = mk(h, "BUTTON", "Negro Leagues (1920 to 1948)", WS_TABSTOP | BS_AUTOCHECKBOX, 10, 40, 260, 20,
                        IDC_NEGRO);
         lbl(h, "Builds the season's teams, players and schedule from the Lahman database. It appears in the "
@@ -1219,7 +1254,15 @@ static LRESULT CALLBACK build_proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
         st->w.msg = text_out(h, 10, 98, 400, 118, 0, WS_HSCROLL | ES_AUTOHSCROLL);
         SendMessageA(st->w.msg, WM_SETFONT, (WPARAM)mono_font, 0);
         btn(h, "Close", 320, 224, 90, 26, IDC_CLOSE);
-        st->w.status = lbl(h, "", 10, 229, 300, 20);
+        if (st->newassn) {
+            btn(h, "Game's own structures...", 10, 224, 200, 26, IDC_STOCK);
+            st->w.status = lbl(h, "", 10, 258, 300, 20);
+            st->w.done = newassn_ping_done;
+            win_request(&st->w, "ping", 0, 0, TIMEOUT_MS);
+            if (!st->w.busy) EnableWindow(st->go, FALSE);
+        } else {
+            st->w.status = lbl(h, "", 10, 229, 300, 20);
+        }
         return 0;
     case WM_TIMER:
         if (wp == TIMER_POLL) win_poll(&st->w);
@@ -1227,6 +1270,10 @@ static LRESULT CALLBACK build_proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
     case WM_COMMAND:
         if (LOWORD(wp) == IDC_GO) build_go(st);
         else if (LOWORD(wp) == IDC_CLOSE) win_close(&st->w);
+        else if (LOWORD(wp) == IDC_STOCK) {
+            stock_asked = 1;
+            win_close(&st->w);
+        }
         return 0;
     case WM_CLOSE:
         win_close(&st->w);
@@ -1241,14 +1288,17 @@ static LRESULT CALLBACK build_proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
     return DefWindowProcA(h, m, wp, lp);
 }
 
-static void open_build(HWND owner) {
+/* 0 when no window was made (the owner stays enabled) */
+static int open_build(HWND owner, int newassn) {
     BuildState *st = calloc(1, sizeof *st);
-    if (!st) return;
-    if (!make_win("BBModBuild", "Build a Season", 420, 260, owner, st)) {
+    if (!st) return 0;
+    st->newassn = newassn;
+    if (!make_win("BBModBuild", newassn ? "New Association" : "Build a Season", 420, newassn ? 290 : 260, owner, st)) {
         free(st);
-        return;
+        return 0;
     }
     EnableWindow(owner, FALSE);
+    return 1;
 }
 
 /* ---------------------------------------------------------------- modal run and hook */
@@ -1277,17 +1327,19 @@ static LRESULT CALLBACK cbt_proc(int code, WPARAM wp, LPARAM lp) {
     return CallNextHookEx(cbt_hook, code, wp, lp);
 }
 
-/* pumps the game's messages while any of our windows is open. Returns 1 when WM_QUIT arrived (its code in *code), else 0.
-   Esc closes the active window (not while a combo box is open); Enter in the link list opens the link */
-static int pump(int *code) {
+/* runs our windows on the game's UI thread until they are all closed. Esc closes the active window (not while a combo
+   box is open); Enter in the link list opens the link */
+static void run_loop(HWND owner) {
     HWND top;
     MSG m;
     BOOL g;
+    int quit = 0, code = 0;
     while (open_windows > 0) {
         g = GetMessageA(&m, 0, 0, 0);
         if (g == 0) {
-            *code = (int)m.wParam;
-            return 1;
+            quit = 1;
+            code = (int)m.wParam;
+            break;
         }
         if (g < 0) break;
         top = GetActiveWindow();
@@ -1305,14 +1357,19 @@ static int pump(int *code) {
         TranslateMessage(&m);
         DispatchMessageA(&m);
     }
-    return 0;
+    EnumThreadWindows(GetCurrentThreadId(), close_ours_cb, 0);
+    if (cbt_hook) UnhookWindowsHookEx(cbt_hook);
+    cbt_hook = 0;
+    if (owner) {
+        EnableWindow(owner, TRUE);
+        SetForegroundWindow(owner);
+    }
+    if (quit) PostQuitMessage(code);
 }
 
-/* runs the Mods window on the game's UI thread until its windows are all closed */
 static void run_menu(void) {
     HWND owner, mods;
     MenuState *st;
-    int quit, code = 0;
     init_once();
     owner = GetActiveWindow();
     if (!owner) owner = GetForegroundWindow();
@@ -1328,23 +1385,33 @@ static void run_menu(void) {
         return;
     }
     if (owner) EnableWindow(owner, FALSE);
-    quit = pump(&code);
-    EnumThreadWindows(GetCurrentThreadId(), close_ours_cb, 0);
-    if (cbt_hook) UnhookWindowsHookEx(cbt_hook);
-    cbt_hook = 0;
-    if (owner) {
-        EnableWindow(owner, TRUE);
-        SetForegroundWindow(owner);
-    }
-    if (quit) PostQuitMessage(code);
+    run_loop(owner);
 }
 
-/* The News reader at path, run like the menu (the same CBT hook and message pump) for another mod's window: a player
+/* Create New Association: the Build window in its New Association mode, run like the Mods window. 1 = the game's own
+   handler runs now (its button was pressed, or no window could be made); 0 = the window handled the command */
+static int run_newassn(void) {
+    HWND owner;
+    init_once();
+    owner = GetActiveWindow();
+    if (!owner) owner = GetForegroundWindow();
+    open_windows = 0;
+    stock_asked = 0;
+    cbt_hook = SetWindowsHookExA(WH_CBT, cbt_proc, 0, GetCurrentThreadId());
+    if (!open_build(owner, 1)) {
+        if (cbt_hook) UnhookWindowsHookEx(cbt_hook);
+        cbt_hook = 0;
+        return 1;
+    }
+    run_loop(owner);
+    return stock_asked;
+}
+
+/* The News reader at path, run like the menu (the same CBT hook and message loop) for another mod's window: a player
    card's link to a page. Returns when the reader is closed. 0 when the bridge answered the page; 1 when it did not (no
    spool, no answer in time, or a bad answer), in which case the reader shows the same message the menu shows. */
 BB_EXPORT int mm_open_page(const char *path) {
     HWND owner;
-    int quit, code = 0;
     init_once();
     owner = GetActiveWindow();
     if (!owner) owner = GetForegroundWindow();
@@ -1356,23 +1423,23 @@ BB_EXPORT int mm_open_page(const char *path) {
         cbt_hook = 0;
         return 1;
     }
-    quit = pump(&code);
-    EnumThreadWindows(GetCurrentThreadId(), close_ours_cb, 0);
-    if (cbt_hook) UnhookWindowsHookEx(cbt_hook);
-    cbt_hook = 0;
-    if (owner) {
-        EnableWindow(owner, TRUE);
-        SetForegroundWindow(owner);
-    }
-    if (quit) PostQuitMessage(code);
+    run_loop(owner);
     return page_ok ? 0 : 1;
 }
 
 static void (__attribute__((fastcall)) *orig_www)(void *self);
 static void __attribute__((fastcall)) BB_HANDLER h_www(void *self) { (void)self; run_menu(); }
 
+/* BBShell screen-8 entry (VA 0x68004ef0): the "Create New Association..." menu item's action. It makes the New
+   Association screen object (0x6808d804) and opens the stock structures dialog (FUN_68005720). */
+static void (*orig_newassn)(void);
+static void h_newassn(void) {
+    if (run_newassn()) orig_newassn();
+}
+
 BB_EXPORT int bbmod_init(const BBModAPI *a) {
     static const uint8_t www_prolog[6] = {0x81, 0xec, 0x54, 0x02, 0x00, 0x00};   /* sub esp,0x254 */
+    static const uint8_t newassn_prolog[6] = {0x64, 0xa1, 0x00, 0x00, 0x00, 0x00};       /* mov eax,fs:[0] */
     api = a;
     if (a->version != BBMOD_API_VERSION) return 1;
     if (!a->ini_int("modmenu", "enable", 1)) {
@@ -1380,6 +1447,10 @@ BB_EXPORT int bbmod_init(const BBModAPI *a) {
         return 0;
     }
     if (a->detour("EZShell.dll", 0x6a006370, www_prolog, 6, (void *)h_www, (void **)&orig_www) < 0) return 3;
+    /* a refused New Association hook keeps the Mods menu: the game's command runs as stock */
+    if (!a->ini_int("modmenu", "newassn", 1)) a->log("modmenu: New Association left to the game");
+    else if (a->detour("BBShell.dll", 0x68004ef0, newassn_prolog, 6, (void *)h_newassn, (void **)&orig_newassn) < 0)
+        a->log("modmenu: New Association hook refused");
     a->log("modmenu: registered");
     return 0;
 }

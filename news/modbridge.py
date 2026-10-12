@@ -366,7 +366,10 @@ def _paragraphs(*parts):
 
 
 def _ping(ctx, req):
-    return [('status', 'ok'), ('version', str(VERSION))], ''
+    """build=1 when Build a Season can run here; build=0 with NO_BUILD_TEXT as the body when it cannot."""
+    if ctx.db and ctx.templates:
+        return [('status', 'ok'), ('version', str(VERSION)), ('build', '1')], ''
+    return [('status', 'ok'), ('version', str(VERSION)), ('build', '0')], NO_BUILD_TEXT
 
 
 def _assns(ctx, req):
