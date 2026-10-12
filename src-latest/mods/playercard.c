@@ -434,7 +434,6 @@ static void open_card(const StatsScreen *s, uint8_t *screen, int gid, int gy, in
     show_card();
 }
 
-static uint16_t (BB_THISCALL *orig_event)(void *mgr, int x, int y, int buttons, int code, int p5);
 
 /* A left button press on a stats screen. The probe line logs what the click saw before any card is resolved. */
 static void on_click(uint8_t *mgr, int x, int y) {
@@ -451,6 +450,85 @@ static void on_click(uint8_t *mgr, int x, int y) {
     open_card(s, screen, gid, gy, vis);
 }
 
+static uint16_t (BB_THISCALL *orig_event)(void *mgr, int x, int y, int buttons, int code, int p5);
+
+/* Mouse wheel on the game's lists. The stock shell ignores WM_MOUSEWHEEL; only the arrow gadgets scroll, one row a
+   click. A WH_GETMESSAGE hook on the UI thread takes the wheel message (turned into WM_NULL) and banks its delta; the
+   next event tick spends it as presses of the list's own up or down arrow, through the same path the handler takes for
+   a clicked gadget (BBShell 68043e3c): each scroll group's FUN_68072020 until one takes the id, then the screen's
+   callback at mgr+0xc0, which refills the rows. Setting a group's top directly (FUN_68043ae0) is not enough: the body
+   draws rows the screen never loaded and the game jumps to a garbage address. Faking a click at the arrow's position
+   does not work either: dialog gadget rects are relative to the dialog, the handler's x and y to the screen. Scroll
+   groups are a list at mgr+0xbc (node: +0 next, +0xa top, +0xc visible rows, +0x10 total rows, +0x12 scrollbar id,
+   +0x14 up id, +0x16 down id, +0x18 body id). A list with a selection bar (node +8) moves the bar, which scrolls at the
+   edge, as the arrows do. */
+#define WHEEL_ROWS 3
+#define GROUP_CLICK_VA 0x68072020u      /* fastcall (ecx node, edx unused, mgr, id), ret 8: nonzero when it took the id */
+static int wheel_on;
+static volatile LONG wheel_acc;
+static HHOOK wheel_hook;
+
+static LRESULT CALLBACK wheel_proc(int code, WPARAM wp, LPARAM lp) {
+    MSG *m = (MSG *)lp;
+    char cls[32] = "";
+    if (code == HC_ACTION && wp == PM_REMOVE && m && m->message == WM_MOUSEWHEEL &&
+        !(GetClassNameA(GetAncestor(m->hwnd, GA_ROOT), cls, sizeof cls) && !strncmp(cls, "BB", 2))) {   /* mod windows */
+        InterlockedExchangeAdd(&wheel_acc, (short)HIWORD(m->wParam));
+        m->message = WM_NULL;
+    }
+    return CallNextHookEx(wheel_hook, code, wp, lp);
+}
+
+static uint8_t *gadget(uint8_t *mgr, int id) {
+    uint32_t *vt = *(uint32_t **)mgr;
+    uint8_t *g = ((uint8_t * (BB_THISCALL *)(void *, int)) vt[0x48 / 4])(mgr, id);
+    return readable(g, 0x1a) && *(uint16_t *)(g + 0xc) == id ? g : 0;
+}
+
+/* The scroll group a wheel at (x, y) moves: the one whose body-to-scrollbar box holds the cursor, else the only group
+   with rows off screen. 0 when none. Rects are compared as the game passes them; in a dialog they do not line up with
+   x and y, and the single-list fallback picks the group. */
+static uint8_t *wheel_group(uint8_t *mgr, int x, int y) {
+    uint8_t *only = 0;
+    int idx = 0, nscroll = 0;
+    for (uint8_t *n = *(uint8_t **)(mgr + 0xbc); readable(n, 0x1a) && idx < 64; n = *(uint8_t **)n, idx++) {
+        if (*(int16_t *)(n + 0x10) <= *(int16_t *)(n + 0xc)) continue;
+        nscroll++, only = n;
+        uint8_t *sb = gadget(mgr, *(uint16_t *)(n + 0x12)), *body = gadget(mgr, *(uint16_t *)(n + 0x18));
+        if (!sb || (*(uint16_t *)(sb + 0x18) & 0x40)) continue;
+        int sx = *(int16_t *)(sb + 0xe), sy = *(int16_t *)(sb + 0x10);
+        int right = sx + *(int16_t *)(sb + 0x12), bottom = sy + *(int16_t *)(sb + 0x14);
+        int left = body ? *(int16_t *)(body + 0xe) : sx;
+        if (x >= left && x < right && y >= sy && y < bottom) return n;
+    }
+    return nscroll == 1 ? only : 0;
+}
+
+static int apply_wheel(uint8_t *mgr, int x, int y) {
+    LONG acc = InterlockedExchange(&wheel_acc, 0);
+    int notches = acc / WHEEL_DELTA;
+    if (acc % WHEEL_DELTA) InterlockedExchangeAdd(&wheel_acc, acc % WHEEL_DELTA);
+    if (!notches) return 0;
+    uint8_t *n = wheel_group(mgr, x, y);
+    int top = n ? *(int16_t *)(n + 0xa) : -1, id = n ? *(uint16_t *)(n + (notches > 0 ? 0x14 : 0x16)) : 0;
+    if (n && id) {
+        uint32_t (__attribute__((fastcall)) *click)(void *, int, void *, int) =
+            (uint32_t (__attribute__((fastcall)) *)(void *, int, void *, int))api->addr("BBShell.dll", GROUP_CLICK_VA);
+        void (*cb)(int) = *(void (**)(int))(mgr + 0xc0);
+        for (int i = WHEEL_ROWS * (notches < 0 ? -notches : notches); i > 0; i--) {
+            int idx = 0;
+            for (uint8_t *g = *(uint8_t **)(mgr + 0xbc); readable(g, 0x1a) && idx < 64; g = *(uint8_t **)g, idx++)
+                if ((uint16_t)click(g, 0, mgr, id)) break;
+            if (cb) cb(id);
+        }
+    }
+    if (probe)
+        api->log("playercard probe: wheel %d at x=%d y=%d group %p arrow %d top %d -> %d (total %d visible %d)", notches,
+                 x, y, (void *)n, id, top, n ? *(int16_t *)(n + 0xa) : -1, n ? *(int16_t *)(n + 0x10) : 0,
+                 n ? *(int16_t *)(n + 0xc) : 0);
+    return n && id;
+}
+
 /* The gadget manager's event handler, called for every input tick with the mouse position (client coordinates of
    the screen) and the button state (bit 0 = left). Body list gadgets are not hit-tested by the game, so the click is
    taken here: on the left button going down. The card's reader runs a modal loop that keeps the game ticking, so the
@@ -459,6 +537,12 @@ static void on_click(uint8_t *mgr, int x, int y) {
 static uint16_t BB_THISCALL h_event(void *mgr, int x, int y, int buttons, int code, int p5) {
     static int was_down, in_click;
     uint16_t r = orig_event(mgr, x, y, buttons, code, p5);
+    if (wheel_on) {
+        if (!wheel_hook) wheel_hook = SetWindowsHookExA(WH_GETMESSAGE, wheel_proc, 0, GetCurrentThreadId());
+        if (wheel_acc && !in_click && !(buttons & 1) && readable(mgr, 0xc4) &&
+            apply_wheel((uint8_t *)mgr, (int16_t)x, (int16_t)y))
+            r = 1;                                                       /* as the handler answers a gadget press */
+    }
     int down = buttons & 1, edge = down && !was_down;
     was_down = down;
     if (edge && !in_click && mgr == api->addr("BBShell.dll", MGR_VA)) {
@@ -475,8 +559,9 @@ BB_EXPORT int bbmod_init(const BBModAPI *a) {
     if (a->version != BBMOD_API_VERSION) return 1;
     if (!a->ini_int("playercard", "enable", 1)) { a->log("playercard: disabled"); return 0; }
     probe = a->ini_int("playercard", "probe", 0);
+    wheel_on = a->ini_int("playercard", "wheel", 1);
     static const uint8_t ev_prolog[5] = {0x83, 0xec, 0x04, 0x53, 0x56};               /* sub esp,4 / push ebx / push esi */
     if (a->detour("BBShell.dll", 0x68043d20, ev_prolog, 5, (void *)h_event, (void **)&orig_event) < 0) return 3;
-    a->log("playercard: registered (probe=%d)", probe);
+    a->log("playercard: registered (probe=%d wheel=%d)", probe, wheel_on);
     return 0;
 }

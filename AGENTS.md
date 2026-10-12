@@ -108,3 +108,7 @@ Public repo (MIT) of tools and research for FPS Baseball Pro '98. Python codecs 
   takes the button release: the gadget manager keeps the button held (BBShell 0x68043d20 sees buttons=1 every tick).
   Record the press edge before opening, ignore ticks while the window is up, and post the missed WM_LBUTTONUP to the
   window under the cursor (the screen's child window, not FPS_Desktop) after it closes (playercard.c h_event).
+- Stock lists ignore the mouse wheel. Scroll groups hang off gadget manager +0xbc; never set a group's top directly
+  (FUN_68043ae0) from a mod: the screen has not loaded those rows and the body draw jumps to a garbage address. Scroll
+  by pressing the group's arrow ids through the handler's own path (FUN_68072020 per group, then the mgr+0xc0
+  callback), as playercard.c apply_wheel does. Dialog gadget rects are dialog-relative, the handler's x and y are not.
