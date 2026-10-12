@@ -195,9 +195,10 @@ def sim_seasons(data_dir, stem, pid, kind):
 
 
 def merge(real, sim, start=None):
-    """The rows of a career: the real seasons before start (all of them when start is None), and the sim seasons. A
-    year that has a sim row keeps only that row. Every row is a copy with 'sim': False (real) or True (sim), sorted by
-    year."""
+    """The rows of a career: the real seasons before start (all of them when start is None), and the sim seasons from
+    start on (a sim row before start is the build's copy of a real season, kept as 'last season'). A year that has a
+    sim row keeps only that row. Every row is a copy with 'sim': False (real) or True (sim), sorted by year."""
+    sim = [row for row in sim if start is None or row['year'] >= start]
     sim_years = {row['year'] for row in sim}
     kept = [dict(row, sim=False) for row in real
             if (start is None or row['year'] < start) and row['year'] not in sim_years]
