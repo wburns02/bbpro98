@@ -370,6 +370,18 @@ static int card_in_reader(const char *stem, unsigned pid) {
     return rc == 0;
 }
 
+/* The card's window takes the releases: the game sees the press that closes the card but not its release, keeps the
+   button held, and the next press on the stats screen is no edge and opens nothing. Hand the game the release it
+   missed once the card is gone. */
+static void release_game_button(void) {
+    HWND w = GetCapture();
+    POINT p;
+    if (!GetCursorPos(&p)) return;
+    if (!w) w = WindowFromPoint(p);         /* the screen's child window (FrontOffice and so on), not the desktop frame */
+    if (!w || GetWindowThreadProcessId(w, 0) != GetCurrentThreadId() || !ScreenToClient(w, &p)) return;
+    PostMessageA(w, WM_LBUTTONUP, 0, MAKELPARAM(p.x, p.y));
+}
+
 /* Why a click on a stats screen opened no card (probe only). */
 static void none(const char *why) {
     if (probe) api->log("playercard probe: no card: %s", why);
@@ -441,13 +453,20 @@ static void on_click(uint8_t *mgr, int x, int y) {
 
 /* The gadget manager's event handler, called for every input tick with the mouse position (client coordinates of
    the screen) and the button state (bit 0 = left). Body list gadgets are not hit-tested by the game, so the click is
-   taken here: on the left button going down. */
+   taken here: on the left button going down. The card's reader runs a modal loop that keeps the game ticking, so the
+   edge is recorded before the card opens and ticks inside that loop are ignored; otherwise every tick while the card is
+   up reads as a new press and opens the card again. */
 static uint16_t BB_THISCALL h_event(void *mgr, int x, int y, int buttons, int code, int p5) {
-    static int was_down;
+    static int was_down, in_click;
     uint16_t r = orig_event(mgr, x, y, buttons, code, p5);
-    int down = buttons & 1;
-    if (down && !was_down && mgr == api->addr("BBShell.dll", MGR_VA)) on_click((uint8_t *)mgr, x, y);
+    int down = buttons & 1, edge = down && !was_down;
     was_down = down;
+    if (edge && !in_click && mgr == api->addr("BBShell.dll", MGR_VA)) {
+        in_click = 1;
+        on_click((uint8_t *)mgr, x, y);
+        in_click = 0;
+        release_game_button();
+    }
     return r;
 }
 

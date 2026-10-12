@@ -186,3 +186,26 @@ Setup: as round 1, plus `[playercard] probe=1` in bbfix.ini. Run once with `[wid
 Build: `playercard.dll` and `modmenu.dll` with the lane command, zero warnings; `playercard.c` also clean under
 `-Wall -Wextra`. Tests: `python3 -m pytest news/tests -q`: 898 passed, 1 skipped (the same 1950 skip as round 1).
 `capped` is not installed here, so the run was plain pytest. No Python changed in round 2.
+
+## Gate (orchestrator, in game, 2026-10-12)
+
+Scratch game (:95, MLBPA97 copy, bridge from this worktree), `[playercard] probe=1`.
+
+- Found: one click opened the card about every 250 ms (78 bridge requests from one click). `on_click` ran the reader's
+  modal loop before `h_event` recorded the press, so each game tick inside that loop read as a new press. Fixed: the
+  edge is recorded first and ticks during an open card are ignored (`in_click`).
+- Found: the press after closing a card opened nothing. Tick logging showed the game holding the button down at the
+  reader's Close position (613,473) until the next full click: the game sees the press that closes the card but not its
+  release. Fixed: `release_game_button` posts WM_LBUTTONUP to the window under the cursor (the screen's FrontOffice
+  child, not the FPS_Desktop frame; posting to the active window did nothing) once the card is gone.
+- Checks, all passed after the fixes:
+  1. Team Statistics, Atlanta: Ainsmith (row 0, pid 1995), Melton (row 13, pid 1792), Wohlers (row 19, pid 101),
+     Sudhoff (row 24, pid 1530), Barberie (row 26, pid 1443). Callback 0x68036EC0, cell 14 under widen. The card's lines
+     match the screen (Barberie 62 AB 10 H 3 HR; Melton 17 AB 1 H; Sudhoff 186 AB 43 H).
+  2. Cards opened back to back without reopening the screen.
+  3. Stale: on Team Data the callback is 0x6802ADE0, `screen=none`, no card.
+  4. Widen off: cell 10, same pid, card shown.
+  5. League Statistics: a team row is refused (pid 1, below 100); Players view, Lopez row 3 pid 109, card matches.
+  6. Bridge stopped: the reader says "No answer from the mods bridge" after 20 s; Close opens the built-in card with the
+     right lines. The press after the built-in card closes opens the next card.
+- Known: with the bridge stopped the built-in card only appears after the reader's 20 s timeout and a Close.
