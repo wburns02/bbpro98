@@ -219,7 +219,10 @@ def test_card_is_not_routed_to_the_news_server(card, monkeypatch):
     assert seen == []
 
 
-def real_ctx(tmp_path, data):
+def real_ctx(tmp_path, data, monkeypatch):
+    """A bridge on the real install that answers with the text card (the install has fonts; test_modbridge_cardimg
+    covers the picture)."""
+    monkeypatch.setattr(modbridge, '_card_fonts', lambda game: None)
     spool = tmp_path / 'spool'
     spool.mkdir()
     ctx = types.SimpleNamespace(game=REAL, data=data, backup=str(tmp_path / 'backup'), donor='', db=None,
@@ -228,10 +231,10 @@ def real_ctx(tmp_path, data):
 
 
 @pytest.mark.skipif(not os.path.isfile(os.path.join(REAL, 'Assn', 'MLBPA97.ASN')), reason='no game install here')
-def test_card_on_the_real_install(tmp_path):
+def test_card_on_the_real_install(tmp_path, monkeypatch):
     """Chipper Jones in MLBPA97: his 3B ratings are read from the PYR, his career games by position from the stats file,
     and his team from the roster window."""
-    ctx, spool = real_ctx(tmp_path, str(tmp_path / 'data'))
+    ctx, spool = real_ctx(tmp_path, str(tmp_path / 'data'), monkeypatch)
     os.makedirs(ctx.data)
     head, body = page(ctx, spool, '/news/card/MLBPA97/p/104')
     assert head['status'] == 'ok' and head['http'] == '200'
@@ -245,8 +248,8 @@ def test_card_on_the_real_install(tmp_path):
 
 
 @pytest.mark.skipif(not os.path.isdir(os.path.join(NEWS, 'MLBPA97')), reason='no watcher data here')
-def test_card_on_the_real_install_with_the_watcher_folder_but_no_stories(tmp_path):
-    ctx, spool = real_ctx(tmp_path, NEWS)
+def test_card_on_the_real_install_with_the_watcher_folder_but_no_stories(tmp_path, monkeypatch):
+    ctx, spool = real_ctx(tmp_path, NEWS, monkeypatch)
     head, body = page(ctx, spool, '/news/card/MLBPA97/p/99999')
     assert head['http'] == '404' and body == NO_SUCH
     head, body = page(ctx, spool, '/news/card/MLBPA97/p/104')

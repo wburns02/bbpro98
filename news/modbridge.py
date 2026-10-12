@@ -8,8 +8,9 @@ reject), the player cards under /news/card/ (the Team Statistics screen's click,
 (work/lahman/build.py, run as a subprocess). Standard library only.
 
 The DLL writes q<ID>.tmp and renames it to q<ID>.req. The bridge claims the request by renaming it to q<ID>.work,
-writes r<ID>.tmp and renames that to r<ID>.rsp, then removes the .work file. parse_request reads a request, render
-writes a reply, and process_spool answers every pending request once.
+writes r<ID>.tmp and renames that to r<ID>.rsp, then removes the .work file. A picture page (a player card tab drawn
+with the game's own fonts, cardimg.py) also writes r<ID>.bmp, before the .rsp, and says image=1 in the header.
+parse_request reads a request, render writes a reply, and process_spool answers every pending request once.
 """
 import argparse
 import datetime
@@ -27,13 +28,17 @@ import time
 import traceback
 import types
 import urllib.parse
+import zlib
 from html.parser import HTMLParser
 
 import aigm
+import cardimg
 import create
 import createweb
 import focus
 import gamedata
+import history
+import portrait
 import recap
 import scout
 import server
@@ -757,7 +762,9 @@ def _development(ctx, path):
 # The player card under /news/card/<STEM>/p/<pid>: what the game's card shows for one player, as text for the Mods menu's
 # reader. It reads the association's files (ASN, PYR, PYF, Stats) and the watcher's data folder, which need not have had
 # a pass. Ratings are shown now and at peak; a stats row is shown for each period the stats file has for him.
-CARD_RE = re.compile(r'/news/card/([A-Za-z0-9]{1,8})/p/([0-9]{1,5})')
+CARD_RE = re.compile(r'/news/card/([A-Za-z0-9]{1,8})/p/([0-9]{1,5})(?:/(batting|pitching|career|news)(?:/([0-9]{1,3}))?)?')
+CARD_TABS = (('', 'Overview'), ('batting', 'Batting'), ('pitching', 'Pitching'), ('career', 'Career'), ('news', 'News'))
+CAREER_ROWS = 20                # career table rows a page shows (the totals rows go on the last page)
 CARD_NEWS = 10                  # news items a card lists, newest first
 CARD_SCAN = 2000                # story files searched for a name: the newest by modification time
 CARD_PERIODS = ((0, 'Last 7 days'), (1, 'This season'), (3, 'Last season'), (2, 'Career'))     # (stats scope, label)
@@ -981,12 +988,186 @@ def _card_page(ctx, stem, pid):
 
 
 def _card(ctx, path):
-    """The reply for a path under /news/card: the player's card, else Not found."""
+    """The reply for a path under /news/card: the player's card as a picture page (_card_image) when the game's fonts
+    can be read, else as text; Not found for anything else."""
     m = CARD_RE.fullmatch(urllib.parse.urlsplit(path).path)
-    built = _card_page(ctx, m.group(1), int(m.group(2))) if m else None
+    fonts = _card_fonts(ctx.game) if m else None
+    if m and fonts is not None:
+        built = _card_image(ctx, fonts, m.group(1), int(m.group(2)), m.group(3) or '', int(m.group(4) or 0))
+        if built is not None:
+            return built
+    built = _card_page(ctx, m.group(1), int(m.group(2))) if m else None      # text: every tab is the one page
     if built is None:
         return _news_reply(404, path, 'Not found', 'No such association or player.' if m else 'Not found.', [])
     return _news_reply(200, path, *built)
+
+
+_FONTS = {}
+
+
+def _card_fonts(game):
+    """The game's own fonts and palette for card pictures (cardimg.Fonts), read once per game folder; None when they
+    cannot be read (the card is then text)."""
+    if game not in _FONTS:
+        try:
+            _FONTS[game] = cardimg.Fonts.load(game)
+        except (OSError, cardimg.FontError):
+            _FONTS[game] = None
+    return _FONTS[game]
+
+
+def _card_who(lg, pid):
+    """(first name, last name, birth date or None) of a player from his PYR record."""
+    rec = gamedata.record(lg.pyr, pid)
+    try:
+        born = datetime.date.fromordinal(lg.births[pid] - 365)
+    except (KeyError, ValueError, OverflowError):
+        born = None
+    return gamedata.cstr(rec[30:47]).strip(), gamedata.cstr(rec[47:64]).strip(), born
+
+
+def _lahman_path(ctx):
+    """The Lahman database for the card's real seasons: the bridge's --db, else history.find_db; None when neither."""
+    db = getattr(ctx, 'db', None)
+    return db if db and os.path.isfile(db) else history.find_db()
+
+
+def _short_team(name):
+    """A team's short label for the career table: the initials of its name, at most three ('New York Yankees' NYY)."""
+    words = [w for w in re.split(r'[^A-Za-z0-9]+', name or '') if w]
+    if len(words) == 1:
+        return words[0][:3].upper()
+    return ''.join(w[0] for w in words)[:3].upper()
+
+
+def _career(ctx, lg, pid, kind, first, last, born):
+    """(rows, lahman id) for a player's career table: his real seasons before the association's start year (Lahman,
+    when the database and a match exist), the seasons the watcher archived, and this season from the stats file."""
+    start, lid, real = history.start_year(lg.stem, lg.year), None, []
+    path = _lahman_path(ctx)
+    if path and born is not None:
+        try:
+            conn = history.open_db(path)    # one per request: each request runs in its own thread
+            try:
+                lid = history.lahman_id(conn, first, last, born)
+                real = history.real_seasons(conn, lid, kind, before=start) if lid else []
+            finally:
+                conn.close()
+        except sqlite3.Error:
+            lid, real = None, []
+    sim = history.sim_seasons(ctx.data, lg.stem, pid, kind) if os.path.isdir(ctx.data) else []
+    for r in sim:
+        r['team'] = _short_team(r['team'])            # the archive keeps the team's full name
+    stats_dir = os.path.join(ctx.game, 'Stats')
+    dat = gamedata.find(stats_dir, lg.stem + '.DAT') if os.path.isdir(stats_dir) else None
+    if dat is not None and lg.year is not None and not any(r['year'] == lg.year for r in sim):
+        line = gamedata.season_lines(dat, 1)[kind].get(pid)
+        tid = next((t for t in sorted(lg.teams) if pid in lg.teams[t]['roster']), None)
+        if line and line.get('g'):
+            keys = history.BAT_KEYS if kind == 'bat' else history.PIT_KEYS
+            sim.append(dict({k: line.get(k, 0) for k in keys}, year=lg.year,
+                            team=_short_team(lg.teams[tid]['name']) if tid is not None else ''))
+    return history.merge(real, sim, start), lid
+
+
+def _career_cells(year, team, line, kind):
+    if kind == 'bat':
+        b = dict(line, h1b=line['h'] - line['h2b'] - line['h3b'] - line['hr'])
+        return [str(year), team] + _bat_row('', b)[1:]
+    return [str(year), team] + _pit_row('', line)[1:]
+
+
+def _card_tab_body(ctx, lg, pid, tab, page, p, rec, base, who):
+    """The body dict for one tab of the card picture (cardimg's 'body')."""
+    if tab in ('batting', 'pitching'):
+        bat, pit, _ = _card_stats(ctx, lg, pid)
+        rows, cols = (bat, BAT_COLS) if tab == 'batting' else (pit, PIT_COLS)
+        return {'kind': 'table', 'caption': '%s by period' % tab.capitalize(), 'columns': ['Period'] + list(cols),
+                'rows': [{'cells': r, 'color': 'yellow' if r[0] == 'Career' else 'white'} for r in rows],
+                'note': None if rows else 'No %s lines in the stats file yet.' % tab}
+    if tab == 'career':
+        kind = 'pit' if p['pos'] == 'P' else 'bat'
+        rows, lid = _career(ctx, lg, pid, kind, *who)
+        cells = [{'cells': _career_cells(r['year'], r['team'], r, kind), 'color': 'yellow' if r['sim'] else 'white'}
+                 for r in rows]
+        if rows:
+            tot = history.totals(rows, kind)
+            cells.append({'cells': _career_cells('Total', '%d yr' % tot['seasons'], tot, kind), 'bold': True})
+        pages = max(1, -(-len(cells) // CAREER_ROWS))
+        page = min(page, pages - 1)
+        cols = ['Year', 'Team'] + list(BAT_COLS if kind == 'bat' else PIT_COLS)
+        note = ('White: real major league seasons. Yellow: seasons in this association.' if lid else
+                'Seasons in this association.') if rows else 'No seasons on record yet.'
+        return {'kind': 'table', 'columns': cols, 'rows': cells[page * CAREER_ROWS:(page + 1) * CAREER_ROWS],
+                'caption': 'Career %s, page %d of %d' % ('pitching' if kind == 'pit' else 'batting', page + 1, pages),
+                'note': note, 'prev': '%s/career/%d' % (base, page - 1) if page > 0 else None,
+                'next': '%s/career/%d' % (base, page + 1) if page + 1 < pages else None}
+    if tab == 'news':
+        folder = _watch_folder(ctx, lg.stem)
+        news = _card_news(folder, lg, pid)
+        items = [('Latest news', None)] + (news or [('No news yet.', None)]) + [('More', None),
+                                                                                ('Player development',
+                                                                                 '/news/development/%s/p/%d' % (lg.stem, pid))]
+        if folder is not None:
+            items.append(('Association news', '/news/%s/' % os.path.basename(folder)))
+        return {'kind': 'links', 'caption': None, 'items': items}
+    ratings = gamedata.ratings(rec)
+    keys = PIT_RATINGS if p['pos'] == 'P' else HIT_RATINGS + ((p['pos'],) if p['pos'] in gamedata.POSITIONS else ())
+    rows = []
+    for k in keys:
+        now, peak = ratings[k]
+        peak = now if peak is None else peak            # strikeout has no peak of its own
+        rows.append((create.RATING_LABELS.get(k, 'Fielding (%s)' % k), scout.grade(now), scout.grade(peak)))
+    if p['pos'] == 'P':
+        rows += [(create.PITCH_LABELS[c], scout.grade(ratings[c][0]), scout.grade(ratings[c][1]))
+                 for c in gamedata.PITCH_CODES if ratings[c][0] or ratings[c][1]]
+    _, _, games = _card_stats(ctx, lg, pid)
+    kind = _focus_of(_read_focus(ctx.game), pid, lg.births[pid])
+    facts = [('Focus', kind or 'none')]
+    if games:
+        facts.append(('Games', ', '.join('%s %d' % (g, games[g]) for g in gamedata.POSITIONS if g in games)))
+    seed = zlib.crc32(('%s|%s' % (p['name'], lg.births.get(pid))).encode('latin-1', 'replace'))
+    tid = next((t for t in sorted(lg.teams) if pid in lg.teams[t]['roster']), None)
+    team = lg.teams[tid]['name'] if tid is not None else ''
+    pic = portrait.portrait(seed, age=(lg.year - p['born']) if lg.year and p['born'] else 28, pos=p['pos'],
+                            power=scout.grade(ratings['power'][0]), speed=scout.grade(ratings['speed'][0]),
+                            bats=p['bats'], throws=p['throws'], era=lg.year or 1998, letter=team[:1])
+    return {'kind': 'overview', 'portrait': pic, 'ratings': rows, 'facts': facts,
+            'links': [('Player development', '/news/development/%s/p/%d' % (lg.stem, pid))]}
+
+
+def _card_image(ctx, fonts, stem, pid, tab, page):
+    """(header, body, picture) for one tab of a player's card drawn with the game's fonts, or None when the game has no
+    such association or player. The header carries image=1 and the picture's click regions as hot.N = 'x,y,w,h<TAB>
+    path'; the body is a short text for a reader without picture support, and the links are the tabs."""
+    lg = _league(ctx, stem)
+    if lg is None or pid not in lg.players:
+        return None
+    p, rec = lg.players[pid], gamedata.record(lg.pyr, pid)
+    base = '/news/card/%s/p/%d' % (lg.stem, pid)
+    tid = next((t for t in sorted(lg.teams) if pid in lg.teams[t]['roster']), None)
+    team = (lg.teams[tid]['name'] or 'Team %d' % tid) if tid is not None else _off_roster(ctx, lg, pid)
+    who = _card_who(lg, pid)
+    head = [p['pos'] or '?', team]
+    if lg.year is not None and p['born'] is not None:
+        head.append('Age %d' % (lg.year - p['born']))
+    head.append('Bats %s, throws %s' % (p['bats'] or '?', p['throws'] or '?'))
+    line2 = ['Born %s' % who[2].strftime('%b %-d, %Y') if who[2] else 'Birth date unknown']
+    body = _card_tab_body(ctx, lg, pid, tab, page, p, rec, base, who)
+    tabs = [(label, base + ('/' + key if key else ''), key == tab) for key, label in CARD_TABS]
+    card = {'title': p['name'], 'subtitle': lg.label, 'tabs': tabs,
+            'header': ['   |   '.join(head), '   |   '.join(line2)], 'body': body,
+            'status_left': 'Click a tab or a link. Back returns to the last page.',
+            'status_right': '%d season' % lg.year if lg.year else ''}
+    bmp, hots = cardimg.render(card, fonts)
+    path = base + ('/' + tab if tab else '') + ('/%d' % page if tab == 'career' and page else '')
+    header, text = _news_reply(200, path, p['name'], '\n'.join(_heading(_who(p, lg.year)) +
+                                                                ['This card is a picture page.']),
+                               [(label, target) for label, target, sel in tabs if not sel])
+    header += [('image', '1'), ('hots', str(len(hots)))]
+    header += [('hot.%d' % i, '%d,%d,%d,%d\t%s' % (x, y, w, h, _plain(target)))
+               for i, (x, y, w, h, target) in enumerate(hots)]
+    return header, text, bmp
 
 
 # The offseason trades under /news/gm/ (aigm.py). The season's ledger is <data>/<STEM>/gm.json; the ASN is written only
@@ -1304,13 +1485,22 @@ def _remove(dfd, name):
         pass
 
 
-def _respond(dfd, rid, header, body):
+def _put(dfd, rid, data, ext):
+    """Writes data as r<rid>.tmp and renames it to r<rid>.<ext>, all relative to the spool descriptor."""
     tmp = 'r%s.tmp' % rid
     _remove(dfd, tmp)           # a name the game side planted (a symlink) goes, and O_EXCL never writes through one
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644, dir_fd=dfd)
     with os.fdopen(fd, 'wb') as fh:
-        fh.write(render(header, body))
-    os.replace(tmp, 'r%s.rsp' % rid, src_dir_fd=dfd, dst_dir_fd=dfd)
+        fh.write(data)
+    os.replace(tmp, 'r%s.%s' % (rid, ext), src_dir_fd=dfd, dst_dir_fd=dfd)
+
+
+def _respond(dfd, rid, header, body, picture=None):
+    """Writes a reply; a picture page's BMP (r<rid>.bmp) goes first, so it is complete before the reader sees the
+    .rsp that names it."""
+    if picture is not None:
+        _put(dfd, rid, picture, 'bmp')
+    _put(dfd, rid, render(header, body), 'rsp')
 
 
 def _answer(ctx, dfd, rid):
@@ -1324,10 +1514,11 @@ def _answer(ctx, dfd, rid):
     try:
         req = parse_request(_read(dfd, work))
         if req is None:
-            header, body = [('status', 'error')], 'Bad request.'
+            header, body, picture = [('status', 'error')], 'Bad request.', None
         else:
-            header, body = handle(ctx, req)
-        _respond(dfd, rid, header, body)
+            header, body, *rest = handle(ctx, req)
+            picture = rest[0] if rest else None
+        _respond(dfd, rid, header, body, picture)
         op = req['op'] if req is not None and req['op'] in OPS else '-'
         sys.stderr.write('modbridge: %s %s %s\n' % (rid, op, dict(header)['status']))
     finally:
@@ -1386,13 +1577,13 @@ def spool_ok(game):
 
 
 def housekeep(spool, now=None):
-    """Removes replies (r*.rsp) and temporary files (*.tmp) older than STALE seconds by mtime. Work files are kept.
-    Works through open_dir, so it never removes anything outside the spool."""
+    """Removes replies (r*.rsp), their pictures (r*.bmp) and temporary files (*.tmp) older than STALE seconds by
+    mtime. Work files are kept. Works through open_dir, so it never removes anything outside the spool."""
     now = time.time() if now is None else now
     dfd = open_dir(spool)
     try:
         for name in os.listdir(dfd):
-            if not (name.endswith('.tmp') or (name.startswith('r') and name.endswith('.rsp'))):
+            if not (name.endswith('.tmp') or (name.startswith('r') and name.endswith(('.rsp', '.bmp')))):
                 continue
             try:
                 if now - os.stat(name, dir_fd=dfd, follow_symlinks=False).st_mtime > STALE:

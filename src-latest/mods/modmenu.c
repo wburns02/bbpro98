@@ -18,7 +18,9 @@
    it is closed; 0 when the bridge answered, 1 when it did not.
 
    Spool: a request is written as q<ID>.tmp and renamed to q<ID>.req in <exe dir>\Mods\spool\; the bridge (news/modbridge.py)
-   answers with r<ID>.rsp, which the mod polls for on a 250 ms timer, reads, deletes and parses.
+   answers with r<ID>.rsp, which the mod polls for on a 250 ms timer, reads, deletes and parses. A picture page (image=1,
+   the player card's tabs) also has r<ID>.bmp, written before the .rsp: the reader shows it in place of the page text and
+   link list and opens hot.N = "x,y,w,h<TAB>path" on a click. The file name comes from the reader's own request id.
 
    bbfix.ini:  [mods] load=mods\modmenu.dll      [modmenu] enable=1
    Build:  /mnt/nvme/bbpro98/zigenv/bin/python -m ziglang cc -target x86-windows-gnu -O2 -shared -Isrc-latest
@@ -316,6 +318,7 @@ static void reg_class(const char *name, WNDPROC proc) {
 static LRESULT CALLBACK menu_proc(HWND h, UINT m, WPARAM wp, LPARAM lp);
 static LRESULT CALLBACK create_proc(HWND h, UINT m, WPARAM wp, LPARAM lp);
 static LRESULT CALLBACK news_proc(HWND h, UINT m, WPARAM wp, LPARAM lp);
+static LRESULT CALLBACK img_proc(HWND h, UINT m, WPARAM wp, LPARAM lp);
 static LRESULT CALLBACK build_proc(HWND h, UINT m, WPARAM wp, LPARAM lp);
 
 static void init_once(void) {
@@ -327,6 +330,7 @@ static void init_once(void) {
     reg_class("BBModMenu", menu_proc);
     reg_class("BBModCreate", create_proc);
     reg_class("BBModNews", news_proc);
+    reg_class("BBModImg", img_proc);
     reg_class("BBModBuild", build_proc);
     classes_ok = 1;
 }
@@ -1022,6 +1026,10 @@ static void open_create(HWND owner) {
 #define IDC_OPENLINK 34
 #define HIST_MAX 32
 #define PATH_LEN 256
+#define HOT_MAX 64
+#define IMG_W 680
+#define IMG_H 450
+#define BMP_MAX (IMG_W * IMG_H * 3 + 4096)
 
 typedef struct {
     Win w;
@@ -1031,9 +1039,140 @@ typedef struct {
     int nhist;
     char first[PATH_LEN];               /* the page the reader opens at */
     MMResp pg;                          /* the page on screen: its links are read from here */
+    HWND img, openbtn;                  /* image pages (image=1): the picture child, shown instead of page and list */
+    HBITMAP bmp;
+    int bw, bh, nhot;
+    struct { RECT r; char path[PATH_LEN]; } hot[HOT_MAX];
 } NewsState;
 
 static int page_ok;                     /* set when the bridge answered a page while mm_open_page's reader is up */
+
+/* An image page's picture: the bridge writes r<id>.bmp (24-bit, at most IMG_W x IMG_H) before r<id>.rsp. The name comes
+   from our own request id, never from the answer. Read once and deleted; NULL when missing or not that format. */
+static HBITMAP load_page_bmp(const char *id, int *w, int *h) {
+    char dir[MAX_PATH + 16], fn[MAX_PATH + 32];
+    unsigned char *buf;
+    HANDLE f;
+    DWORD n, got = 0;
+    HBITMAP bm = 0;
+    BITMAPINFO bi;
+    void *bits;
+    int bw, bh, stride, y;
+    unsigned off;
+    if (!mm_dir(dir, sizeof dir)) return 0;
+    snprintf(fn, sizeof fn, "%sr%s.bmp", dir, id);
+    f = CreateFileA(fn, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0, OPEN_EXISTING,
+                    FILE_ATTRIBUTE_NORMAL, 0);
+    if (f == INVALID_HANDLE_VALUE) return 0;
+    n = GetFileSize(f, 0);
+    buf = (n != INVALID_FILE_SIZE && n >= 54 && n <= BMP_MAX) ? malloc(n) : 0;
+    if (buf && (!ReadFile(f, buf, n, &got, 0) || got != n)) {
+        free(buf);
+        buf = 0;
+    }
+    CloseHandle(f);
+    DeleteFileA(fn);
+    if (!buf) return 0;
+    bw = *(int32_t *)(buf + 18);
+    bh = *(int32_t *)(buf + 22);
+    off = *(uint32_t *)(buf + 10);
+    stride = (bw * 3 + 3) & ~3;
+    if (buf[0] == 'B' && buf[1] == 'M' && *(uint32_t *)(buf + 14) == 40 && *(uint16_t *)(buf + 28) == 24 &&
+        *(uint32_t *)(buf + 30) == 0 && bw > 0 && bw <= IMG_W && bh > 0 && bh <= IMG_H && off >= 54 &&
+        off <= n && (DWORD)stride * bh <= n - off) {
+        memset(&bi, 0, sizeof bi);
+        bi.bmiHeader.biSize = sizeof bi.bmiHeader;
+        bi.bmiHeader.biWidth = bw;
+        bi.bmiHeader.biHeight = bh;                 /* bottom-up, as in the file */
+        bi.bmiHeader.biPlanes = 1;
+        bi.bmiHeader.biBitCount = 24;
+        bi.bmiHeader.biCompression = BI_RGB;
+        bm = CreateDIBSection(0, &bi, DIB_RGB_COLORS, &bits, 0, 0);
+        if (bm)
+            for (y = 0; y < bh; y++) memcpy((unsigned char *)bits + y * stride, buf + off + y * stride, stride);
+        *w = bw;
+        *h = bh;
+    }
+    free(buf);
+    return bm;
+}
+
+/* hot.N = "x,y,w,h<TAB>path" in picture pixels; bad or out-of-picture entries are skipped */
+static void load_hots(NewsState *st) {
+    char k[32], path[PATH_LEN], label[64];
+    const char *v, *t = mm_get(&st->pg, "hots");
+    int i, n = t ? atoi(t) : 0, x, y, w, h;
+    st->nhot = 0;
+    for (i = 0; i < n && st->nhot < HOT_MAX; i++) {
+        snprintf(k, sizeof k, "hot.%d", i);
+        v = mm_get(&st->pg, k);
+        if (!v) continue;
+        snprintf(path, sizeof path, "%s", tab_field(v, label, sizeof label));
+        if (!path[0] || sscanf(label, "%d,%d,%d,%d", &x, &y, &w, &h) != 4 || x < 0 || y < 0 || w <= 0 || h <= 0 ||
+            x + w > st->bw || y + h > st->bh)
+            continue;
+        SetRect(&st->hot[st->nhot].r, x, y, x + w, y + h);
+        snprintf(st->hot[st->nhot].path, PATH_LEN, "%s", path);
+        st->nhot++;
+    }
+}
+
+static int hot_at(NewsState *st, int x, int y) {
+    POINT pt = {x, y};
+    int i;
+    for (i = 0; i < st->nhot; i++)
+        if (PtInRect(&st->hot[i].r, pt)) return i;
+    return -1;
+}
+
+static void news_go(NewsState *st, const char *path, int push);
+
+/* the picture child of the reader: paints the page's bitmap, a click on a hotspot opens its path */
+static LRESULT CALLBACK img_proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
+    NewsState *st = (NewsState *)GetWindowLongPtrA(GetParent(h), GWLP_USERDATA);
+    PAINTSTRUCT ps;
+    HDC dc, mem;
+    HGDIOBJ old;
+    POINT pt;
+    int i;
+    switch (m) {
+    case WM_PAINT:
+        dc = BeginPaint(h, &ps);
+        if (st && st->bmp) {
+            mem = CreateCompatibleDC(dc);
+            old = SelectObject(mem, st->bmp);
+            BitBlt(dc, 0, 0, st->bw, st->bh, mem, 0, 0, SRCCOPY);
+            SelectObject(mem, old);
+            DeleteDC(mem);
+        }
+        EndPaint(h, &ps);
+        return 0;
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_SETCURSOR:
+        GetCursorPos(&pt);
+        ScreenToClient(h, &pt);
+        SetCursor(LoadCursorA(0, st && hot_at(st, pt.x, pt.y) >= 0 ? (LPCSTR)IDC_HAND : (LPCSTR)IDC_ARROW));
+        return TRUE;
+    case WM_LBUTTONUP:
+        if (st && !st->w.busy && (i = hot_at(st, (short)LOWORD(lp), (short)HIWORD(lp))) >= 0) {
+            char path[PATH_LEN];
+            snprintf(path, sizeof path, "%s", st->hot[i].path);
+            news_go(st, path, 1);
+        }
+        return 0;
+    }
+    return DefWindowProcA(h, m, wp, lp);
+}
+
+/* image pages show the picture alone; text pages the page text and link list */
+static void news_mode(NewsState *st, int image) {
+    ShowWindow(st->img, image ? SW_SHOW : SW_HIDE);
+    ShowWindow(st->page, image ? SW_HIDE : SW_SHOW);
+    ShowWindow(st->list, image ? SW_HIDE : SW_SHOW);
+    ShowWindow(st->openbtn, image ? SW_HIDE : SW_SHOW);
+    if (image) InvalidateRect(st->img, 0, FALSE);
+}
 
 static void news_done(Win *w, MMResp *r, const char *err) {
     NewsState *st = (NewsState *)w;
@@ -1049,6 +1188,25 @@ static void news_done(Win *w, MMResp *r, const char *err) {
     if (t && *t) snprintf(st->cur, sizeof st->cur, "%s", t);
     mm_free(&st->pg);
     st->pg = *r;
+    t = mm_get(&st->pg, "image");
+    if (t && !strcmp(t, "1")) {
+        int bw = 0, bh = 0;
+        HBITMAP bm = load_page_bmp(w->id, &bw, &bh);
+        if (bm) {
+            if (st->bmp) DeleteObject(st->bmp);
+            st->bmp = bm;
+            st->bw = bw;
+            st->bh = bh;
+            load_hots(st);
+            SendMessageA(st->list, LB_RESETCONTENT, 0, 0);
+            news_mode(st, 1);
+            t = mm_get(&st->pg, "status");
+            SetWindowTextA(w->status, t && strcmp(t, "ok") ? t : "");
+            return;
+        }
+    }
+    st->nhot = 0;
+    news_mode(st, 0);
     SetWindowTextA(st->page, st->pg.body);
     SendMessageA(st->list, LB_RESETCONTENT, 0, 0);
     t = mm_get(&st->pg, "count");
@@ -1109,7 +1267,9 @@ static void build_news(NewsState *st) {
     SendMessageA(st->list, WM_SETFONT, (WPARAM)mono_font, 0);
     btn(h, "Back", 10, 466, 90, 26, IDC_BACK);
     btn(h, "Home", 110, 466, 90, 26, IDC_HOME);
-    btn(h, "Open link", 210, 466, 90, 26, IDC_OPENLINK);
+    st->openbtn = btn(h, "Open link", 210, 466, 90, 26, IDC_OPENLINK);
+    st->img = mk(h, "BBModImg", "", 0, 10, 10, IMG_W, IMG_H, 0);
+    ShowWindow(st->img, SW_HIDE);
     btn(h, "Close", 600, 466, 90, 26, IDC_CLOSE);
     st->w.status = lbl(h, "", 320, 471, 260, 20);
     st->w.msg = st->page;
@@ -1148,6 +1308,7 @@ static LRESULT CALLBACK news_proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
         return 0;
     case WM_NCDESTROY:
         mm_free(&st->pg);
+        if (st->bmp) DeleteObject(st->bmp);
         free(st);
         return 0;
     }

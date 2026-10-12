@@ -36,6 +36,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import contracts  # noqa: E402
 import feed      # noqa: E402
 import gamedata  # noqa: E402
+import history   # noqa: E402
 import hive      # noqa: E402
 import moves     # noqa: E402
 import recap     # noqa: E402
@@ -162,9 +163,28 @@ class Watcher:
             'assn': stem, 'name': assoc['name'], 'updated': now_iso(), 'last_day': list(last) if last else None,
             'standings': feed.standings(assoc), 'leaders': feed.leaders(season, names, teams_played)})
         self.season_pieces(out, assoc, names, dat, pyr)
+        self.history_piece(assoc, stem, dat)
         self.moves(out, assoc, pyr, dat)
         self.contracts_piece(out, assoc, pyr, dat)
         self.replay_piece(out, assoc, names, season)
+
+    def history_piece(self, assoc, stem, dat):
+        """Archives each simulated season's lines for the player card's Career tab (history.py), once per season: this
+        season when every game is played (the rosters then are the season's own), else last season once the season
+        year has moved on. Each player's team is the one whose roster holds him at the time."""
+        year = assoc.get('season_year')
+        if dat is None or type(year) is not int or not assoc['teams']:
+            return
+        teams = {pid: t['name'] for t in assoc['teams'].values() for pid in t['roster']}
+        for scope, y in ((1, year), (3, year - 1)):
+            if scope == 1 and not season.complete(assoc):
+                continue
+            if os.path.exists(history.archive_path(self.data, stem, y)):
+                continue
+            lines = gamedata.season_lines(dat, scope)
+            if any(line.get('g') for kind in lines.values() for line in kind.values()):
+                if history.archive_season(self.data, stem, y, lines, teams if scope == 1 else None):
+                    self.log('%s history %d archived' % (stem, y))
 
     def contracts_piece(self, out, assoc, pyr, dat):
         """The contracts and payrolls (contracts.py), after moves: each rostered player's contract, ticked down at each
