@@ -153,8 +153,8 @@ def weather_code(city):
 
 # ---------------------------------------------------------------- template
 
-def load_template(key):
-    d = os.path.join(TEMPLATES, key)
+def load_template(key, templates=None):
+    d = os.path.join(templates or TEMPLATES, key)
     asn = glob.glob(os.path.join(d, '*.ASN'))
     if len(asn) != 1:
         raise SystemExit('template %s is not minted (%s)' % (key, d))
