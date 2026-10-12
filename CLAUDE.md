@@ -97,3 +97,6 @@ Public repo (MIT) of tools and research for FPS Baseball Pro '98. Python codecs 
   FUN_680537e0 (call at 0x68071a34), then reads it back into the runtime player. A change to the runtime player after
   the add is never saved; mod a new player's ratings by wrapping that write (mods\rookies.dll). Check a mod like this
   on disk after a rollover (players not in the start PYR), not from its log.
+- Stats screens are told apart by the callback stored at gadget manager +0xc0, not by numbers: FUN_68038ef0 takes a screen
+  id and a dialog number (League Statistics 7 and 0x0f, Team Statistics 0x14 and 0x14), and the dialog number is the REQ
+  record number in SHELL.VOL. Match a click on the callback. docs/lanes/bbcard.md has the Team Statistics evidence.

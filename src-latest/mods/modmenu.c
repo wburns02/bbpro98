@@ -8,6 +8,9 @@
    ECX, no stack arguments, plain ret. Its prolog 81 ec 54 02 00 00 (sub esp,0x254) is position independent. The original
    is never called (it would open a browser).
 
+   Export: mm_open_page(path) runs the News reader at path for another mod (playercard.dll's player card) and returns when
+   it is closed; 0 when the bridge answered, 1 when it did not.
+
    Spool: a request is written as q<ID>.tmp and renamed to q<ID>.req in <exe dir>\Mods\spool\; the bridge (news/modbridge.py)
    answers with r<ID>.rsp, which the mod polls for on a 250 ms timer, reads, deletes and parses.
 
@@ -1014,8 +1017,11 @@ typedef struct {
     char cur[PATH_LEN];
     char hist[HIST_MAX][PATH_LEN];
     int nhist;
+    char first[PATH_LEN];               /* the page the reader opens at */
     MMResp pg;                          /* the page on screen: its links are read from here */
 } NewsState;
+
+static int page_ok;                     /* set when the bridge answered a page while mm_open_page's reader is up */
 
 static void news_done(Win *w, MMResp *r, const char *err) {
     NewsState *st = (NewsState *)w;
@@ -1024,6 +1030,7 @@ static void news_done(Win *w, MMResp *r, const char *err) {
     int i, n;
     (void)err;
     if (!r) return;
+    page_ok = 1;
     t = mm_get(r, "title");
     SetWindowTextA(w->hwnd, t && *t ? t : "League News");
     t = mm_get(r, "path");
@@ -1105,7 +1112,7 @@ static LRESULT CALLBACK news_proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
         st->w.hwnd = h;
         open_windows++;
         build_news(st);
-        news_go(st, "/news/", 0);
+        news_go(st, st->first, 0);
         return 0;
     case WM_TIMER:
         if (wp == TIMER_POLL) win_poll(&st->w);
@@ -1135,15 +1142,20 @@ static LRESULT CALLBACK news_proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
     return DefWindowProcA(h, m, wp, lp);
 }
 
-static void open_news(HWND owner) {
+/* opens the reader at path; 0 when it could not be opened */
+static int open_reader(HWND owner, const char *path) {
     NewsState *st = calloc(1, sizeof *st);
-    if (!st) return;
+    if (!st) return 0;
+    snprintf(st->first, sizeof st->first, "%s", path);
     if (!make_win("BBModNews", "League News", 700, 500, owner, st)) {
         free(st);
-        return;
+        return 0;
     }
     EnableWindow(owner, FALSE);
+    return 1;
 }
+
+static void open_news(HWND owner) { open_reader(owner, "/news/"); }
 
 /* ---------------------------------------------------------------- Build a Season window */
 
@@ -1265,35 +1277,17 @@ static LRESULT CALLBACK cbt_proc(int code, WPARAM wp, LPARAM lp) {
     return CallNextHookEx(cbt_hook, code, wp, lp);
 }
 
-/* runs the Mods window on the game's UI thread until its windows are all closed. Esc closes the active window (not
-   while a combo box is open); Enter in the link list opens the link */
-static void run_menu(void) {
-    HWND owner, mods, top;
-    MenuState *st;
+/* pumps the game's messages while any of our windows is open. Returns 1 when WM_QUIT arrived (its code in *code), else 0.
+   Esc closes the active window (not while a combo box is open); Enter in the link list opens the link */
+static int pump(int *code) {
+    HWND top;
     MSG m;
     BOOL g;
-    int quit = 0, code = 0;
-    init_once();
-    owner = GetActiveWindow();
-    if (!owner) owner = GetForegroundWindow();
-    open_windows = 0;
-    st = calloc(1, sizeof *st);
-    if (!st) return;
-    cbt_hook = SetWindowsHookExA(WH_CBT, cbt_proc, 0, GetCurrentThreadId());
-    mods = make_win("BBModMenu", "Baseball Pro '98 Mods", 420, 300, owner, st);
-    if (!mods) {
-        free(st);
-        if (cbt_hook) UnhookWindowsHookEx(cbt_hook);
-        cbt_hook = 0;
-        return;
-    }
-    if (owner) EnableWindow(owner, FALSE);
     while (open_windows > 0) {
         g = GetMessageA(&m, 0, 0, 0);
         if (g == 0) {
-            quit = 1;
-            code = (int)m.wParam;
-            break;
+            *code = (int)m.wParam;
+            return 1;
         }
         if (g < 0) break;
         top = GetActiveWindow();
@@ -1311,6 +1305,30 @@ static void run_menu(void) {
         TranslateMessage(&m);
         DispatchMessageA(&m);
     }
+    return 0;
+}
+
+/* runs the Mods window on the game's UI thread until its windows are all closed */
+static void run_menu(void) {
+    HWND owner, mods;
+    MenuState *st;
+    int quit, code = 0;
+    init_once();
+    owner = GetActiveWindow();
+    if (!owner) owner = GetForegroundWindow();
+    open_windows = 0;
+    st = calloc(1, sizeof *st);
+    if (!st) return;
+    cbt_hook = SetWindowsHookExA(WH_CBT, cbt_proc, 0, GetCurrentThreadId());
+    mods = make_win("BBModMenu", "Baseball Pro '98 Mods", 420, 300, owner, st);
+    if (!mods) {
+        free(st);
+        if (cbt_hook) UnhookWindowsHookEx(cbt_hook);
+        cbt_hook = 0;
+        return;
+    }
+    if (owner) EnableWindow(owner, FALSE);
+    quit = pump(&code);
     EnumThreadWindows(GetCurrentThreadId(), close_ours_cb, 0);
     if (cbt_hook) UnhookWindowsHookEx(cbt_hook);
     cbt_hook = 0;
@@ -1319,6 +1337,35 @@ static void run_menu(void) {
         SetForegroundWindow(owner);
     }
     if (quit) PostQuitMessage(code);
+}
+
+/* The News reader at path, run like the menu (the same CBT hook and message pump) for another mod's window: a player
+   card's link to a page. Returns when the reader is closed. 0 when the bridge answered the page; 1 when it did not (no
+   spool, no answer in time, or a bad answer), in which case the reader shows the same message the menu shows. */
+BB_EXPORT int mm_open_page(const char *path) {
+    HWND owner;
+    int quit, code = 0;
+    init_once();
+    owner = GetActiveWindow();
+    if (!owner) owner = GetForegroundWindow();
+    open_windows = 0;
+    page_ok = 0;
+    cbt_hook = SetWindowsHookExA(WH_CBT, cbt_proc, 0, GetCurrentThreadId());
+    if (!open_reader(owner, path)) {
+        if (cbt_hook) UnhookWindowsHookEx(cbt_hook);
+        cbt_hook = 0;
+        return 1;
+    }
+    quit = pump(&code);
+    EnumThreadWindows(GetCurrentThreadId(), close_ours_cb, 0);
+    if (cbt_hook) UnhookWindowsHookEx(cbt_hook);
+    cbt_hook = 0;
+    if (owner) {
+        EnableWindow(owner, TRUE);
+        SetForegroundWindow(owner);
+    }
+    if (quit) PostQuitMessage(code);
+    return page_ok ? 0 : 1;
 }
 
 static void (__attribute__((fastcall)) *orig_www)(void *self);

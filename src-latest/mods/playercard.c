@@ -13,11 +13,15 @@
    player id (type 0x2000) into the cell after them: cell 10 stock, cell 14 when bbfix [widen] has patched that
    "push 10" at 6805cb0b to 14, so the mod reads the cell index from that instruction.
    The association name is (*(char ***)screen->asn)[0x25] (FUN_6803da90 builds "STATS\<name>.DAT" from it).
+   When modmenu.dll is loaded (GetModuleHandleA), the click opens /news/card/<assn>/p/<pid> in its News reader through
+   its export mm_open_page; the built-in card above opens when modmenu is absent or the bridge does not answer.
+   The Team Statistics screen (dialog 0x14) is not hooked: its state object is not proven (bbcard.md).
 
    bbfix.ini:  [mods] load=mods\playercard.dll      [playercard] enable=1  probe=0 (1 = log each click and its row)
    Build:  /mnt/nvme/bbpro98/zigenv/bin/python -m ziglang cc -target x86-windows-gnu -O2 -shared -Isrc-latest
            -o playercard.dll src-latest/mods/playercard.c -lgdi32 -luser32 */
 #include <windows.h>
+#include <ctype.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -304,6 +308,27 @@ static int hit_row(uint8_t *mgr, int x, int y, int *gid_out) {
     return -1;
 }
 
+/* The player's card in modmenu's News reader (mm_open_page, /news/card/<assn>/p/<pid>): true when the bridge answered and
+   the reader showed it. Not loaded, a name the bridge would refuse, or no answer (mm_open_page's 1) and the built-in card
+   opens instead. */
+typedef int (*mm_open_page_fn)(const char *path);
+
+static int card_in_reader(const char *stem, unsigned pid) {
+    HMODULE mm = GetModuleHandleA("modmenu.dll");
+    mm_open_page_fn open_page = mm ? (mm_open_page_fn)GetProcAddress(mm, "mm_open_page") : 0;
+    char page[64];
+    if (!open_page || !readable(stem, 9)) return 0;
+    size_t n = 0;
+    while (n < 9 && stem[n]) n++;           /* the bridge takes 1 to 8 letters and digits, nothing else */
+    if (n == 0 || n > 8) return 0;
+    for (size_t i = 0; i < n; i++)
+        if (!isalnum((unsigned char)stem[i])) return 0;
+    snprintf(page, sizeof page, "/news/card/%.*s/p/%u", (int)n, stem, pid);
+    int rc = open_page(page);
+    api->log("playercard: %s in the News reader -> %d", page, rc);
+    return rc == 0;
+}
+
 static void open_card(void *screen, int gid, int vis) {
     uint8_t *mgr = (uint8_t *)api->addr("BBShell.dll", MGR_VA);
     void *map_fn = api->addr("BBShell.dll", MAP_ROW_VA);
@@ -333,6 +358,7 @@ static void open_card(void *screen, int gid, int vis) {
     char **inner = readable(asn, 4) ? *(char ***)asn : 0;
     const char *an = readable(inner, 0x98) ? inner[0x25] : 0;
     if (!readable(an, 1) || !an[0]) { api->log("playercard: association name not found"); return; }
+    if (card_in_reader(an, pid)) return;
     char exe[MAX_PATH], path[MAX_PATH + 64];
     GetModuleFileNameA(0, exe, MAX_PATH);
     char *sl = strrchr(exe, '\\');
