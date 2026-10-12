@@ -218,7 +218,14 @@ def test_render_maps_nav_arrows_and_bullets():
 
 def test_ping(bridge):
     ctx, spool = bridge
-    assert ask(ctx, spool, 'op=ping') == ({'status': 'ok', 'version': '1'}, '')
+    assert ask(ctx, spool, 'op=ping') == ({'status': 'ok', 'version': '1', 'build': '1'}, '')
+
+
+@pytest.mark.parametrize('field', ['db', 'templates'])
+def test_ping_says_build_is_off_without_a_database_or_templates(bridge, field):
+    ctx, spool = bridge
+    setattr(ctx, field, None)
+    assert ask(ctx, spool, 'op=ping') == ({'status': 'ok', 'version': '1', 'build': '0'}, modbridge.NO_BUILD_TEXT)
 
 
 def test_assns_are_sorted_by_stem_with_labels(bridge):
