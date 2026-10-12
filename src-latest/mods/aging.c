@@ -28,11 +28,26 @@
                        drop=31:10,32:15,...        age:tenths of a percent of peak lost per season
                        weight=100,90,120,80,20,90,50,90   percent per class: contact, power, speed, arm, hold,
                                                           endurance, control, pitches and fielding
-                       base=29:2,30:4,...          retirement age:percent, ages past the last entry use the last value
-                       q=70:35,62:60,52:100,44:160,0:220   ability floor:percent factor, highest floor first */
+                       base=29:1,30:3,...          retirement age:percent, ages past the last entry use the last value
+                       q=70:35,62:60,52:100,44:160,0:220   ability floor:percent factor, highest floor first
+
+   v2 (decline only; retirement is unchanged):
+   - Per-group curves. drop_bat (contact, power) peaks late, drop_run (speed, arm, fielding) early, drop_pit (hold,
+     endurance, control, pitches) in between. drop_bat and drop_run default to drop; drop_pit defaults to
+     29:8,30:15,...,41:85 (tenths of a percent).
+   - rel_mult=130 (percent): a pitcher whose current endurance is below rel_end=40 (a reliever) declines this much
+     faster.
+   - var=50 (percent): each player's decline this season is scaled by a factor rolled once, 100-var .. 100+var, so
+     careers diverge instead of every 34-year-old losing the same points.
+   - Development focus (mods\focus.txt, written by the news bridge, re-read when it changes): lines
+     "pid birth kind", birth the record's +0x1c date serial, kind contact|power|speed|control|stuff|defense. A
+     focused player gains focus_gain=2 on each nonzero peak of that class (capped at 99) and loses none there this
+     season; every other nonzero rating declines focus_cost=10 more tenths of a percent. Keyed by pid and birth, so
+     copies of one association share a focus. */
 #include <windows.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include "../bbmod.h"
 
 #define MAXAGE 60
@@ -41,6 +56,17 @@
 static const BBModAPI *api;
 static int decline_on, retire_curve, fa_mult, probe;
 static int drop_t[MAXAGE + 1], base_pct[MAXAGE + 1], weight[8];
+static int drop_grp[3][MAXAGE + 1];             /* 0 bat, 1 run, 2 pit */
+static int rel_mult, rel_end, var_pct, focus_gain, focus_cost;
+static long varied[2], relief[2], focused[2], focus_pts[2];
+
+#define MAXFOCUS 2000
+enum { F_CONTACT = 1, F_POWER, F_SPEED, F_CONTROL, F_STUFF, F_DEFENSE };
+static struct { int16_t pid; uint32_t birth; uint8_t kind; } focus_tab[MAXFOCUS];
+static int nfocus;
+static FILETIME focus_mtime;
+static DWORD focus_checked;
+static const char *const FOCUS_NAMES[] = {"", "contact", "power", "speed", "control", "stuff", "defense"};
 static int q_floor[8], q_factor[8], nq;
 static long seen[2], retired[2], by_age[2][MAXAGE + 1], kept_age[2][MAXAGE + 1];
 static long aged[2], declined[2], peak_lost[2];
@@ -79,8 +105,9 @@ static int ability(const uint8_t *cur) {
 static void report(const char *when) {
     char line[900];
     for (int w = 0; w < 2; w++) {
-        api->log("aging %s %s: aged=%ld declined=%ld peak points lost=%ld", when, w ? "fa" : "roster", aged[w],
-                 declined[w], peak_lost[w]);
+        api->log("aging %s %s: aged=%ld declined=%ld peak points lost=%ld relievers=%ld varied=%ld focused=%ld "
+                 "focus points=%ld", when, w ? "fa" : "roster", aged[w], declined[w], peak_lost[w], relief[w],
+                 varied[w], focused[w], focus_pts[w]);
         int n = _snprintf(line, sizeof line, "retire %s %s: seen=%ld retired=%ld by age (retired/seen)", when,
                           w ? "fa" : "roster", seen[w], retired[w]);
         for (int a = 18; a <= MAXAGE && n < (int)sizeof line - 24; a++)
@@ -90,25 +117,95 @@ static void report(const char *when) {
     }
 }
 
+static int group_of(int k) { return k <= 1 ? 0 : (k == 2 || k == 3 || k >= 14) ? 1 : 2; }
+
+/* the rating class a focus kind covers */
+static int in_focus(int kind, int k) {
+    switch (kind) {
+    case F_CONTACT: return k == 0;
+    case F_POWER: return k == 1;
+    case F_SPEED: return k == 2;
+    case F_CONTROL: return k == 6;
+    case F_STUFF: return k >= 7 && k <= 13;
+    case F_DEFENSE: return k == 3 || k >= 14;
+    }
+    return 0;
+}
+
+/* re-read mods\focus.txt when its write time changes (checked at most every 2 s) */
+static void load_focus(void) {
+    DWORD now = GetTickCount();
+    if (focus_checked && now - focus_checked < 2000) return;
+    focus_checked = now ? now : 1;
+    WIN32_FILE_ATTRIBUTE_DATA fa;
+    if (!GetFileAttributesExA("mods\\focus.txt", GetFileExInfoStandard, &fa)) {
+        if (nfocus) api->log("aging focus: file gone, 0 players");
+        nfocus = 0; focus_mtime.dwLowDateTime = focus_mtime.dwHighDateTime = 0;
+        return;
+    }
+    if (!CompareFileTime(&fa.ftLastWriteTime, &focus_mtime)) return;
+    focus_mtime = fa.ftLastWriteTime;
+    FILE *f = fopen("mods\\focus.txt", "r");
+    nfocus = 0;
+    if (!f) return;
+    char line[128], kind[16];
+    while (nfocus < MAXFOCUS && fgets(line, sizeof line, f)) {
+        int pid; unsigned long birth;
+        if (sscanf(line, "%d %lu %15s", &pid, &birth, kind) != 3 || pid < 100 || pid > 32767) continue;
+        for (int k = 1; k <= F_DEFENSE; k++)
+            if (!lstrcmpiA(kind, FOCUS_NAMES[k])) {
+                focus_tab[nfocus].pid = (int16_t)pid; focus_tab[nfocus].birth = (uint32_t)birth;
+                focus_tab[nfocus].kind = (uint8_t)k; nfocus++;
+                break;
+            }
+    }
+    fclose(f);
+    api->log("aging focus: %d players", nfocus);
+}
+
+static int focus_of(const uint8_t *rec) {
+    int16_t pid = *(const int16_t *)rec;
+    uint32_t birth = *(const uint32_t *)(rec + 0x1c);
+    for (int i = 0; i < nfocus; i++)
+        if (focus_tab[i].pid == pid && focus_tab[i].birth == birth) return focus_tab[i].kind;
+    return 0;
+}
+
 static void decline(void *self, uint32_t *today, int fa) {
     uint8_t *rec = *(uint8_t **)self;
     aged[fa]++;
     if (!decline_on || !rec) return;
-    int t = drop_t[clamp_age(age_of(rec, today))];
-    if (t <= 0) return;
-    declined[fa]++;
-    for (int k = 0; k < 23; k++) {
+    load_focus();
+    int a = clamp_age(age_of(rec, today)), fk = nfocus ? focus_of(rec) : 0;
+    int pitcher = 0, k;
+    for (k = 7; k < 14; k++) if (rec[0x4c + k]) pitcher = 1;
+    long scale = 100;                                              /* percent */
+    if (pitcher && rec[0x4c + 5] < rel_end) { scale = scale * rel_mult / 100; relief[fa]++; }
+    if (var_pct) { scale = scale * (100 + (long)var_pct * (2 * roll() - 101) / 100) / 100; varied[fa]++; }
+    if (scale < 0) scale = 0;
+    int any = 0;
+    for (k = 0; k < 23; k++) {
         uint8_t *peak = rec + 0x35 + k, *cur = rec + 0x4c + k;
         if (!*peak) continue;
+        if (fk && in_focus(fk, k)) {
+            int up = *peak + focus_gain > 99 ? 99 - *peak : focus_gain;
+            if (up > 0) { *peak = (uint8_t)(*peak + up); focus_pts[fa] += up; any = 1; }
+            continue;
+        }
+        long t = drop_grp[group_of(k)][a] * scale / 100 + (fk ? focus_cost : 0);
+        if (t <= 0) continue;
         long num = (long)*peak * t * weight[k < 7 ? k : 7];        /* peak * tenths * percent, in 1/100000 */
         int dec = (int)(num / 100000);
         if ((roll() - 1) * 1000L < num % 100000) dec++;
         if (dec >= *peak) dec = *peak - 1;
+        if (dec <= 0) continue;
         *peak = (uint8_t)(*peak - dec);
         if (*cur > *peak) *cur = *peak;
         peak_lost[fa] += dec;
+        any = 1;
     }
-    rec[0x8b] = 1;
+    if (fk) focused[fa]++;
+    if (any) { declined[fa]++; rec[0x8b] = 1; }
 }
 
 static void BB_THISCALL h_age_roster(void *self, uint32_t *today) { orig_age_roster(self, today); decline(self, today, 0); }
@@ -185,7 +282,20 @@ BB_EXPORT int bbmod_init(const BBModAPI *a) {
     fa_mult = a->ini_int("aging", "fa_mult", 180);
     probe = a->ini_int("aging", "probe", 0);
     if (!by_age_table("drop", "31:10,32:15,33:20,34:25,35:30,36:35,37:40,38:45,39:50,40:55,41:60", drop_t)) return 3;
-    if (!by_age_table("base", "29:2,30:4,31:6,32:9,33:13,34:18,35:24,36:31,37:40,38:50,39:60,40:70,41:80,42:90",
+    static const char *const GRP[3] = {"drop_bat", "drop_run", "drop_pit"};
+    /* drop_pit's default is the curve the 2009-2018 roll passed with (next10 v3j); bat and run default to drop. */
+    static const char *const GRP_DEF[3] = {"", "",
+        "29:8,30:15,31:22,32:30,33:38,34:45,35:52,36:58,37:64,38:70,39:75,40:80,41:85"};
+    for (int g = 0; g < 3; g++)
+        if (!by_age_table(GRP[g], GRP_DEF[g], drop_grp[g])) memcpy(drop_grp[g], drop_t, sizeof drop_t);
+    rel_mult = a->ini_int("aging", "rel_mult", 130);
+    rel_end = a->ini_int("aging", "rel_end", 40);
+    var_pct = a->ini_int("aging", "var", 50);
+    if (var_pct < 0) var_pct = 0;
+    if (var_pct > 100) var_pct = 100;
+    focus_gain = a->ini_int("aging", "focus_gain", 2);
+    focus_cost = a->ini_int("aging", "focus_cost", 10);
+    if (!by_age_table("base", "29:1,30:3,31:5,32:8,33:12,34:16,35:22,36:30,37:39,38:49,39:60,40:70,41:80,42:90",
                       base_pct)) return 3;
     a->ini_str("aging", "weight", "100,90,120,80,20,90,50,90", buf, sizeof buf);
     char *s = buf, *e;
@@ -201,9 +311,11 @@ BB_EXPORT int bbmod_init(const BBModAPI *a) {
         a->redirect_call(SHELL, 0x6807184e, 0x68055630, (void *)h_age_fa, (void **)&orig_age_fa) < 0 ||
         a->redirect_call(SHELL, 0x6806cc15, 0x68055670, (void *)h_ret_roster, (void **)&orig_ret_roster) < 0 ||
         a->redirect_call(SHELL, 0x680718a5, 0x68055670, (void *)h_ret_fa, (void **)&orig_ret_fa) < 0) return 2;
-    a->log("aging: decline=%s retire=%s fa_mult=%d probe=%d drop[33]=%d drop[38]=%d base[30]=%d base[35]=%d "
-           "base[40]=%d q-bands=%d registered", d, r, fa_mult, probe, drop_t[33], drop_t[38], base_pct[30],
-           base_pct[35], base_pct[40], nq);
+    a->log("aging: decline=%s retire=%s fa_mult=%d probe=%d drop[33]=%d drop[38]=%d bat[33]=%d run[33]=%d pit[33]=%d "
+           "rel_mult=%d rel_end=%d var=%d focus_gain=%d focus_cost=%d base[30]=%d base[35]=%d base[40]=%d q-bands=%d "
+           "registered", d, r, fa_mult, probe, drop_t[33], drop_t[38], drop_grp[0][33], drop_grp[1][33],
+           drop_grp[2][33], rel_mult, rel_end, var_pct, focus_gain, focus_cost, base_pct[30], base_pct[35],
+           base_pct[40], nq);
     return 0;
 }
 

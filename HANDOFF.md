@@ -68,3 +68,15 @@ bblaunch.exe starts Baseball.exe suspended and injects bbfix.dll. Official v1.1 
 - Verified on the live install (private Xvfb :97): main menu, Association Data, League Statistics with the 12 wide
   columns (OBP, SLG, Pro, Iso).
 - Tape fields: the 29 at_0x names are in work/spec/TAP_NAMES.json (5891c58).
+
+## Update 2026-10-12: aging v2 + rookies v3j SHIPPED to live (tag v1.0.0)
+- Ten-season check from the 2008 MLBPA97 state (next10 plan v3j, /mnt/nvme/bbpro98/next10/progress.md): stars
+  (hitters or pitchers at 70+) 192 in 2009 to 203 in 2018, inside the 1997 band 193-261; hitters at 70+ 76 to 79
+  (flat; the stock tail rose +34); season AVG .240 to .251, ERA 3.38 to 4.02; 0 crashes over 2268 games a season.
+  A replicate run tracked it within 3 to 10 stars, the sim's own noise.
+- aging.c v2: per-group decline curves (drop_bat, drop_run, drop_pit), reliever multiplier, per-player variance,
+  development focus. drop_pit defaults to the tested curve 29:8,...,41:85; bat and run default to drop.
+- rookies_table.h: regenerated with --tail h_contact=62,65,88 --tail h_power=60,62,64,67,70,84
+  --tail h_speed=58,62,67,85 (70 power crossing at the 95th percentile).
+- Live: playercard, aging, modmenu, rookies (install_live.sh MODS=...). Build: tools/build_release.sh OUT
+  /mnt/nvme/bbpro98/zigenv/bin/python (zig output is not byte-reproducible; same source gives same-size dlls).
