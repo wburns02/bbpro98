@@ -80,3 +80,12 @@ bblaunch.exe starts Baseball.exe suspended and injects bbfix.dll. Official v1.1 
   --tail h_speed=58,62,67,85 (70 power crossing at the 95th percentile).
 - Live: playercard, aging, modmenu, rookies (install_live.sh MODS=...). Build: tools/build_release.sh OUT
   /mnt/nvme/bbpro98/zigenv/bin/python (zig output is not byte-reproducible; same source gives same-size dlls).
+
+## Update 2026-10-12: v1.0.1, the Mods menu in the release zip (33dd9c7)
+- The zip now ships mods\modmenu.dll (bbfix.ini.sample loads aging, rookies, playercard, modmenu). Zip users run
+  news/watch.py and news/modbridge.py from a clone next to the game (release/README.txt, "The Mods menu's bridge").
+  The button keeps the stock WWW SITE art; the relabel (work/patches/mods_button.py) is not in the zip.
+- modbridge --db and --templates are optional; without them Build a Season answers NO_BUILD_TEXT.
+- RC smoke test in the scratch game (/mnt/nvme/bbpro98/tmp/mmgame, bridge started exactly per the README): Mods
+  window "Bridge: ready", League News lists the watcher's associations, Build a Season shows the not-set-up text.
+- Tag v1.0.1 makes a DRAFT release in CI; Will publishes it (v1.0.0's draft is still unpublished too).
