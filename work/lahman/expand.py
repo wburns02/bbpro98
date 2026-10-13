@@ -43,7 +43,7 @@ MANAGERS = (
     'Walt Ferringer', 'Bo Callahan', 'Clyde Osterman', 'Duke Malvich', 'Ernie Kowalski',
     'Cecil Brantley', 'Rex Lombardo', 'Gene Sackett', 'Vic Tramonte', 'Otis Greengrass',
     'Lou Palmieri', 'Curly Fontaine', 'Hobie Garrett', 'Zeke Zabriski', 'Gus Abernathy',
-    'Dizzy Kelleher', 'Skinny Prado', 'Ace Margulies', 'Tex Covington', 'Leo Danforth',
+    'Dizzy Kelleher', 'Skinny Prado', 'Ace Margulies', 'Tex Callender', 'Leo Danforth',
     'Pepper Nystrom', 'Red Balicki', 'Sully Marchetti', 'Biff Kontos', 'Tug Marquardt',
     'Lonnie Fisk', 'Junior Vasko', 'Slim Hargrove', 'Barney Fike', 'Chick Moreau',
     'Roxy Lindqvist', 'Grif Pelkey', 'Cy Swarthout', 'Moxie Carlucci', 'Deke Skowron',
