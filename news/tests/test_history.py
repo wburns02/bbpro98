@@ -263,6 +263,58 @@ def test_sim_seasons_skips_malformed_files_and_names_that_are_not_years(tmp_path
     assert history.sim_seasons(data, 'abc1', 205, 'bat') == [dict(year=1997, team='', **zeros(history.BAT_KEYS, g=3))]
 
 
+def test_sim_seasons_ignores_seen_json(tmp_path):
+    """seen.json holds the years a watcher pass saw being played; it is never read as a season file."""
+    data = str(tmp_path)
+    history.archive_season(data, 'abc1', 1997, {'bat': {205: {'g': 3}}})
+    history.mark_seen(data, 'abc1', 1997)
+    assert sorted(os.listdir(os.path.join(data, 'ABC1', 'history'))) == ['1997.json', 'seen.json']
+    assert history.sim_seasons(data, 'abc1', 205, 'bat') == [dict(year=1997, team='', **zeros(history.BAT_KEYS, g=3))]
+
+
+# seen_years and mark_seen
+
+def test_mark_seen_round_trips_through_seen_years(tmp_path):
+    data = str(tmp_path)
+    assert history.seen_years(data, 'test77') == set()
+    assert history.mark_seen(data, 'test77', 1977) is True
+    assert history.mark_seen(data, 'test77', 1976) is True
+    assert history.seen_years(data, 'test77') == {1976, 1977}
+    with open(os.path.join(data, 'TEST77', 'history', 'seen.json')) as f:
+        assert json.load(f) == {'years': [1976, 1977]}          # sorted
+
+
+def test_mark_seen_twice_returns_false_and_writes_nothing(tmp_path):
+    data = str(tmp_path)
+    path = os.path.join(data, 'TEST77', 'history', 'seen.json')
+    assert history.mark_seen(data, 'test77', 1977) is True
+    with open(path) as f:
+        first = f.read()
+    assert history.mark_seen(data, 'test77', 1977) is False
+    with open(path) as f:
+        assert f.read() == first
+
+
+def test_seen_years_ignores_a_malformed_file_and_non_int_entries(tmp_path):
+    data = str(tmp_path)
+    folder = os.path.join(data, 'TEST77', 'history')
+    os.makedirs(folder)
+    write_text(os.path.join(folder, 'seen.json'), '{broken')
+    assert history.seen_years(data, 'test77') == set()
+    write_text(os.path.join(folder, 'seen.json'), '{"years": [1976, true, "1977", null]}')
+    assert history.seen_years(data, 'test77') == {1976}
+    write_text(os.path.join(folder, 'seen.json'), '{"years": "1977"}')
+    assert history.seen_years(data, 'test77') == set()          # not a list
+
+
+def test_mark_seen_rejects_a_bad_stem_or_year(tmp_path):
+    for stem, year in (('../x', 1977), ('abcdefghi', 1977), ('', 1977), ('a/b', 1977), ('test77', 99),
+                       ('test77', 3001)):
+        with pytest.raises(ValueError):
+            history.mark_seen(str(tmp_path), stem, year)
+    assert os.listdir(str(tmp_path)) == []   
+
+
 # merge, totals and start_year
 
 def season(year, team='NYY'):
