@@ -1158,16 +1158,16 @@ def _card_tab_body(ctx, lg, pid, tab, page, p, rec, base, who):
     bat, pit = (lines['bat'], lines['pit']) if lines is not None else ({}, {})
     own, other = (pit, bat) if p['pos'] == 'P' else (bat, pit)
     if pid in own:
-        G = own[pid]['g']
+        career = own[pid]['g']
     elif pid in other:
-        G = other[pid]['g']
+        career = other[pid]['g']
     else:
-        G = sum(games.values())
-    if G:
-        facts.append(('Games', str(G)))
+        career = sum(games.values())
+    if career:
+        facts.append(('Games', str(career)))
         tops = sorted((g for g in gamedata.POSITIONS if games.get(g)),
                       key=lambda g: (-games[g], gamedata.POSITIONS.index(g)))
-        if len(tops) != 1 or games[tops[0]] != G:
+        if len(tops) != 1 or games[tops[0]] != career:
             facts += [(g, str(games[g])) for g in tops[:3]]
     seed = zlib.crc32(('%s|%s' % (p['name'], lg.births.get(pid))).encode('latin-1', 'replace'))
     tid = next((t for t in sorted(lg.teams) if pid in lg.teams[t]['roster']), None)
