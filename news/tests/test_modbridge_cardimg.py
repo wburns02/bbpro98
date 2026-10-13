@@ -263,6 +263,9 @@ def test_watcher_archives_a_complete_season_with_team_names(tmp_path, monkeypatc
     assoc = {'season_year': 1977, 'teams': {1: {'name': 'Cincinnati Reds', 'roster': [100]}}}
     monkeypatch.setattr(season, 'complete', lambda a: False)
     w.history_piece(assoc, 'TEST77', 'x.DAT')
+    assert history.sim_seasons(str(data), 'TEST77', 100, 'bat') == []                    # 1976 never seen in play
+    assert history.mark_seen(str(data), 'TEST77', 1976)
+    w.history_piece(assoc, 'TEST77', 'x.DAT')
     assert history.sim_seasons(str(data), 'TEST77', 100, 'bat')[0]['year'] == 1976       # last season, no team
     assert not os.path.exists(history.archive_path(str(data), 'TEST77', 1977))
     monkeypatch.setattr(season, 'complete', lambda a: True)
@@ -272,6 +275,51 @@ def test_watcher_archives_a_complete_season_with_team_names(tmp_path, monkeypatc
     lines[1]['bat'][100]['g'] = 50                       # archived once: a later pass leaves the file alone
     w.history_piece(assoc, 'TEST77', 'x.DAT')
     assert history.sim_seasons(str(data), 'TEST77', 100, 'bat')[1]['g'] == 3
+
+
+def test_watcher_without_a_mark_never_archives_the_fallback_but_archives_a_complete_season(tmp_path, monkeypatch):
+    data = tmp_path / 'data'
+    w = watch.Watcher(str(tmp_path / 'game'), str(data), None, None, log=lambda s: None)
+    lines = {1: {'bat': {100: {'g': 3, 'hr': 1}}, 'pit': {}}, 3: {'bat': {100: {'g': 9}}, 'pit': {}}}
+    monkeypatch.setattr(gamedata, 'season_lines', lambda dat, scope: lines[scope])
+    assoc = {'season_year': 1977, 'teams': {1: {'name': 'Cincinnati Reds', 'roster': [100]}}, 'games': []}
+    monkeypatch.setattr(season, 'complete', lambda a: False)
+    w.history_piece(assoc, 'TEST77', 'x.DAT')
+    assert not (data / 'TEST77' / 'history').exists()      # no seen.json, no 1976.json
+    monkeypatch.setattr(season, 'complete', lambda a: True)
+    w.history_piece(assoc, 'TEST77', 'x.DAT')
+    rows = history.sim_seasons(str(data), 'TEST77', 100, 'bat')
+    assert [(r['year'], r['team'], r['g']) for r in rows] == [(1977, 'Cincinnati Reds', 3)]
+
+
+def test_watcher_a_pass_with_a_played_game_marks_the_year_seen(tmp_path, monkeypatch):
+    data = tmp_path / 'data'
+    w = watch.Watcher(str(tmp_path / 'game'), str(data), None, None, log=lambda s: None)
+    monkeypatch.setattr(gamedata, 'season_lines', lambda dat, scope: {'bat': {100: {'g': 3}}, 'pit': {}})
+    assoc = {'season_year': 1977, 'teams': {1: {'name': 'Cincinnati Reds', 'roster': [100]}}}
+    monkeypatch.setattr(season, 'complete', lambda a: False)
+    w.history_piece(dict(assoc, games=[{'played': False}, {'played': True}]), 'TEST77', 'x.DAT')
+    assert history.seen_years(str(data), 'TEST77') == {1977}
+    w.history_piece(dict(assoc, games=[{'played': False}]), 'TEST77', 'x.DAT')
+    w.history_piece(assoc, 'TEST77', 'x.DAT')            # recorded once: the second pass adds nothing
+    assert history.seen_years(str(data), 'TEST77') == {1977}
+
+
+def test_watcher_a_pass_in_one_year_lets_the_next_pass_archive_last_season(tmp_path, monkeypatch):
+    data = tmp_path / 'data'
+    w = watch.Watcher(str(tmp_path / 'game'), str(data), None, None, log=lambda s: None)
+    lines = {1: {'bat': {100: {'g': 3, 'hr': 1}}, 'pit': {}}, 3: {'bat': {100: {'g': 9}}, 'pit': {}}}
+    monkeypatch.setattr(gamedata, 'season_lines', lambda dat, scope: lines[scope])
+    monkeypatch.setattr(season, 'complete', lambda a: False)
+    w.history_piece({'season_year': 1976, 'teams': {1: {'name': 'Cincinnati Reds', 'roster': [100]}},
+                     'games': [{'played': True}]}, 'TEST77', 'x.DAT')
+    assert not os.path.exists(history.archive_path(str(data), 'TEST77', 1976))           # not complete, no 1975 mark
+    assert history.seen_years(str(data), 'TEST77') == {1976}
+    w.history_piece({'season_year': 1977, 'teams': {1: {'name': 'Cincinnati Reds', 'roster': [100]}}, 'games': []},
+                    'TEST77', 'x.DAT')
+    row, = history.sim_seasons(str(data), 'TEST77', 100, 'bat')
+    assert (row['year'], row['team'], row['g']) == (1976, '', 9)
+    assert not os.path.exists(history.archive_path(str(data), 'TEST77', 1977))
 
 
 @pytest.mark.parametrize('assoc,dat', [({'season_year': None, 'teams': TEAMS}, 'x.DAT'),

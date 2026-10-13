@@ -170,14 +170,22 @@ class Watcher:
 
     def history_piece(self, assoc, stem, dat):
         """Archives each simulated season's lines for the player card's Career tab (history.py), once per season: this
-        season when every game is played (the rosters then are the season's own), else last season once the season
-        year has moved on. Each player's team is the one whose roster holds him at the time."""
+        season when every game is played (the rosters then are the season's own), else last season, but only when some
+        game of the season was seen being played, so a rollover that moved the date on without the game rewriting the
+        stats never archives a stock line as a sim season. Each player's team is the one whose roster holds him at the
+        time."""
         year = assoc.get('season_year')
         if dat is None or type(year) is not int or not assoc['teams']:
             return
+        games = assoc.get('games') or []
+        played = year if any(g.get('played') for g in games) else None
+        if played is not None and history.mark_seen(self.data, stem, year):
+            self.log('%s history %d seen' % (stem, year))
         teams = {pid: t['name'] for t in assoc['teams'].values() for pid in t['roster']}
         for scope, y in ((1, year), (3, year - 1)):
             if scope == 1 and not season.complete(assoc):
+                continue
+            if scope == 3 and y not in history.seen_years(self.data, stem):
                 continue
             if os.path.exists(history.archive_path(self.data, stem, y)):
                 continue
