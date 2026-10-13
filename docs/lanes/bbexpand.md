@@ -106,7 +106,7 @@ read a templates directory other than the default.
 
 ```
 python3 work/lahman/expand.py --install DIR --assn STEM --templates DIR \
-    --add "LEAGUE:DIVISION:City:Name:ABR" [--add ...] [--new-league NAME] [--name NAME] --out-stem NEWSTEM
+    --add "LEAGUE:DIVISION:City:Name:ABR[:Manager Name]" [--add ...] [--new-league NAME] [--name NAME] --out-stem NEWSTEM
 ```
 
 - The new association's name (the label in the load list) is `--name`, else `NEWSTEM <source name>` cut to 32
@@ -115,7 +115,8 @@ python3 work/lahman/expand.py --install DIR --assn STEM --templates DIR \
 
 - LEAGUE is a league's name or abbreviation (or the `--new-league` name). DIVISION is a division's name or a 1-based
   index (16L1927's single divisions have blank names; use `1`). The team name is `City Name` (16 characters at most: the game saves 16, section 8);
-  the abbreviation is up to 3 letters or digits.
+  the abbreviation is up to 3 letters or digits. An optional sixth part names the manager (16 characters at most);
+  without it the team takes `pick_manager` (section 5, Team art and park).
 - Refusals (`ExpandError`, exit 2, nothing written): a game played or a team record this season; out stem already
   present; a duplicate team name or abbreviation (against the source and within the adds); an unknown league; a shape
   with no entry in `structure.SHAPES`; a shape whose template is absent or has no schedule (`load_template`, which
@@ -131,21 +132,22 @@ Example run (16L1927 → 18X1927, the test case):
    ...
    9 BRO  National League        act 25 (P 10) res  4 out 1
   ...
-  17 PHO  National League        act 25 (P 10) res  5 NEW
-  18 DEN  National League        act 25 (P 10) res  5 NEW
+  17 PHO  National League        act 25 (P 10) res  5 NEW (manager Rex Lombardo)
+  18 DEN  National League        act 25 (P 10) res  5 NEW (manager Cal Bramwell)
 players drafted 60, free agents signed 0, transactions carried 0, side files [], dropped none
 ```
 
 ## 4. Tests
 
-`work/lahman/tests/test_expand.py`: 22 tests. They copy 16L1927 (and MLBPA97 for the refusal and the DAT and
+`work/lahman/tests/test_expand.py`: 26 tests. They copy 16L1927 (and MLBPA97 for the refusal and the DAT and
 transaction remaps) into a directory under `$SCRATCH`, run `expand`, and decode every output file with the repo codecs:
 ASN via `AsnFile` and `ctree` (every enciphered record decodes and re-encodes to its own bytes; every index tree is
 consistent), PYR (`_pyr_recs` and `RT.write_pyr` round trip), PYF (`read_pool`/`write_pool` round trip, MLBPA97's stale
 tail included), DAT (`stats.stat_records`, player rows equal to the source, index consistent).
 
 Checked for T18 (the one case 16L1927 can reach; T20 is refused for depth, tested):
-team count and leagues; new teams named, Computer, no manager; original teams keep name, manager, park, ownership;
+team count and leagues; new teams named, Computer, a manager (the `--add` one for PHO, a picked one for DEN, no two
+alike, only NULs after the name); original teams keep name, manager, park, ownership;
 PYR byte-identical; every window id a real player, no player on two teams, every roster 25 active with ≥ 10 pitchers
 and ≥ 9 fielders; original teams lose only drafted players and gain only free agents; schedule equal to the template's;
 season dates and trophy unchanged, association name led by the out stem; stats player rows unchanged; lineup, rotation and bullpen ids on
@@ -158,8 +160,8 @@ PYF codec, and `parse_add` spec errors.
 Other: `test_stat_team_rows_follow_the_team_slots` (MLBPA97's team rows, reversed slot keys: rows move, player rows and
 the other fields do not, index consistent) and `test_transactions_follow_the_team_slots` (MLBPA97's live transactions).
 
-Results: `SCRATCH=/mnt/nvme/bbpro98/lanes/bbexpand python3 -m pytest work/lahman/tests/test_expand.py -q` → 22 passed,
-0 skipped. The whole `work/lahman/tests` → 189 passed, 7 skipped; the skips are pre-existing (test_build.py needs the
+Results: `SCRATCH=/mnt/nvme/bbpro98/lanes/bbexpand python3 -m pytest work/lahman/tests/test_expand.py -q` → 26 passed,
+0 skipped. The whole `work/lahman/tests` → 193 passed, 7 skipped; the skips are pre-existing (test_build.py needs the
 `$SCRATCH` directory `/mnt/nvme/bbpro98/tmp`, which this host lacks; test_lahdb.py's database check). `capped` is not
 installed on this host, so pytest ran directly. pyflakes is clean on both new files.
 
@@ -178,7 +180,8 @@ Lost or reset:
 - News data folders and Mods `focus.txt`: keyed by the old stem; the new association starts without them.
 - The stat-based batting order and rotation of every team that lost players: rebuilt from ratings.
 - Team art and park: the new teams take the template slot's stadium, city8 and weather code (stock values for that slot).
-  Their manager is blank and their name and abbreviation are the adds'.
+  Their name and abbreviation are the adds' and their manager is the `--add` sixth part or a picked invented one
+  (`MANAGERS`, section 3), never a real person's name.
 - The schedule: the template's, so every team plays its template count. T18: slots 1–8 (AL) 154 games, slots 9–18
   (NL, the original NL teams included) 162. 16L1927 was 154 for everyone, so the original NL teams play 8 more games.
 
@@ -249,9 +252,12 @@ the association pages must open):
 - Found and fixed: the game saves 16 characters of a team name and a NUL at byte 16, though the record holds 32. The
   season cut "Phoenix Desert Dogs" to "Phoenix Desert D". Stock names abbreviate to fit ("Phila. Athletics").
   `NAME_FIELD` is now 16 and `parse_add` refuses a longer name (test, and a positive control at 31 fails it).
-- Open: a new team's manager. expand.py blanks the manager field's first byte and the template's tail stays ("\0erry
-  Collins"); after the season the field reads "\0ob O'Farrell", so the manager screen shows no name for PHO and DEN.
-  Not checked on screen. Item 6 (rollover) not run.
+- Found and fixed: a new team's manager. expand.py wrote only a NUL into the 17-byte manager field at 0x34 and the
+  template's stale tail stayed ("\0erry Collins"); the manager screen showed no name for PHO and DEN. The field is now
+  cleared and filled whole (`set_manager`, `p[0x34:0x45] = name.encode('latin-1').ljust(17, b'\0')`). The name is the
+  `--add` sixth part when given, else `pick_manager`: a fixed list of 40 invented manager names (`MANAGERS`, no real
+  person's name) walked from a CRC of the abbreviation, past every manager already in the association, and all list
+  entries taken gives 'Manager ' + abbrev. The team log line appends ' (manager NAME)' for new teams.
 
 MLBPA97 is not an input: the tool refuses it (games played), and no template of its target shape exists yet.
 

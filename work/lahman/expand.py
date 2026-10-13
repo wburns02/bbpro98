@@ -2,7 +2,7 @@
 """Add teams, or a league, to a career association at the season boundary (preseason, no games played).
 
     python3 work/lahman/expand.py --install DIR --assn STEM --templates DIR \
-        --add "NL:Eastern:Phoenix:Dogs:PHO" [--add ...] [--new-league NAME] --out-stem NEWSTEM
+        --add "NL:Eastern:Phoenix:Dogs:PHO[:Manager Name]" [--add ...] [--new-league NAME] --out-stem NEWSTEM
 
 The source association STEM is only read. NEWSTEM is written beside it: Assn/NEWSTEM.ASN/.PYR/.PYF (+ .apc/.eos/.pyc
 when STEM has them) and Stats/NEWSTEM.DAT. The target shape is the source's league and division sizes plus the added
@@ -18,6 +18,7 @@ import os
 import shutil
 import struct
 import sys
+import zlib
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import ctree                                             # noqa: E402
@@ -33,10 +34,39 @@ SIDE_EXT = ('apc', 'eos', 'pyc')    # per-association files carried over (champi
 NAME_FIELD = 16                 # team name characters: the record has 32 bytes, but the game saves 16 and a NUL
                                 # (an 18X1927 season cut 'Phoenix Desert Dogs' to 'Phoenix Desert D'; stock names
                                 # abbreviate to fit, 'Phila. Athletics', 'St.L. Cardinals')
+MANAGER_FIELD = 16              # manager name characters the field holds before its NUL (17 bytes at 0x34)
+
+
+# Fictional managers for new teams. Invented: not the name of any real major league manager or player.
+MANAGERS = (
+    'Cal Bramwell', 'Dutch Halvorsen', 'Roy Petraglia', 'Hank Delmonico', 'Skeeter Vaughn',
+    'Walt Ferringer', 'Bo Callahan', 'Clyde Osterman', 'Duke Malvich', 'Ernie Kowalski',
+    'Cecil Brantley', 'Rex Lombardo', 'Gene Sackett', 'Vic Tramonte', 'Otis Greengrass',
+    'Lou Palmieri', 'Curly Fontaine', 'Hobie Garrett', 'Zeke Zabriski', 'Gus Abernathy',
+    'Dizzy Kelleher', 'Skinny Prado', 'Ace Margulies', 'Tex Covington', 'Leo Danforth',
+    'Pepper Nystrom', 'Red Balicki', 'Sully Marchetti', 'Biff Kontos', 'Tug Marquardt',
+    'Lonnie Fisk', 'Junior Vasko', 'Slim Hargrove', 'Barney Fike', 'Chick Moreau',
+    'Roxy Lindqvist', 'Grif Pelkey', 'Cy Swarthout', 'Moxie Carlucci', 'Deke Skowron',
+)
 
 
 class ExpandError(ValueError):
     pass
+
+
+def pick_manager(abbrev, taken):
+    """A manager name for a new team: MANAGERS walked from a CRC of the abbreviation, past every lowercased name in
+    taken. When all are taken, 'Manager ' + abbrev."""
+    for i in range(len(MANAGERS)):
+        name = MANAGERS[(zlib.crc32(abbrev.encode()) + i) % len(MANAGERS)]
+        if name.lower() not in taken:
+            return name
+    return 'Manager ' + abbrev
+
+
+def set_manager(p, name):
+    """The whole 17-byte manager field at 0x34 is cleared and filled, so no stale tail of the template's manager stays."""
+    p[0x34:0x45] = name.encode('latin-1').ljust(17, b'\0')
 
 
 def _find(directory, name):
@@ -91,17 +121,26 @@ def roster_of(rp, n_players):
 # ---------------------------------------------------------------- new teams and the target shape
 
 def parse_add(spec):
-    """'LEAGUE:DIVISION:City:Name:ABR' -> dict. The team name is 'City Name' (16 characters at most)."""
+    """'LEAGUE:DIVISION:City:Name:ABR[:Manager Name]' -> dict. The team name is 'City Name' (16 characters at most),
+    an optional sixth part names the manager (16 characters at most)."""
     parts = [x.strip() for x in spec.split(':')]
-    if len(parts) != 5 or not all(parts):
-        raise ExpandError('--add %r: want LEAGUE:DIVISION:City:Name:ABR' % spec)
-    lg, div, city, name, abbrev = parts
+    if len(parts) not in (5, 6) or not all(parts):
+        raise ExpandError('--add %r: want LEAGUE:DIVISION:City:Name:ABR[:Manager Name]' % spec)
+    lg, div, city, name, abbrev, manager = (parts + [None])[:6]
     full = '%s %s' % (city, name)
     if len(full) > NAME_FIELD:
         raise ExpandError('--add %r: the team name %r is longer than %d characters' % (spec, full, NAME_FIELD))
     if len(abbrev) > 3 or not abbrev.isalnum():
         raise ExpandError('--add %r: the abbreviation is up to 3 letters or digits' % spec)
-    return {'league': lg, 'division': div, 'name': full, 'abbrev': abbrev.upper(), 'spec': spec}
+    if manager is not None:
+        if len(manager) > MANAGER_FIELD:
+            raise ExpandError('--add %r: the manager name %r is longer than %d characters'
+                              % (spec, manager, MANAGER_FIELD))
+        try:
+            manager.encode('latin-1')
+        except UnicodeEncodeError:
+            raise ExpandError('--add %r: the manager name %r does not encode as latin-1' % (spec, manager))
+    return {'league': lg, 'division': div, 'name': full, 'abbrev': abbrev.upper(), 'manager': manager, 'spec': spec}
 
 
 def target_leagues(src, adds, new_league):
@@ -330,6 +369,8 @@ def expand(install, assn, templates, adds, out_stem, new_league=None, name=None,
             if dup in have:
                 raise ExpandError('--add %r: %r is already a team name or abbreviation' % (add['spec'], dup))
             have.add(dup)
+    taken = {cstr(p, 0x34, 17).lower() for p in src_team.values()}
+    taken.update(a['manager'].lower() for a in parsed if a['manager'])
 
     # ---- target shape, its template, and the template slot of every team
     leagues = target_leagues(structure_of(src), parsed, new_league)
@@ -408,7 +449,10 @@ def expand(install, assn, templates, adds, out_stem, new_league=None, name=None,
             add = new_by_key[tk]
             p = bytearray(tp)
             put_str(p, 0x12, 32, add['name'])
-            put_str(p, 0x34, 17, '')
+            manager = add['manager'] or pick_manager(add['abbrev'], taken)
+            taken.add(manager.lower())
+            add['manager_set'] = manager
+            set_manager(p, manager)
             p[0x45:0x48] = add['abbrev'].encode('latin-1').ljust(3, b'\0')
             p[0x0c] = 0                         # Computer
         rw('t', off, tp, p)
@@ -477,15 +521,17 @@ def expand(install, assn, templates, adds, out_stem, new_league=None, name=None,
         teams.append({'key': tk, 'abbrev': new_by_key[tk]['abbrev'] if new else cstr(src_team[inv[tk]], 0x45, 3),
                       'league': lg['name'], 'division': div['name'], 'active': len(act),
                       'pitchers': sum(1 for p in act if is_pit(p)), 'reserve': len(res), 'new': new,
+                      'manager': new_by_key[tk].get('manager_set') if new else None,
                       'moved_out': 0 if new else len(lost.get(inv[tk], ()))})
     summary = {'template': key, 'shape': shape, 'teams': teams, 'drafted': len(came), 'signed': signed_n,
                'transactions': tr_n, 'side': [os.path.basename(dst) for _, dst in side],
                'dropped': sorted(m for m in ('po', 'df', 'sp') if list(src.recs.get(m, [])))}
     log('%s -> %s: template %s, shape %s, %d teams -> %d' % (assn, out_stem, key, shape, n_src, len(teams)))
     for t in teams:
-        log('  %2d %-4s %-18s %-12s act %2d (P %2d) res %2d%s%s' % (
+        log('  %2d %-4s %-18s %-12s act %2d (P %2d) res %2d%s%s%s' % (
             t['key'], t['abbrev'], t['league'], t['division'], t['active'], t['pitchers'], t['reserve'],
-            ' NEW' if t['new'] else '', ' out %d' % t['moved_out'] if t['moved_out'] else ''))
+            ' NEW' if t['new'] else '', ' out %d' % t['moved_out'] if t['moved_out'] else '',
+            ' (manager %s)' % t['manager'] if t['manager'] else ''))
     log('players drafted %d, free agents signed %d, transactions carried %d, side files %s, dropped %s' % (
         len(came), signed_n, tr_n, summary['side'], summary['dropped'] or 'none'))
     return summary
@@ -497,7 +543,7 @@ def main(argv=None):
     ap.add_argument('--assn', required=True, help='the source association stem, e.g. MLBPA97')
     ap.add_argument('--templates', default=B.TEMPLATES, help='directory of minted structure templates')
     ap.add_argument('--add', action='append', default=[], required=True,
-                    help='LEAGUE:DIVISION:City:Name:ABR, repeatable')
+                    help='LEAGUE:DIVISION:City:Name:ABR[:Manager Name], repeatable')
     ap.add_argument('--new-league', help='add the new teams as a new league of this name (their league is that name)')
     ap.add_argument('--out-stem', required=True, help='the new association stem, up to 8 letters/digits')
     ap.add_argument('--name', help='the new association name (default: the stem, then the source name)')

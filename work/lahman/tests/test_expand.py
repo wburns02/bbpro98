@@ -19,7 +19,7 @@ SCRATCH = os.environ.get('SCRATCH', '/mnt/nvme/bbpro98/tmp')
 # shape -> (adds, the league sizes the output must have). The one shape 16L1927 can reach with its thin rosters is T18
 # (two NL teams go to the end of the NL slots, every old key stays put). T20 (two more per league) is refused for depth.
 CASES = {
-    'T18': (['NL:1:Phoenix:Dogs:PHO', 'NL:1:Denver:Mile High:DEN'], [[8], [10]]),
+    'T18': (['NL:1:Phoenix:Dogs:PHO:Rex Lombardo', 'NL:1:Denver:Mile High:DEN'], [[8], [10]]),
 }
 
 
@@ -104,11 +104,18 @@ def test_new_teams_named_and_computer(expanded):
     by_abbr = {cstr(p, 0x45, 3): p for _, p in asn.recs['t']}
     names = {'PHO': 'Phoenix Dogs', 'DEN': 'Denver Mile High', 'TBA': 'Tampa Bay Rays',
              'MIA': 'Miami Sea Breeze'}
+    managers = {}
     for abbr in _new_abbr(expanded):
         p = by_abbr[abbr]
         assert cstr(p, 0x12, 32) == names[abbr]
         assert p[0x0c] == 0                                    # Computer
-        assert cstr(p, 0x34, 17) == ''                         # no manager yet
+        manager = cstr(p, 0x34, 17)
+        assert manager and len(manager) <= X.MANAGER_FIELD     # a named manager, 16 characters at most
+        raw = p[0x34:0x45]
+        assert raw[len(manager):] == b'\0' * (17 - len(manager))
+        assert manager.lower() not in managers, 'manager %s on two teams' % manager
+        managers[manager.lower()] = abbr
+    assert managers['rex lombardo'] == 'PHO'                   # the --add manager, as given
 
 
 def test_original_teams_keep_name_manager_park(expanded):
@@ -350,6 +357,7 @@ def _layout(al_adds, nl_adds):
 def test_slots_of_the_two_league_shape_move_the_old_teams():
     """T20 from 16L1927's layout: the NL teams (old keys 9..16) move to slots 11..18, and the new teams take the last
     slots of their league. T18 (two NL adds) keeps every old key."""
+    _need(os.path.join(TEMPLATES, 'T18'), os.path.join(TEMPLATES, 'T20'))
     t20_slots = B.template_slots(AsnFile(_read(_one(os.path.join(TEMPLATES, 'T20'), '*.ASN'))),
                                  structure.SHAPES['T20'])
     keymap, new = X.assign_slots(_layout(['AL:1:Tampa:Bay Rays:TBA', 'AL:1:Miami:Sea Breeze:MIA'],
@@ -416,6 +424,45 @@ def test_parse_add_rejects_bad_specs():
     assert X.parse_add('NL:East:St. Louis:Browns:SLB')['name'] == 'St. Louis Browns'   # 16, the stock maximum
     add = X.parse_add('nl:East:Phoenix:Dogs:pho')
     assert add['name'] == 'Phoenix Dogs' and add['abbrev'] == 'PHO'
+
+
+def test_parse_add_manager():
+    add = X.parse_add('NL:East:Phoenix:Dogs:PHO:Rex Lombardo')
+    assert add['manager'] == 'Rex Lombardo'
+    assert X.parse_add('NL:East:Phoenix:Dogs:PHO')['manager'] is None
+    with pytest.raises(X.ExpandError):
+        X.parse_add('NL:East:Phoenix:Dogs:PHO:A Seventeen Chars')     # 17 characters
+    with pytest.raises(X.ExpandError):
+        X.parse_add('NL:East:Phoenix:Dogs:PHO:Rex:Extra')     # 7 parts
+    with pytest.raises(X.ExpandError):
+        X.parse_add('NL:East:Phoenix:Dogs:PHO:Rex\u2019')     # the apostrophe does not encode as latin-1
+
+
+def test_pick_manager():
+    taken = set()
+    first = X.pick_manager('PHO', taken)
+    assert first == X.pick_manager('PHO', taken)               # deterministic
+    assert first in X.MANAGERS
+    skip = X.pick_manager('PHO', {m.lower() for m in X.MANAGERS[:3]})
+    assert skip.lower() not in {m.lower() for m in X.MANAGERS[:3]} and skip in X.MANAGERS
+    assert X.pick_manager('PHO', {m.lower() for m in X.MANAGERS}) == 'Manager PHO'
+    import zlib
+    assert first == X.MANAGERS[zlib.crc32(b'PHO') % len(X.MANAGERS)]
+
+
+def test_managers():
+    assert len(X.MANAGERS) == 40
+    assert len(set(X.MANAGERS)) == 40
+    for m in X.MANAGERS:
+        assert 1 <= len(m) <= 16 and m.isascii()
+
+
+def test_set_manager_clears_the_stale_tail():
+    p = bytearray(0x60)
+    p[0x34:0x45] = b'\0erry Collins'
+    X.set_manager(p, 'Cal Bramwell')
+    assert cstr(p, 0x34, 17) == 'Cal Bramwell'
+    assert p[0x34:0x45] == b'Cal Bramwell'.ljust(17, b'\0')
 
 
 def test_pool_codec_keeps_stale_tail():
