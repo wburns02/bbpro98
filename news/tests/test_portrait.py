@@ -131,6 +131,39 @@ def test_age_lines_show_on_the_forehead():
     assert any(44 <= y <= 56 for y in differing_rows(young, old))
 
 
+HAIRLY = {2, 5, 6, 7, 8}                             # hair, its streaks and outline, age lines and brows
+
+
+def face_side_xs(img, y=58):
+    xs = [x for x in range(W) if level(img, x, y) == 1]   # the face outline at a full-width row
+    return xs[0], xs[-1]
+
+
+def test_age_41_changes_only_hair_and_age_lines():
+    young, old = portrait.portrait(7, age=25), portrait.portrait(7, age=41)
+    for y in range(H):
+        for x in range(W):
+            i = (y * W + x) * 3
+            if young[2][i:i + 3] != old[2][i:i + 3]:
+                assert level(young, x, y) in HAIRLY or level(old, x, y) in HAIRLY, (x, y)
+
+
+def test_age_41_sideburns_read_as_hair():
+    old = portrait.portrait(7, age=41)
+    lft, rgt = face_side_xs(old)
+    got = sum(1 for x in (lft - 1, lft, lft + 1, rgt - 1, rgt, rgt + 1)
+              for y in range(63, 70) if level(old, x, y) <= 8)
+    assert got >= 6
+
+
+def test_age_45_hair_shows_in_front_of_the_ears():
+    for seed in range(10):
+        img = portrait.portrait(seed, age=45, bats='S')    # straight on: both ears visible
+        lft, rgt = face_side_xs(img)
+        for x in (lft + 1, rgt - 1):                       # the columns just in front of the ears
+            assert any(level(img, x, y) <= 8 for y in range(61, 72)), seed
+
+
 def test_bats_turn_the_head():
     left, right = portrait.portrait(11, bats='L'), portrait.portrait(11, bats='R')
     assert left != right

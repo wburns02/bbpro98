@@ -146,6 +146,14 @@ def thick(x0, y0, x1, y1, w=1):
             for dx in range(lo, lo + w) for dy in range(lo, lo + w)}
 
 
+def hair_mass(c, pts, face, base, streak):
+    """A hair mass: base fill, every other row (y even) lighter, and a level 2 outline on its far edge."""
+    c.paint(pts, base)
+    c.paint({p for p in pts if p[1] % 2 == 0}, streak)
+    c.paint({p for p in edge(pts) if any((p[0] + dx, p[1] + dy) not in pts and
+             (p[0] + dx, p[1] + dy) not in face for dx, dy in NEIGH)}, 2)
+
+
 def inset(pts, n=1):
     """The shape with its outline stripped n times."""
     for _ in range(n):
@@ -244,10 +252,16 @@ def portrait(seed, age=28, pos='', power=None, speed=None, bats='R', throws='R',
     tall = era >= 1970
     p_mus = 0.35 if era < 1920 else 0.08 if era < 1970 else 0.45 if era < 1990 else 0.15 if era <= 2005 else 0.25
     p_beard = 0.0 if era < 1970 else 0.05 if era < 2000 else 0.3
-    hair = 2 if age < 38 else 12                     # hair greys from 38
-    fringe = None                                    # (depth, level): about 30% wear one under the cap
-    if fringe_v < 0.3:
-        fringe = (3, 12) if age >= 44 and grey_v < 0.4 else (6, hair)   # from 44, some get a lighter, shorter one
+    if age >= 44:                                    # hair greys from 38, greyer from 44
+        hair, streak = 8, 6
+    elif age >= 38:
+        hair, streak = 7, 5
+    else:
+        hair, streak = 2, 2
+    receded = age >= 44 and grey_v >= 0.4            # a receding hairline: no fringe, shorter sideburns
+    fringe = None                                    # depth: about 30% wear one under the cap
+    if fringe_v < 0.3 and not receded:
+        fringe = 3 if age >= 44 and grey_v < 0.4 else 6   # from 44, some get a lighter, shorter one
 
     c = Canvas(_background(int(4 * hatch)))
 
@@ -267,7 +281,7 @@ def portrait(seed, age=28, pos='', power=None, speed=None, bats='R', throws='R',
     face = head(bx, cy, hw, hh, jaw)
     inner = inset(face, 1)
     # hair: a tuft at each temple under the cap, over the ears' tops; the sideburns below are drawn on the face
-    c.paint({p for p in ellipse(bx, cap_base + 5, hw + 2, 12) if p[1] > cap_base}, hair)
+    hair_mass(c, {p for p in ellipse(bx, cap_base + 5, hw + 2, 12) if p[1] > cap_base}, face, hair, streak)
 
     nx0, nx1 = bx - nw // 2, bx + (nw + 1) // 2
     c.paint({(x, y) for x in range(nx0, nx1) for y in range(cy, 97)}, 8)            # neck, to the jersey's neckline
@@ -327,10 +341,12 @@ def portrait(seed, age=28, pos='', power=None, speed=None, bats='R', throws='R',
     d = 2 if smile >= 0.5 else 1                                 # the corners lift: a slight smile
     c.paint(line(bx - m, 80 - d, bx, 81) | line(bx, 81, bx + m, 80 - d), 3)
 
-    c.paint({p for p in inner if abs(p[0] - bx) >= hw - 2 and cap_base < p[1] <= 70}, hair)   # sideburns to the lobe
+    sb_end = 68 if receded else 70                   # the receding hairline wears the sideburns 2px shorter
+    hair_mass(c, {p for p in inner if abs(p[0] - bx) >= hw - 2 and cap_base < p[1] <= sb_end},
+              face, hair, streak)                    # sideburns to the lobe
     if fringe:
-        depth, tone = fringe
-        c.paint({p for p in inner if cap_base < p[1] <= cap_base + depth - 3 * abs(p[0] - bx) // hw}, tone)
+        hair_mass(c, {p for p in inner if cap_base < p[1] <= cap_base + fringe - 3 * abs(p[0] - bx) // hw},
+                  face, hair, streak)
 
     cap_rx = hw + 1
     crown = {p for p in ellipse(bx, cap_base, cap_rx, crown_h) if p[1] <= cap_base}
