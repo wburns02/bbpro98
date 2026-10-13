@@ -1,8 +1,8 @@
 """The player card's Career tab: one player's seasons by year, from the real major league seasons in the Lahman
 database and the seasons the game simulated. lahman_id finds the player; real_seasons reads his Lahman seasons from a
-connection open_db made read-only. archive_season and sim_seasons keep and read the sim seasons, one JSON file per year
-under <data>/<STEM>/history. merge joins the two into rows, totals sums rows, and start_year gives the first season an
-association simulates. Standard library only; every value reaches SQL as a parameter.
+connection open_db made read-only. archive_season, mark_seen and sim_seasons keep and read the sim seasons, one JSON
+file per year under <data>/<STEM>/history beside seen.json, the seasons a watcher pass saw being played. merge joins
+the two into rows, totals sums rows, and start_year gives the first season an association simulates. Standard library only; every value reaches SQL as a parameter.
 """
 import json
 import os
@@ -156,6 +156,52 @@ def archive_season(data_dir, stem, year, lines, teams=None):
     try:
         with open(tmp, 'w', encoding='utf-8') as f:
             f.write(text)
+        os.replace(tmp, path)
+    except OSError:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        raise
+    return True
+
+
+def seen_path(data_dir, stem):
+    """The seen.json file of association stem's history folder."""
+    return os.path.join(data_dir, stem.upper(), 'history', 'seen.json')
+
+
+def seen_years(data_dir, stem):
+    """The seasons in seen.json that a watcher pass saw being played, as a set of years. A missing, unreadable or
+    malformed file, a non-list, or a bad stem gives set(); entries that are not ints (bool included) are ignored."""
+    if not isinstance(stem, str) or STEM_RE.fullmatch(stem) is None:
+        return set()
+    try:
+        with open(seen_path(data_dir, stem), encoding='utf-8') as f:
+            years = json.load(f)['years']
+    except (OSError, ValueError, KeyError, TypeError):
+        return set()
+    if not isinstance(years, list):
+        return set()
+    return {y for y in years if isinstance(y, int) and not isinstance(y, bool)}
+
+
+def mark_seen(data_dir, stem, year):
+    """Records that a watcher pass saw season year of stem being played, once: True when written, False when year was
+    already there and nothing is written. The list stays sorted, the folder is created as needed, and the file is
+    written through seen.json.tmp and os.replace. A stem that is not 1 to 8 letters or digits, or a year outside
+    1800..3000, is a ValueError."""
+    if not isinstance(stem, str) or STEM_RE.fullmatch(stem) is None:
+        raise ValueError('stem must be 1 to 8 letters or digits, not %r' % (stem,))
+    if not isinstance(year, int) or not 1800 <= year <= 3000:
+        raise ValueError('year must be 1800 to 3000, not %r' % (year,))
+    years = seen_years(data_dir, stem)
+    if year in years:
+        return False
+    path = seen_path(data_dir, stem)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + '.tmp'
+    try:
+        with open(tmp, 'w', encoding='utf-8') as f:
+            f.write(json.dumps({'years': sorted(years | {year})}))
         os.replace(tmp, path)
     except OSError:
         if os.path.exists(tmp):
