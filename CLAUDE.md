@@ -120,4 +120,8 @@ Public repo (MIT) of tools and research for FPS Baseball Pro '98. Python codecs 
   the watcher archives it, so history.drop_seeded removes archived rows before the start year the stem names. The
   DAT career line (scope 2) can count games played before archiving existed: an Other row holds the rest only when no
   stat comes out negative (stock MLBPA files carry career lines that disagree with Lahman), else a note gives the games.
+- The watcher archives 'last season' (DAT scope 3) only for a year in <data>/<STEM>/history/seen.json, which it marks
+  when it sees a played game that season. Scope 3 can hold stock lines from years earlier (MLBPA97 in 2007 still had
+  1996's), so never archive it without that mark. Seeded or stale archives already written were moved aside, never
+  deleted (host /mnt/data/bbpro98/bogus-history-20261013).
 - Portraits (news/portrait.py) are generated from the player's inputs only. Never add real photos or likenesses.
