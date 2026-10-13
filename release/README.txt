@@ -15,7 +15,11 @@ mods\aging.dll     Veterans decline and retire by age and ability, so a career l
                    Reads mods\focus.txt (player development focus) when it exists.
 mods\rookies.dll   Generated players get ratings drawn like real players', so new stars appear once the old
                    ones retire.
-mods\playercard.dll  Click a player row on the League Statistics screen to open his career card.
+mods\playercard.dll  Click a player row on the League Statistics screen to open his career card. With modmenu.dll
+                   and the bridge running, the card is a picture page: a generated portrait (no likenesses), ratings,
+                   this season's lines and a Career tab with his real seasons plus the seasons your association has
+                   played (the watcher saves each one at season end). Without them its own text card opens.
+                   The mouse wheel scrolls the statistics list.
 mods\modmenu.dll   The main menu's WWW SITE button opens a Mods window: the loaded mods, League News, Create a
                    Player and Build a Season. The three tools need the bridge below; without it they time out
                    with a message and the game carries on. League Management's Create New Association opens the
@@ -37,6 +41,8 @@ Python program from the source answers them. It runs on Linux beside a Wine inst
   python3 news/modbridge.py --game "$G" --data ~/bbnews --backup ~/bbnews-backup
 
 Leave modbridge.py running while you play. Run watch.py without --once to keep the news current as you play.
+Keep watch.py running across season ends too: it saves each finished season for the card's Career tab, and a
+season it never saw played is not saved. The real seasons before your association need modbridge.py --db (below).
 Build a Season also needs --db (a Lahman database, work/lahman/load_csv.py) and --templates (minted with
 work/lahman); without them it says it is not set up. Create a Player copies each file it changes to --backup first.
 
