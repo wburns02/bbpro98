@@ -1,8 +1,8 @@
 """The player card's Career tab: one player's seasons by year, from the real major league seasons in the Lahman
 database and the seasons the game simulated. lahman_id finds the player; real_seasons reads his Lahman seasons from a
 connection open_db made read-only. archive_season, mark_seen and sim_seasons keep and read the sim seasons, one JSON
-file per year under <data>/<STEM>/history beside seen.json, the seasons a watcher pass saw being played. merge joins the two into rows, totals sums rows, and start_year gives the first season an
-association simulates. Standard library only; every value reaches SQL as a parameter.
+file per year under <data>/<STEM>/history beside seen.json, the seasons a watcher pass saw being played. merge joins
+the two into rows, totals sums rows, and start_year gives the first season an association simulates. Standard library only; every value reaches SQL as a parameter.
 """
 import json
 import os
