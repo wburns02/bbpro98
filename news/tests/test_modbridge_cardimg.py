@@ -21,9 +21,24 @@ import modbridge   # noqa: E402
 import season      # noqa: E402
 import watch       # noqa: E402
 from tests.test_modbridge import NAMES, ask, bridge, pyf_bytes, pyr_bytes, site   # noqa: E402,F401
-from tests.test_modbridge_card import REAL, RECORDS, TEAMS, YEAR, card_record, page   # noqa: E402
+from tests.test_modbridge_card import REAL, RECORDS, TEAMS, YEAR, card_record, page   # noqa: E402,F401
 
 BASE = '/news/card/TEST77/p/100'
+BAT_ZERO = {k: 0 for k in ('g', 'ab', 'r', 'h1b', 'h2b', 'h3b', 'hr', 'rbi', 'bb', 'so', 'sb', 'hbp', 'sf', 'cs',
+                           'ibb', 'sh', 'gidp')}
+PIT_ZERO = {k: 0 for k in ('g', 'w', 'l', 'sv', 'outs', 'h1b', 'h2b', 'h3b', 'hr', 'bb', 'so', 'er', 'r', 'ab', 'hbp',
+                           'sf', 'sh', 'cg', 'sho', 'gf', 'bfp', 'cs', 'ibb', 'ir', 'irs', 'qs', 'hld', 'svop', 'wp',
+                           'rbi', 'sb', 'h')}
+
+
+def bat_line(**kw):
+    """A season_lines batting line: the zeros plus kw, and 'h' computed as season_lines does."""
+    line = dict(BAT_ZERO, **kw)
+    line['h'] = line['h1b'] + line['h2b'] + line['h3b'] + line['hr']
+    return line
+CAREER_LINE = {'bat': {100: dict(BAT_ZERO, g=993, ab=3000, r=500, h1b=600, h2b=250, h3b=10, hr=40, rbi=800, bb=500,
+                                 so=900, hbp=10, sf=5)},
+               'pit': {}}
 
 
 def fnx(ver, height, width, count=96):
@@ -339,6 +354,105 @@ def test_career_lists_games_no_season_holds_as_other(pic, monkeypatch):
     assert got == [('1975', '150', str(1975 % 40)), ('1976', '150', str(1976 % 40)), ('Other', '40', '9'),
                    ('1977', '10', '2'), ('Total', '350', str(career['hr']))]
     assert body['rows'][-1]['cells'][1] == '3 yr' and body['note'] == 'Other: career games the game kept with no season.'
+
+
+def test_overview_games_fact_comes_from_the_career_line(pic, monkeypatch):
+    """The stats file's career line counts 993 games for the hitter: Games 993, then the three positions he played
+    most (a 0 game position skipped), each 8 characters or less."""
+    ctx, spool, cards = pic
+    monkeypatch.setattr(gamedata, 'find', lambda d, name: os.path.join(d, name) if name.endswith('.DAT')
+                        else _find(d, name))
+    monkeypatch.setattr(gamedata, 'season_lines',
+                        lambda dat, scope: ({'bat': {100: bat_line(g=993, ab=3000, r=500, h1b=600, h2b=250,
+                                                                   h3b=10, hr=40, rbi=800, bb=500, so=900, hbp=10,
+                                                                   sf=5)}, 'pit': {}} if scope == 2
+                                            else {'bat': {}, 'pit': {}}))
+    monkeypatch.setattr(gamedata, 'career_games',
+                        lambda dat: {100: {'RF': 599, 'CF': 216, 'LF': 5, '1B': 0}})
+    page(ctx, spool, BASE)
+    assert cards[-1]['body']['kind'] == 'overview'
+    facts = cards[-1]['body']['facts']
+    assert facts[0][0] == 'Focus'
+    assert facts[1:] == [('Games', '993'), ('RF', '599'), ('CF', '216'), ('LF', '5')]
+    assert all(len(v) <= 8 for _, v in facts)
+
+
+def test_overview_shows_at_most_three_positions(pic, monkeypatch):
+    ctx, spool, cards = pic
+    monkeypatch.setattr(gamedata, 'find', lambda d, name: os.path.join(d, name) if name.endswith('.DAT')
+                        else _find(d, name))
+    monkeypatch.setattr(gamedata, 'season_lines',
+                        lambda dat, scope: ({'bat': {100: bat_line(g=50)}, 'pit': {}} if scope == 2
+                                            else {'bat': {}, 'pit': {}}))
+    monkeypatch.setattr(gamedata, 'career_games',
+                        lambda dat: {100: {'RF': 20, 'CF': 15, 'LF': 10, '3B': 5}})
+    page(ctx, spool, BASE)
+    assert cards[-1]['body']['facts'][1:] == [('Games', '50'), ('RF', '20'), ('CF', '15'), ('LF', '10')]
+
+
+def test_overview_ties_break_in_positions_order(pic, monkeypatch):
+    ctx, spool, cards = pic
+    monkeypatch.setattr(gamedata, 'find', lambda d, name: os.path.join(d, name) if name.endswith('.DAT')
+                        else _find(d, name))
+    monkeypatch.setattr(gamedata, 'season_lines',
+                        lambda dat, scope: ({'bat': {100: bat_line(g=30)}, 'pit': {}} if scope == 2
+                                            else {'bat': {}, 'pit': {}}))
+    monkeypatch.setattr(gamedata, 'career_games', lambda dat: {100: {'CF': 10, 'LF': 10}})
+    page(ctx, spool, BASE)
+    assert cards[-1]['body']['facts'][1:] == [('Games', '30'), ('LF', '10'), ('CF', '10')]
+
+
+def test_overview_of_a_pure_pitcher(pic, monkeypatch):
+    """A pitcher whose only position is P: Games comes from the pit career line and P 427 repeats it, so no position
+    fact after Games."""
+    ctx, spool, cards = pic
+    monkeypatch.setattr(gamedata, 'find', lambda d, name: os.path.join(d, name) if name.endswith('.DAT')
+                        else _find(d, name))
+    monkeypatch.setattr(gamedata, 'season_lines',
+                        lambda dat, scope: ({'bat': {}, 'pit': {205: dict(PIT_ZERO, g=427)}} if scope == 2
+                                            else {'bat': {}, 'pit': {}}))
+    monkeypatch.setattr(gamedata, 'career_games', lambda dat: {205: {'P': 427}})
+    page(ctx, spool, '/news/card/TEST77/p/205')
+    assert cards[-1]['body']['facts'] == [('Focus', 'none'), ('Games', '427')]
+
+
+def test_overview_without_a_stats_file_sums_the_positions(pic, monkeypatch):
+    """No stats file (find yields nothing, season_lines cannot open it): Games is the sum of the career games by
+    position, or the fact is absent with none."""
+    ctx, spool, cards = pic
+    monkeypatch.setattr(gamedata, 'find', lambda d, name: os.path.join(d, name) if name.endswith('.DAT')
+                        else _find(d, name))
+    monkeypatch.setattr(gamedata, 'career_games', lambda dat: {100: {'RF': 599, 'CF': 216, 'LF': 5}})
+    page(ctx, spool, BASE)
+    assert cards[-1]['body']['facts'][1:] == [('Games', '820'), ('RF', '599'), ('CF', '216'), ('LF', '5')]
+    page(ctx, spool, '/news/card/TEST77/p/300')            # no career games either: no Games fact
+    assert not [f for f in cards[-1]['body']['facts'] if f[0] == 'Games']
+
+
+def test_overview_games_fact_falls_back_when_the_career_line_is_missing(pic, monkeypatch):
+    """A stats file with no career line for him: Games is the sum of the positions."""
+    ctx, spool, cards = pic
+    monkeypatch.setattr(gamedata, 'find', lambda d, name: os.path.join(d, name) if name.endswith('.DAT')
+                        else _find(d, name))
+    monkeypatch.setattr(gamedata, 'season_lines', lambda dat, scope: {'bat': {}, 'pit': {}})
+    monkeypatch.setattr(gamedata, 'career_games', lambda dat: {100: {'RF': 300, 'CF': 120}})
+    page(ctx, spool, BASE)
+    assert cards[-1]['body']['facts'][1:] == [('Games', '420'), ('RF', '300'), ('CF', '120')]
+
+
+def test_overview_survives_an_unreadable_career_line(pic, monkeypatch):
+    ctx, spool, cards = pic
+    monkeypatch.setattr(gamedata, 'find', lambda d, name: os.path.join(d, name) if name.endswith('.DAT')
+                        else _find(d, name))
+
+    def season_lines(dat, scope=1):
+        if scope == 2:
+            raise ValueError('bad member')
+        return {'bat': {}, 'pit': {}}
+    monkeypatch.setattr(gamedata, 'season_lines', season_lines)
+    monkeypatch.setattr(gamedata, 'career_games', lambda dat: {100: {'RF': 300, 'CF': 120}})
+    page(ctx, spool, BASE)
+    assert cards[-1]['body']['facts'][1:] == [('Games', '420'), ('RF', '300'), ('CF', '120')]
 
 
 _find = gamedata.find

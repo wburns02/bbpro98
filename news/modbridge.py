@@ -1143,12 +1143,32 @@ def _card_tab_body(ctx, lg, pid, tab, page, p, rec, base, who):
     if p['pos'] == 'P':
         rows += [(create.PITCH_LABELS[c], scout.grade(ratings[c][0]), scout.grade(ratings[c][1]))
                  for c in gamedata.PITCH_CODES if ratings[c][0] or ratings[c][1]]
-    _, _, games = _card_stats(ctx, lg, pid)
     kind = _focus_of(_read_focus(ctx.game), pid, lg.births[pid])
     facts = [('Focus', kind or 'none')]
-    if games:                                   # the column fits one position: the one he has played most
-        top = max((g for g in gamedata.POSITIONS if g in games), key=lambda g: games[g])
-        facts.append(('Games', '%s %d' % (top, games[top])))
+    # The facts column fits at most 8 characters: the career games from the stats file's career line (one
+    # season_lines call), then up to the three positions he has played most; a position fact is skipped when it would
+    # only repeat the Games fact (a pure pitcher with P 427 and Games 427).
+    stats_dir = os.path.join(ctx.game, 'Stats')
+    dat = gamedata.find(stats_dir, lg.stem + '.DAT') if os.path.isdir(stats_dir) else None
+    games = gamedata.career_games(dat).get(pid, {}) if dat is not None else {}
+    try:
+        lines = gamedata.season_lines(dat, 2) if dat is not None else None
+    except (OSError, ValueError):               # a bad stats file: no career line
+        lines = None
+    bat, pit = (lines['bat'], lines['pit']) if lines is not None else ({}, {})
+    own, other = (pit, bat) if p['pos'] == 'P' else (bat, pit)
+    if pid in own:
+        G = own[pid]['g']
+    elif pid in other:
+        G = other[pid]['g']
+    else:
+        G = sum(games.values())
+    if G:
+        facts.append(('Games', str(G)))
+        tops = sorted((g for g in gamedata.POSITIONS if games.get(g)),
+                      key=lambda g: (-games[g], gamedata.POSITIONS.index(g)))
+        if len(tops) != 1 or games[tops[0]] != G:
+            facts += [(g, str(games[g])) for g in tops[:3]]
     seed = zlib.crc32(('%s|%s' % (p['name'], lg.births.get(pid))).encode('latin-1', 'replace'))
     tid = next((t for t in sorted(lg.teams) if pid in lg.teams[t]['roster']), None)
     team = lg.teams[tid]['name'] if tid is not None else ''
