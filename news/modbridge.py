@@ -1081,6 +1081,20 @@ def _career(ctx, lg, pid, kind, first, last, born):
     return rows, lid, other
 
 
+def _other_note(rows):
+    """The note under an Other row: the years it covers when they fall between the last real season and the first
+    archived one (simmed before archiving existed), else the generic text."""
+    real = [r['year'] for r in rows if not r['sim']]
+    played = [r['year'] for r in rows if r['sim']]
+    if real and played:
+        lo, hi = max(real) + 1, min(played) - 1
+        if lo <= hi:
+            if lo == hi:
+                return 'Other: %d, a season simmed before it was saved.' % lo
+            return 'Other: %d to %d, seasons simmed before they were saved.' % (lo, hi)
+    return 'Other: career games the game kept with no season.'
+
+
 def _career_cells(year, team, line, kind):
     if kind == 'bat':
         b = dict(line, h1b=line['h'] - line['h2b'] - line['h3b'] - line['hr'])
@@ -1113,7 +1127,7 @@ def _card_tab_body(ctx, lg, pid, tab, page, p, rec, base, who):
         page = min(page, pages - 1)
         cols = ['Year', 'Team'] + list(BAT_COLS if kind == 'bat' else PIT_COLS)
         if line is not None:
-            note = 'Other: career games the game kept with no season.'
+            note = _other_note(rows)
         elif other is not None:
             note = 'The game counts %d more career games; those seasons were not archived.' % other['g']
         else:
