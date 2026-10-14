@@ -281,7 +281,7 @@ def postseason(h, shots, t_end, max_sims=8, asn=None):
         if sims >= max_sims:
             break
         sims += 1
-        if on_assn_data(a):
+        if _diff(a, 'f_assn.png', TITLE_BOX) < 20.0:
             h.x('key', 'ctrl+k'); time.sleep(6)
         elif _diff(a, 'f_sched.png', SCHED_BOX) >= 20.0:
             shutil.copyfile(a, f'{shots}/post_stop_{sims}.png')
