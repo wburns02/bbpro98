@@ -45,6 +45,8 @@ PROGRESS = 600                                # seconds between progress lines w
 NOTICE_BOX = (450, 462, 830, 535)             # body of the game's centred notice dialogs
 NOTICES = {'complete': 'f_complete.png', 'fa': 'f_fa.png', 'spring': 'f_spring.png', 'amateur': 'f_draft.png'}
 SCHED_BOX = (335, 295, 470, 322)              # 'League Sch' of the schedule's title bar (f_sched.png)
+CHAMP_BOX = (330, 470, 950, 750)              # body of the World Series champions photo (f_champ.png)
+POST_HELD = 6                                 # still looks 20 s apart that bring the postseason wait to reopen the sim
 
 
 def _diff(png, ref, box):
@@ -139,12 +141,38 @@ def run_draft(h, shots, timeout=900):
     return False
 
 
-def sim(h):
-    """From the schedule: Action > Simulate..., All games until next "Play", OK."""
+def on_sched(png):
+    """The League Schedule screen."""
+    return _diff(png, 'f_sched.png', SCHED_BOX) < 20.0
+
+
+def on_champ(png):
+    """The World Series champions photo (a full-screen picture with no menu bar)."""
+    return _diff(png, 'f_champ.png', CHAMP_BOX) < 20.0
+
+
+def busy(png):
+    """The 'Updating association data for today' box is on screen: the game is working, do not touch it."""
+    return _diff(png, 'f_update.png', UPDATE_BOX) < 10.0
+
+
+def sim(h, shots):
+    """From the schedule: Action > Simulate..., All games until next "Play", OK. First confirms the screen is the
+    League Schedule: after one ctrl+k from Association Data, or refused with no click at all otherwise."""
+    png = f'{shots}/_sim.png'
+    look(h, png)
+    if on_assn_data(png):
+        h.x('key', 'ctrl+k'); time.sleep(6)
+        look(h, png)
+    if not on_sched(png):
+        shutil.copyfile(png, f'{shots}/sim_refused.png')
+        print(json.dumps({'sim': 'refused'}), flush=True)
+        return False
     h.click(595, 330); time.sleep(2)      # Action
     h.click(615, 346); time.sleep(4)      # Simulate...
     h.click(543, 501); time.sleep(1)      # All games until next "Play"
     h.click(570, 565); time.sleep(10)     # OK
+    return True
 
 
 def _other_mtimes(asn):
@@ -170,17 +198,19 @@ def season(h, shots, stem, limit):
             print(json.dumps({'season': stem, 'done': False, 'wrong_association': True}), flush=True)
             return False
         rnd += 1
-        sim(h)
-        last, quiet_since, shown = n, time.time(), time.time()
-        while time.time() < t_end and time.time() - quiet_since < QUIET:
-            time.sleep(10)
-            cur, _ = played(asn)
-            if cur is not None and cur != last:
-                last, quiet_since = cur, time.time()
-            if time.time() - shown >= PROGRESS:
-                print(json.dumps({'round': rnd, 'progress': last, 'of': total}), flush=True)
-                shown = time.time()
-        cur, total = played(asn)
+        if not sim(h, shots):                 # refused off the schedule: treat the round as a stop
+            last, cur, total = n, n, None
+        else:
+            last, quiet_since, shown = n, time.time(), time.time()
+            while time.time() < t_end and time.time() - quiet_since < QUIET:
+                time.sleep(10)
+                cur, _ = played(asn)
+                if cur is not None and cur != last:
+                    last, quiet_since = cur, time.time()
+                if time.time() - shown >= PROGRESS:
+                    print(json.dumps({'round': rnd, 'progress': last, 'of': total}), flush=True)
+                    shown = time.time()
+            cur, total = played(asn)
         if total and cur == total:            # season over: the loop top reports it; nothing on screen to answer
             continue
         settle(h, shots, t_end)
@@ -211,32 +241,53 @@ def season(h, shots, stem, limit):
     return False
 
 
-def postseason(h, shots, t_end, max_sims=8):
-    """After the last regular-season game: wait for the season-complete notice while the playoffs play, reopening
-    the sim whenever the screen holds still for three looks without it."""
+def postseason(h, shots, t_end, max_sims=8, asn=None):
+    """After the last regular-season game: wait for the season-complete notice while the playoffs play, reopening the
+    sim only after POST_HELD unchanged looks. A busy look ('Updating association data') is progress and never sims;
+    a champion look ('Led by Coach ..., the ... capture the World Series') is answered with Return and never sims;
+    a refused sim counts as one of max_sims. When asn is given, any other association file changing stops it with
+    wrong_association and no more input."""
     a, b = f'{shots}/_post_a.png', f'{shots}/_post_b.png'
     look(h, a)
-    held, sims = 0, 0
+    if asn is not None:
+        others = _other_mtimes(asn)
+    held, sims, champ = 0, 0, False
     while time.time() < t_end:
         if notice(a) == 'complete':
             print(json.dumps({'postseason': 'complete', 'sims': sims}), flush=True)
             return True
         time.sleep(20)
         look(h, b)
+        if asn is not None and _other_mtimes(asn) != others:
+            print(json.dumps({'postseason': 'wrong_association'}), flush=True)
+            return False
         held = held + 1 if _same(a, b) else 0
         os.replace(b, a)
-        if held < 3 or notice(a) == 'complete':
+        if busy(a):
+            held = 0
+            continue
+        if on_champ(a) and not champ:
+            champ = True
+            print(json.dumps({'postseason': 'champion'}), flush=True)
+            h.x('key', 'Return'); time.sleep(4)
+            held = 0
+            look(h, a)
+            continue
+        if champ and on_champ(a):
+            held = 0
+            continue
+        if held < POST_HELD or notice(a) == 'complete':
             continue
         if sims >= max_sims:
             break
         sims += 1
-        if _diff(a, 'f_assn.png', TITLE_BOX) < 20.0:
+        if on_assn_data(a):
             h.x('key', 'ctrl+k'); time.sleep(6)
         elif _diff(a, 'f_sched.png', SCHED_BOX) >= 20.0:
             shutil.copyfile(a, f'{shots}/post_stop_{sims}.png')
             h.x('key', 'Return'); time.sleep(4)
         print(json.dumps({'postseason': 'sim', 'n': sims}), flush=True)
-        sim(h)
+        sim(h, shots)
         held = 0
         look(h, a)
     look(h, f'{shots}/stuck_post.png')
@@ -343,8 +394,10 @@ def seasons(h, shots, stem, n, limit, year):
     look(h, png)
     if notice(png) not in NOTICES:                      # mid-season: finish it first (a notice means the offseason)
         h.x('key', 'ctrl+k'); time.sleep(6)
-        if not (season(h, shots, stem, limit) and postseason(h, shots, t_end)):
+        asn_path = os.path.join(assn, stem + '.ASN')
+        if not (season(h, shots, stem, limit) and postseason(h, shots, t_end, asn=asn_path)):
             return False
+    asn_path = os.path.join(assn, stem + '.ASN')
     for k in range(n + 1):
         if not offseason(h, shots, t_end):
             return False
@@ -354,7 +407,7 @@ def seasons(h, shots, stem, n, limit, year):
         if k == n:
             return True
         h.x('key', 'ctrl+k'); time.sleep(6)
-        if not (season(h, shots, stem, limit) and postseason(h, shots, t_end)):
+        if not (season(h, shots, stem, limit) and postseason(h, shots, t_end, asn=asn_path)):
             return False
         _snap(h, assn, stem, f'{shots}/complete_{k}')   # the season-complete state, before the rollover ages anyone
     return True
