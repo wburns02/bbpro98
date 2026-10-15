@@ -27,6 +27,7 @@ PAST_RE = re.compile(r'[0-9]{4}(?:-[0-9]{1,2})?')
 YEAR_FILE_RE = re.compile(r'([0-9]{4})\.json')
 YEAR_RE = re.compile(r'[0-9]{4}')
 FEED_RE = re.compile(r'([0-9]{2})-([0-9]{2})\.json')
+DAY_RE = re.compile(r'([0-9]{2})-([0-9]{2})')
 PAGE_RE = re.compile(r'[0-9]{1,5}')
 TID_RE = re.compile(r'[0-9]{1,2}')
 MONTHS = ('January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October',
@@ -177,20 +178,29 @@ def _scout_files(folder):
     return sorted(out, key=lambda tr: (_text(tr[1].get('team')), tr[0]))
 
 
-def _latest_feed(assn_dir):
-    """The newest readable 'Around the league' column, or None. Newest is by the MM-DD in the file name."""
-    feed_dir = assn_dir / 'feed'
+def _feed_days(folder):
+    """Sorted (month, day) of every feed/<MM>-<DD>.json in a season folder, readable or not. [] when there is no feed
+    folder."""
     try:
-        names = os.listdir(feed_dir)
+        names = os.listdir(folder / 'feed')
     except OSError:
-        return None
-    dated = []
+        return []
+    days = []
     for name in names:
         m = FEED_RE.fullmatch(name)
         if m and 1 <= int(m[1]) <= 12 and 1 <= int(m[2]) <= 31:
-            dated.append((int(m[1]), int(m[2]), name))
-    for _, _, name in sorted(dated, reverse=True):
-        feed = _read_obj(feed_dir / name)
+            days.append((int(m[1]), int(m[2])))
+    return sorted(days)
+
+
+def _feed_file(folder, month, day):
+    return _read_obj(folder / 'feed' / ('%02d-%02d.json' % (month, day)))
+
+
+def _latest_feed(assn_dir):
+    """The newest readable 'Around the league' column, or None. Newest is by the MM-DD in the file name."""
+    for month, day in reversed(_feed_days(assn_dir)):
+        feed = _feed_file(assn_dir, month, day)
         if feed is not None:
             return feed
     return None
@@ -303,10 +313,14 @@ def _leaders_html(leaders):
     return '<section><h2>Leaders</h2>%s</section>' % (''.join(tables) or '<p class="empty">No leaders yet.</p>')
 
 
-def _feed_html(feed):
-    kicker = SEP.join(x for x in ('Around the league', _text(feed.get('date'))) if x)
+def _feed_html(feed, href=None):
+    """The column. With href, the date in the kicker links there."""
+    date = esc(feed.get('date'))
+    if date and href:
+        date = '<a href="%s">%s</a>' % (esc(href), date)
+    kicker = SEP.join(x for x in ('Around the league', date) if x)
     return ('<article class="feed"><p class="kicker">%s</p><h2>%s</h2>%s</article>'
-            % (esc(kicker), esc(feed.get('headline')), _paras_html(_paragraphs(feed.get('body')))))
+            % (kicker, esc(feed.get('headline')), _paras_html(_paragraphs(feed.get('body')))))
 
 
 def _story_row(home, key, rec):
@@ -378,7 +392,9 @@ def _lead_html(folder, home, page, coverage=''):
     if page == 1:
         feed = _latest_feed(folder)
         if feed:
-            lead.append(_feed_html(feed))
+            month, day = _int(feed, 'month'), _int(feed, 'day')
+            href = '%sday/%02d-%02d' % (home, month, day) if 1 <= month <= 12 and 1 <= day <= 31 else None
+            lead.append(_feed_html(feed, href))
         lead.append(coverage)
     shown = stories[(page - 1) * PER_PAGE:page * PER_PAGE]
     if not stories:
@@ -1027,9 +1043,57 @@ def _segments(path):
     return segs
 
 
+def _day_link(home, day, text):
+    return '<a href="%sday/%02d-%02d">%s</a>' % (esc(home), day[0], day[1], text)
+
+
+def _day_pager(home, days, at):
+    """Links to the column dates before and after `at` in days (sorted), each only when there is one."""
+    before = [d for d in days if d < at]
+    after = [d for d in days if d > at]
+    links = []
+    if before:
+        links.append(_day_link(home, before[-1], '&larr; %s' % esc(_date_text(*before[-1]))))
+    if after:
+        links.append(_day_link(home, after[0], '%s &rarr;' % esc(_date_text(*after[0]))))
+    return '<nav class="pager">%s</nav>' % ''.join(links) if links else ''
+
+
+def _day(folder, assn, home, month, day):
+    """One date's page: the column, every result in it, and the date's stories, with links to the dates around it.
+    404 when the date has no readable column."""
+    feed = _feed_file(folder, month, day)
+    if feed is None:
+        return _not_found()
+    name = _text(_d(_read_obj(folder / 'meta.json')).get('name')) or assn
+    date = _text(feed.get('date')) or _date_text(month, day)
+    games = [[r.get('away'), r.get('away_runs'), r.get('home'), r.get('home_runs'), r.get('innings')]
+             for r in _dicts(_d(feed.get('facts')).get('results'))]
+    results = (_table('Results', ('Away', 'R', 'Home', 'R', 'Inn'), games, text=(0, 2)) if games
+               else '<p class="empty">No games on this date.</p>')
+    rows = [_story_row(home, key, rec) for key, rec in _stories(folder)
+            if _int(rec, 'month') == month and _int(rec, 'day') == day]
+    stories = ('<section><h2>Stories</h2>%s</section>'
+               % (''.join(rows) or '<p class="empty">No stories for this date.</p>'))
+    back = '<a href="%s">&larr; Front page</a> &middot; ' % esc(home)
+    body = (_masthead(name, date) + _nav(back) + _feed_html(feed) + results + stories
+            + _day_pager(home, _feed_days(folder), (month, day)))
+    return _page_reply(200, '%s · %s · League News' % (name, date), body)
+
+
+def _day_route(folder, assn, home, segment):
+    """The day page for a path segment like '04-15'; 404 for any other segment."""
+    m = DAY_RE.fullmatch(segment)
+    if not m or not (1 <= int(m[1]) <= 12 and 1 <= int(m[2]) <= 31):
+        return _not_found()
+    return _day(folder, assn, home, int(m[1]), int(m[2]))
+
+
 def _season_pages(folder, assn, home, rest):
-    """The story, preview, awards, replay and team pages read from a season folder, linked under home. rest is the
-    path after the season's front page; None when it is none of those pages."""
+    """The story, preview, awards, replay, team and day pages read from a season folder, linked under home. rest is
+    the path after the season's front page; None when it is none of those pages."""
+    if len(rest) == 2 and rest[0] == 'day':
+        return _day_route(folder, assn, home, rest[1])
     if len(rest) == 1 and KEY_RE.fullmatch(rest[0]):
         return _story(folder, assn, rest[0], home)
     if len(rest) == 1 and rest[0] in ('preview', 'awards'):
