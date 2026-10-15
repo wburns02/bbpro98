@@ -225,6 +225,24 @@ def test_scouting_writes_one_report_per_team_and_a_rescan_writes_nothing(world, 
     assert reads == []                                         # every team has its report: the PYR is not read
 
 
+def test_scouting_ages_from_the_season_year(world, monkeypatch):
+    """A career league keeps its name while its season moves on: the ages come from season_year when it is an int."""
+    gd, data, st = world
+    (gd / 'Assn' / '30L1998.PYR').write_bytes(b'pyr')
+    monkeypatch.setattr(gamedata, 'players', lambda path: SCOUT_PLAYERS)
+    named(monkeypatch, '1997 Test', season_year=1998)
+    watch.Watcher(str(gd), str(data), None, None, log=lambda s: None).scan()
+    ash = json.loads((data / '30L1998' / 'scout' / '1.json').read_text())
+    assert ash['roster']['hitters'][0]['age'] == 28            # 1998 - 1970
+    assert ash['facts']['association'] == '1997 Test'
+    (data / '30L1998' / 'scout' / '1.json').unlink()
+    (data / '30L1998' / 'scout' / '2.json').unlink()
+    named(monkeypatch, '1997 Test', season_year=None)
+    watch.Watcher(str(gd), str(data), None, None, log=lambda s: None).scan()
+    ash = json.loads((data / '30L1998' / 'scout' / '1.json').read_text())
+    assert ash['roster']['hitters'][0]['age'] == 27            # year_of('1997 Test')
+
+
 def test_no_scouting_without_a_pyr(world, monkeypatch):
     gd, data, st = world
     reads = []
