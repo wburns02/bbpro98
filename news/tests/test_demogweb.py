@@ -66,7 +66,8 @@ def test_league_reads_again_when_a_file_or_the_year_changes(lg):
 
 
 def test_league_error_gives_none_and_is_not_retried(lg):
-    for err in (OSError('gone'), ValueError('bad')):
+    import struct
+    for err in (OSError('gone'), ValueError('bad'), struct.error('torn'), KeyError('po'), IndexError('rec')):
         lg['w'].league_cache.clear()
         lg['calls'].clear()
         lg['raise'] = err
