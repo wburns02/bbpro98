@@ -40,6 +40,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import bracket    # noqa: E402
 import contracts  # noqa: E402
 import feed      # noqa: E402
+import focus     # noqa: E402
 import gamedata  # noqa: E402
 import history   # noqa: E402
 import hive      # noqa: E402
@@ -481,6 +482,10 @@ class Watcher:
         if not todo:
             return
         players = gamedata.players(pyr)
+        try:
+            births = focus.births(pyr)          # the birth serials the scouting hint reads; without them, no hint
+        except (OSError, ValueError):
+            births = None
         last = gamedata.season_lines(dat, scope=3) if dat else {'bat': {}, 'pit': {}}
         year = assoc.get('season_year')
         if type(year) is not int:
@@ -501,7 +506,7 @@ class Watcher:
                 piece = dict(scout.template(facts), source='template', reason='off')
             write_json(os.path.join(out, 'scout', '%d.json' % tid),
                        dict(piece, kind='scout', tid=tid, abbrev=team['abbrev'], team=team['name'], facts=facts,
-                            roster=scout.roster(assoc, tid, players, year), created=now_iso()))
+                            roster=scout.roster(assoc, tid, players, year, births), created=now_iso()))
             self.log('%s scout %s (%s)' % (stem, team['abbrev'], piece['source']))
         self.scouting_open.discard(stem)
 

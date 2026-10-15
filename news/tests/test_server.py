@@ -693,13 +693,37 @@ def test_team_page_has_the_story_layout_and_the_roster_tables(scouted):
     assert ('<th class="t">Player</th><th class="t">Pos</th><th class="t">B/T</th><th>Age</th><th>Contact</th>'
             '<th>Power</th><th>Speed</th><th>Field</th>') in html
     assert ('<tr><td class="t">Ann Hart</td><td class="t">CF</td><td class="t">L/L</td><td>32</td><td>80</td>'
-            '<td>50</td><td>80</td><td>60</td></tr>') in html
+            '<td>50</td><td>80</td><td>60</td><td class="t"></td></tr>') in html
     assert ('<tr><td class="t">Bo Lee</td><td class="t">C</td><td class="t">R/R</td><td></td><td>50</td><td>50</td>'
-            '<td>50</td><td>50</td></tr>') in html
+            '<td>50</td><td>50</td><td class="t"></td></tr>') in html
     assert ('<th class="t">Player</th><th class="t">B/T</th><th>Age</th><th>Control</th><th>Strikeout</th>'
             '<th>Stamina</th><th>Field</th>') in html
     assert ('<tr><td class="t">Cy Ace</td><td class="t">R/L</td><td>27</td><td>75</td><td>80</td><td>70</td>'
-            '<td>40</td></tr>') in html
+            '<td>40</td><td class="t"></td></tr>') in html
+
+
+def test_team_page_roster_tables_end_in_an_aging_column(scouted):
+    rec = scout_file(5, 'Elm Green')
+    rec['roster']['hitters'][0]['arc'] = 'ages well, gentle decline'
+    rec['roster']['pitchers'][0]['arc'] = 'early decline risk'
+    write(scouted.root / '30L1998' / 'scout' / '5.json', rec)
+    html = scouted.get('/news/30L1998/team/5')[2].decode()
+    assert '<th>Field</th><th class="t">Aging</th></tr></thead>' in html
+    assert html.count('<th class="t">Aging</th>') == 2
+    assert ('<td>50</td><td>80</td><td>60</td><td class="t">ages well, gentle decline</td></tr>') in html
+    assert '<td>70</td><td>40</td><td class="t">early decline risk</td></tr>' in html
+    assert '<td>50</td><td>50</td><td class="t"></td></tr>' in html             # Bo Lee: no hint, an empty cell
+
+
+def test_team_page_escapes_the_aging_hint(site):
+    seed(site.root)
+    rec = scout_file(3, 'Cut')
+    rec['roster']['hitters'][0]['arc'] = '<script>x</script>'
+    rec['roster']['pitchers'][0]['arc'] = '"a" & b'
+    write(site.root / '30L1998' / 'scout' / '3.json', rec)
+    html = site.get('/news/30L1998/team/3')[2].decode()
+    assert '<script>' not in html
+    assert '&lt;script&gt;x&lt;/script&gt;' in html and '&quot;a&quot; &amp; b' in html
 
 
 def test_team_page_escapes_every_value(site):

@@ -8,6 +8,7 @@ import sys
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import arc       # noqa: E402
 import gamedata  # noqa: E402
 import hive      # noqa: E402
 import recap     # noqa: E402
@@ -164,15 +165,40 @@ def test_roster_orders_hitters_by_position_then_name_and_pitchers_by_grades():
 def test_roster_rows_are_graded_and_aged_and_skip_players_not_given():
     r = scout.roster(world(), 1, PLAYERS, 1998)
     assert r['hitters'][0] == {'pid': 104, 'name': 'Dee Moss', 'pos': 'C', 'hand': 'R/R', 'age': 32, 'contact': 20,
-                               'power': 20, 'speed': 20, 'fielding': 20}
+                               'power': 20, 'speed': 20, 'fielding': 20, 'arc': None}
     assert r['hitters'][5] == {'pid': 101, 'name': 'Ann Hart', 'pos': 'CF', 'hand': 'L/L', 'age': 32, 'contact': 80,
-                               'power': 50, 'speed': 80, 'fielding': 20}
+                               'power': 50, 'speed': 80, 'fielding': 20, 'arc': None}
     assert r['hitters'][3]['hand'] == '?/R'                  # Cal Ortiz: no bats code
     assert r['hitters'][7]['hand'] == ''                     # Hub Zane: neither side known
     assert r['pitchers'][0] == {'pid': 201, 'name': 'Ivy Cole', 'hand': 'R/L', 'age': 32, 'control': 80,
-                                'strikeout': 80, 'stamina': 80, 'fielding': 20}
+                                'strikeout': 80, 'stamina': 80, 'fielding': 20, 'arc': None}
     assert r['pitchers'][3]['age'] is None                   # Kim Eve: no birth year
     assert 301 not in [row['pid'] for row in r['hitters'] + r['pitchers']]     # Birch's player
+
+
+def test_roster_rows_carry_the_aging_hint_from_the_birth_serials_when_given():
+    births = {101: BORN_1966, 201: BORN_1966, 202: BORN_1970, 102: 0}
+    r = scout.roster(world(), 1, PLAYERS, 1998, births)
+    rows = {row['pid']: row for row in r['hitters'] + r['pitchers']}
+    assert rows[101]['arc'] == 'ages well'                  # trait (2, 101), age 32
+    assert rows[201]['arc'] == 'early decline risk'         # trait (-3, 89), age 32
+    assert rows[202]['arc'] == arc.player_hint(202, BORN_1970, 1998) and rows[202]['age'] == 32
+    assert rows[102]['arc'] is None                         # serial 0 is not a date
+    assert rows[103]['arc'] is None                         # not in births
+    assert scout.roster(world(), 1, PLAYERS, 1997, births)['hitters'][5]['arc'] == 'ages well'     # 1966: 31
+
+
+def test_roster_hint_is_none_for_a_player_scouts_cannot_read_yet_and_without_births():
+    births = {101: BORN_1970, 201: BORN_1970}
+    young = {row['pid']: row for row in scout.roster(world(), 1, PLAYERS, 1997, births)['hitters']}
+    assert young[101]['arc'] is None                        # born 1970, 27 in 1997
+    rows = scout.roster(world(), 1, PLAYERS, 1998)['hitters'] + scout.roster(world(), 1, PLAYERS, 1998, None)['hitters']
+    assert all(row['arc'] is None for row in rows)
+
+
+def test_team_facts_do_not_carry_the_aging_hint():
+    f = scout.team_facts(world(), 1, PLAYERS, LAST, 1998)
+    assert all('arc' not in row for row in f['hitters'] + f['pitchers'])
 
 
 def test_team_facts_picks_the_best_hitters_and_pitchers_and_their_last_season():
