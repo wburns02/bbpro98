@@ -57,6 +57,9 @@ ROOKIE_PLAYERS = {100: league_player('Al Winner', 'RF', 1970), 200: league_playe
 def rookie_world(world, monkeypatch):
     """world, with a PYR whose players are st['players'] (the two on the rosters), and a pass per season."""
     gd, data, st = world
+    # These tests count PYR reads. The pieces that wait for settled game files (contracts, moves) read the PYR once it
+    # is SETTLE seconds old, which a slow run reaches: keep every file young so only the rookie class reads.
+    monkeypatch.setattr(watch, 'SETTLE', float('inf'))
     (gd / 'Assn' / '30L1998.PYR').write_bytes(b'pyr')
     st['players'] = dict(ROOKIE_PLAYERS)
     st['reads'] = []
