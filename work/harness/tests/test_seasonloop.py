@@ -212,6 +212,37 @@ def test_postseason_champion_screen_sends_return_never_sims(tmp_path, monkeypatc
     assert '{"postseason": "champion"}' in out and '"postseason": "sim"' not in out
 
 
+def test_postseason_champion_screen_gets_one_retry_after_champ_held_looks(tmp_path, monkeypatch, capsys):
+    mock = _stub_screen(monkeypatch, _Poster(['champ'] * (1 + seasonloop.CHAMP_HELD) + ['complete']))
+    h = _H(tmp_path)
+    assert seasonloop.postseason(h, str(tmp_path), ENDLESS) is True
+    assert h.keys == [('key', 'Return')] * 2 and h.clicks == []
+    out = capsys.readouterr().out
+    assert '{"postseason": "champion_retry", "n": 1}' in out and '"postseason": "sim"' not in out
+
+
+def test_postseason_champion_screen_retries_at_most_three_times(tmp_path, monkeypatch, capsys):
+    mock = _stub_screen(monkeypatch, _Poster(['champ'] * (1 + 5 * seasonloop.CHAMP_HELD) + ['complete']))
+    h = _H(tmp_path)
+    assert seasonloop.postseason(h, str(tmp_path), ENDLESS) is True
+    assert h.keys == [('key', 'Return')] * 4 and h.clicks == []      # 1 + 3 retries, never more
+    out = capsys.readouterr().out
+    assert out.count('"champion_retry"') == 3
+    assert '{"postseason": "champion_retry", "n": 3}' in out and '"n": 4' not in out
+    assert '"postseason": "sim"' not in out
+
+
+def test_postseason_a_busy_look_resets_the_champion_retry_count(tmp_path, monkeypatch, capsys):
+    mock = _stub_screen(monkeypatch, _Poster(
+        ['champ'] + ['champ'] * (seasonloop.CHAMP_HELD - 1) + ['busy'] + ['champ'] * (seasonloop.CHAMP_HELD - 1)
+        + ['complete']))
+    h = _H(tmp_path)
+    assert seasonloop.postseason(h, str(tmp_path), ENDLESS) is True
+    assert h.keys == [('key', 'Return')] and h.clicks == []
+    out = capsys.readouterr().out
+    assert '"champion_retry"' not in out and '"postseason": "sim"' not in out
+
+
 def test_postseason_wrong_association_stops_before_any_input(tmp_path, monkeypatch, capsys):
     mock = _stub_screen(monkeypatch, _Poster(['sched'] * 3))
     h = _H(tmp_path)
