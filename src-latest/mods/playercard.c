@@ -43,7 +43,9 @@ static int probe;
 #define MAXLINES 40
 
 /* The two stats screens, told apart by the callback at mgr+0xc0 (FUN_68038ef0 writes it; nothing clears it when the
-   screen closes, so the probe logs the screen id global to show a stale one).
+   screen closes, so the probe logs the screen id global to show a stale one). It never goes stale in practice: every
+   League Management screen writes its own callback on open, and the EZShell main menu never reaches this hook
+   (bbcard.md, stale screen check).
    League: ctor 6800ccc0, object pointer in 0x6808d818, id 7 at +0 (6800cd5a), asn at +8 (6800cd73), row table at +0x3c,
    scroll group (short) at +0x694, body gadgets 9..0x12 and the widened 0x30..0x33 (ext).
    Team: ctor 680367e0, object pointer in 0x6808da24, id 0x14 at +0, asn at +8 (680368ba), row table at +0x14, scroll

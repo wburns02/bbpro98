@@ -209,3 +209,24 @@ Scratch game (:95, MLBPA97 copy, bridge from this worktree), `[playercard] probe
   6. Bridge stopped: the reader says "No answer from the mods bridge" after 20 s; Close opens the built-in card with the
      right lines. The press after the built-in card closes opens the next card.
 - Known: with the bridge stopped the built-in card only appears after the reader's 20 s timeout and a Close.
+
+## Stale screen check (orchestrator, in game, 2026-10-15)
+
+An audit flagged that the mgr+0xc0 callback and the screen object pointers are never cleared when a stats screen closes,
+so a later click might reach a freed League or Team Statistics object. Checked on the work copy with v1.0.3's
+bbfix.dll and playercard.dll, `[playercard] probe=1`, by opening League Statistics and then each other screen and
+clicking (status bar, so nothing changes):
+
+| Screen opened after League Statistics | mgr+0xc0 | probe screen | screen id global |
+|---|---|---|---|
+| League Standings | 6801FAD0 | none | 0xc |
+| Team News | 6802D540 | none | 0x10 |
+| Team Roster | 68031470 | none | 0x11 |
+| Team Schedule | 68034850 | none | 0x12 |
+| Training Allocations | 68035C20 | none | 0x13 |
+| Team Statistics | 68036EC0 | Team (live object) | 0x14 |
+
+Every screen writes its own callback when it opens, so the stats callback never outlives its screen; the Team object
+global reads 0 on every other screen. Main > Exit returns to the EZShell main menu, whose clicks never reach BBShell's
+gadget manager hook (eight clicks, no probe line). Association Schedule and History behaved the same with no card and
+no crash. Team > Data was not clicked (Ownership). Not reproduced; no change to the mod.
