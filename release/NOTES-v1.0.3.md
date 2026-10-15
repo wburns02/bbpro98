@@ -47,7 +47,8 @@ its text; they do not replace it.
   the harness prints them at every rollover and logs the champion of each season.
 - The harness's progress lines carry the lanestat verdict, so a stalled lane shows in its own log.
 - work/harness/runreport.py LOG prints one summary of a run log: demographics per rollover with the change in mean
-  age, champions, seasons, verdict counts and stops (`--json` for the raw summary).
+  age, champions, seasons, verdict counts and stops (`--json` for the raw summary). It also counts the offseason
+  steps and the sim outcomes (refused, draft ok, draft failed).
 - Developer scripts (hookab, simdays, sort_test, play_logged) were hardened.
 
 ## Known limits
