@@ -478,10 +478,64 @@ def _past_seasons(data_dir, assn):
     return [(d, _read_obj(past_dir / d / 'meta.json')) for d in found]
 
 
+def _champion_rows(data_dir, assn):
+    """One row per season with a postseason file, newest first: the current folder's first, then the archived ones.
+    Each row takes the World Series (the round whose 'round' is 3) for the runner-up and the series score."""
+    folders = [(data_dir / assn, '/news/%s/' % assn, None, '')]
+    folders += [(data_dir / assn / 'past' / d, '/news/%s/past/%s/' % (assn, d), d, _past_label(d))
+                for d, _ in _past_seasons(data_dir, assn)]
+    rows = []
+    for folder, home, d, fallback in folders:
+        rec = _season_file(folder, 'postseason')
+        if rec is None:
+            continue
+        facts = _d(rec.get('facts'))
+        season = facts.get('season')
+        champion = facts.get('champion')
+        champion = champion if isinstance(champion, str) and champion else None
+        runner_up, series = None, ''
+        for rnd in _dicts(facts.get('rounds')):
+            if rnd.get('round') == 3:
+                s = next(iter(_dicts(rnd.get('series')) or ()), None)
+                if s is not None:
+                    teams, wins = s.get('teams'), s.get('wins')
+                    if (isinstance(teams, list) and len(teams) == 2 and all(isinstance(t, str) for t in teams)
+                            and isinstance(wins, list) and len(wins) == 2 and all(type(w) is int for w in wins)):
+                        if champion == teams[0]:
+                            runner_up, series = teams[1], '%d-%d' % (wins[0], wins[1])
+                        elif champion == teams[1]:
+                            runner_up, series = teams[0], '%d-%d' % (wins[1], wins[0])
+                        else:
+                            series = '%d-%d' % (wins[0], wins[1])
+                break
+        rows.append({'home': home, 'season': season if type(season) is int else None,
+                     'label': str(season) if type(season) is int else (fallback or _text(season)),
+                     'champion': champion, 'runner_up': runner_up, 'series': series})
+    return rows
+
+
+def _champions(data_dir, assn):
+    """The season champions, one row per season with a postseason file, newest first. 404 without the meta.json."""
+    meta = _read_obj(data_dir / assn / 'meta.json')
+    if meta is None:
+        return _not_found()
+    name = _text(meta.get('name')) or assn
+    rows = [[_Markup('<a href="%spostseason">%s</a>' % (esc(r['home']), esc(r['label']))),
+             r['champion'] or 'In progress', r['runner_up'] or '', r['series']]
+            for r in _champion_rows(data_dir, assn)]
+    table = (_table('Champions', ('Season', 'Champion', 'Runner-up', 'Series'), rows, text=(0, 1, 2)) if rows
+             else '<p class="empty">No postseason played yet.</p>')
+    body = _masthead('Champions') + _league_nav(assn, {'association': name}) + '<section>%s</section>' % table
+    return _page_reply(200, '%s · Champions' % name, body)
+
+
 def _past_box(data_dir, assn):
-    """The Past seasons box for the side column: one link per archived season. '' for none."""
-    links = ['<li><a href="/news/%s/past/%s/">%s</a></li>' % (esc(assn), esc(d), esc(_past_label(d)))
-             for d, _ in _past_seasons(data_dir, assn)]
+    """The Past seasons box for the side column: Champions when some season has one, then one link per archived
+    season. '' for none."""
+    links = ['<li><a href="/news/%s/champions">Champions</a></li>' % esc(assn)] \
+        if any(r['champion'] for r in _champion_rows(data_dir, assn)) else []
+    links += ['<li><a href="/news/%s/past/%s/">%s</a></li>' % (esc(assn), esc(d), esc(_past_label(d)))
+              for d, _ in _past_seasons(data_dir, assn)]
     if not links:
         return ''
     return '<section class="past"><h2>Past seasons</h2><ul>%s</ul></section>' % ''.join(links)
@@ -1204,6 +1258,8 @@ def route(data_dir, target):
         return _transactions(data_dir, assn, qs)
     if len(rest) == 3 and rest[1] == 'moves' and NOTE_RE.fullmatch(rest[2]):
         return _move_note(data_dir, assn, rest[2])
+    if len(rest) == 2 and rest[1] == 'champions':
+        return _champions(data_dir, assn)
     if len(rest) == 2 and rest[1] == 'payroll':
         return _payroll(data_dir, assn)
     if len(rest) == 3 and rest[1] == 'payroll' and TID_RE.fullmatch(rest[2]) and str(int(rest[2])) == rest[2]:
