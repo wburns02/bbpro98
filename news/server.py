@@ -17,6 +17,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 
 import contracts
+import myplayer
 
 PER_PAGE = 30
 TOP = 3
@@ -457,8 +458,9 @@ def _association(data_dir, assn, qs):
     payroll = _payroll_box(data_dir, assn) if page == 1 else ''
     scouting = _scouting_links(folder, home) if page == 1 else ''
     league = _league_html(meta.get('league')) if page == 1 else ''
-    side = (moves + season + past + replay + payroll + scouting + league + _standings_html(meta.get('standings'))
-            + _leaders_html(meta.get('leaders')))
+    following = _following_box(data_dir, assn) if page == 1 else ''
+    side = (following + moves + season + past + replay + payroll + scouting + league
+            + _standings_html(meta.get('standings')) + _leaders_html(meta.get('leaders')))
     return _front_page('%s · League News' % name, _masthead(name, _through(meta)), _nav(),
                        _lead_html(folder, home, page, _coverage_html(meta)), side)
 
@@ -1393,6 +1395,92 @@ def _payroll_team(data_dir, assn, tid):
     return _page_reply(200, '%s · Payroll' % _text(row.get('name')), body)
 
 
+def _following_box(data_dir, assn):
+    """The Following box for the side column: a link to the page of each player follow.json names, in the order he was
+    followed. '' without a follow.json that names players."""
+    doc = myplayer.parse(_read_obj(data_dir / assn / 'follow.json'))
+    items = []
+    for p in doc['players']:
+        page = _d(_read_obj(data_dir / assn / 'player' / ('%d.json' % p['pid'])))
+        items.append('<li><a href="/news/%s/player/%d">%s</a></li>'
+                     % (esc(assn), p['pid'], esc(_text(page.get('name')) or 'Player %d' % p['pid'])))
+    if not items:
+        return ''
+    return '<section class="following"><h2>Following</h2><ul class="moves">%s</ul></section>' % ''.join(items)
+
+
+def _contract_text(contract):
+    """'Contract: $4.2M a year, 3 years, 2 left (Arbitration)'; 'No contract on file.' for anything but an object."""
+    if not isinstance(contract, dict):
+        return 'No contract on file.'
+    text = 'Contract: %s a year, %s years, %s left' % (_money(contract.get('salary')), _text(contract.get('years')),
+                                                       _text(contract.get('left')))
+    status = CONTRACT_STATUS.get(_text(contract.get('class')))
+    return text + (' (%s)' % status if status else '')
+
+
+def _player_facts(page):
+    """The lines under a player's masthead: arc, training plan, contract, season and career. Season and career lines are
+    left out when they have nothing to say."""
+    season, career = _d(page.get('season')), _d(page.get('career'))
+    lines = []
+    if _text(page.get('arc')):
+        lines.append('Career arc: %s' % _text(page.get('arc')))
+    if _text(page.get('plan')):
+        lines.append(_text(page.get('plan')))
+    lines.append(_contract_text(page.get('contract')))
+    for label, kind in (('Batting', 'bat'), ('Pitching', 'pit')):
+        text = myplayer.stat_text(season.get(kind), kind)
+        if text:
+            lines.append('%s this season: %s' % (label, text))
+    kind = _text(career.get('kind'))
+    text = myplayer.stat_text(career, kind) if kind in ('bat', 'pit') else ''
+    if text:
+        seasons = _int(career, 'seasons')
+        lines.append('Career, %d %s: %s' % (seasons, 'season' if seasons == 1 else 'seasons', text))
+    return lines
+
+
+def _game_rows(games):
+    """[date, opponent, line] for each game of a player's log, in the order stored. '@' leads the opponent of an away
+    game."""
+    return [[_date_text(g.get('month'), g.get('day')), ('' if g.get('home') else '@') + _text(g.get('opp')),
+             myplayer.line_text(g)] for g in _dicts(games)]
+
+
+def _player(data_dir, assn, pid):
+    """A followed player's page: his team, age, career arc, training plan, contract, season and career lines, the game
+    log, his milestones and the weekly columns, newest first. 404 without his player/<pid>.json."""
+    page = _read_obj(data_dir / assn / 'player' / ('%d.json' % pid))
+    if page is None:
+        return _not_found()
+    league = _text(_d(_read_obj(data_dir / assn / 'meta.json')).get('name')) or assn
+    name = _text(page.get('name')) or 'Player %d' % pid
+    age = _text(page.get('age'))
+    head = SEP.join(x for x in (_text(page.get('team')), 'Age %s' % age if age else '', _text(page.get('pos'))) if x)
+    facts = ''.join('<p>%s</p>' % esc(line) for line in _player_facts(page))
+    rows = _game_rows(page.get('games'))
+    log = (_table('Game log', ('Date', 'Opp', 'Line'), rows, text=(0, 1, 2)) if rows
+           else '<p class="empty">No games logged yet.</p>')
+    events = [ev for ev in _dicts(page.get('milestones')) if _move_text(ev)]
+    moves = ('<ul class="moves">%s</ul>' % ''.join(_move_html(data_dir / assn, assn, ev) for ev in events) if events
+             else '<p class="empty">No milestones or moves yet.</p>')
+    cols = []
+    for c in reversed(_dicts(page.get('columns'))):
+        through = c.get('through')
+        when = _date_text(*through) if isinstance(through, list) and len(through) == 2 else ''
+        cols.append('<article class="feed"><p class="kicker">%s</p>%s%s</article>'
+                    % (esc('Week through %s' % when if when else 'Weekly column'),
+                       _paras_html(_paragraphs(c.get('text'))), _byline_html(c)))
+    columns = ''.join(cols) or '<p class="empty">No weekly column yet. One is written after every 6 games.</p>'
+    body = (_masthead(name, head) + _league_nav(assn, {'association': league})
+            + '<section class="story-page">%s</section>' % facts
+            + '<section><h2>Game log</h2>%s</section>' % log
+            + '<section><h2>Milestones and moves</h2>%s</section>' % moves
+            + '<section><h2>Weekly columns</h2>%s</section>' % columns)
+    return _page_reply(200, '%s · %s' % (name, league), body)
+
+
 def _status(data_dir):
     budget = _read_obj(data_dir / 'budget.json') or {}
     limits = _read_obj(data_dir / 'limits.json') or {}
@@ -1562,6 +1650,8 @@ def route(data_dir, target):
         return _payroll(data_dir, assn)
     if len(rest) == 3 and rest[1] == 'payroll' and TID_RE.fullmatch(rest[2]) and str(int(rest[2])) == rest[2]:
         return _payroll_team(data_dir, assn, int(rest[2]))     # canonical numbers only: '02' is not team 2's page
+    if len(rest) == 3 and rest[1] == 'player' and PAGE_RE.fullmatch(rest[2]) and str(int(rest[2])) == rest[2]:
+        return _player(data_dir, assn, int(rest[2]))
     return _not_found()
 
 

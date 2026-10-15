@@ -575,3 +575,30 @@ def test_other_note_uses_the_season_when_nothing_is_archived():
         'Other: 1997 to 2002, seasons simmed before they were saved.'
     assert modbridge._other_note([], 2007) == FALLBACK
     assert modbridge._other_note(rows, None) == FALLBACK
+
+
+def test_the_picture_card_shows_whether_the_player_is_followed(pic):
+    """Following: no with a Follow link under the overview's links; after a follow, Following: yes and Unfollow. The
+    follow and unfollow routes answer with the picture card itself."""
+    ctx, spool, cards = pic
+    os.makedirs(os.path.join(ctx.data, 'TEST77'))
+    head, body = page(ctx, spool, BASE)
+    assert cards[-1]['body']['links'] == [('Player development', '/news/development/TEST77/p/100'),
+                                          ('Following: no', None), ('Follow', BASE + '/follow')]
+    assert BASE + '/follow' in [t for _, t in hots(head)]
+    assert 'Following: no' in body.split('\n')
+    head, body = page(ctx, spool, BASE + '/follow')
+    assert head['http'] == '200' and head['image'] == '1' and head['path'] == BASE
+    assert cards[-1]['body']['links'][1:] == [('Following: yes', None), ('Unfollow', BASE + '/unfollow')]
+    assert BASE + '/unfollow' in [t for _, t in hots(head)] and 'Following: yes' in body.split('\n')
+    head, body = page(ctx, spool, BASE + '/batting')                  # the tab pages are as they were
+    assert cards[-1]['body']['kind'] == 'table'
+    page(ctx, spool, BASE + '/unfollow')
+    assert cards[-1]['body']['links'][1:] == [('Following: no', None), ('Follow', BASE + '/follow')]
+
+
+def test_the_picture_card_follow_route_without_a_watcher_folder_is_a_409(pic):
+    ctx, spool, cards = pic
+    head, body = page(ctx, spool, BASE + '/follow')
+    assert head['http'] == '409' and 'image' not in head and not cards
+    assert body == 'The news watcher has not seen this association yet.'

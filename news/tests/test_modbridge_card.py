@@ -12,6 +12,7 @@ import types
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import focus       # noqa: E402
 import gamedata    # noqa: E402
 import modbridge   # noqa: E402
 from tests.test_modbridge import NAMES, ask, bridge, player, pyf_bytes, pyr_bytes, site   # noqa: E402,F401
@@ -77,7 +78,8 @@ def test_hitter_card_shows_now_and_peak_grades(card):
     ctx, spool, _ = card
     head, body = page(ctx, spool, '/news/card/TEST77/p/100')
     assert head == {'status': 'ok', 'http': '200', 'path': '/news/card/TEST77/p/100', 'title': 'Pat Doe (3B, 25)',
-                    'count': '1', 'link.0': 'Player development\t/news/development/TEST77/p/100'}
+                    'count': '2', 'link.0': 'Player development\t/news/development/TEST77/p/100',
+                    'link.1': 'Follow\t/news/card/TEST77/p/100/follow'}
     assert body.split('\n')[:3] == ['Pat Doe (3B, 25)', '=' * 16, '']
     assert 'Team: Reds' in body.split('\n') and 'Position: 3B' in body.split('\n') and 'Age: 25' in body.split('\n')
     assert has_line(body, r'Contact\s+60\s+70')
@@ -113,7 +115,8 @@ def test_the_card_has_no_news_and_no_association_link_without_a_watcher_folder(c
     ctx, spool, _ = card
     head, body = page(ctx, spool, '/news/card/TEST77/p/100')
     assert body.split('\n')[-2:] == ['News', 'No news yet.']
-    assert links_of(head) == [('Player development', '/news/development/TEST77/p/100')]
+    assert links_of(head) == [('Player development', '/news/development/TEST77/p/100'),
+                              ('Follow', '/news/card/TEST77/p/100/follow')]
 
 
 def watcher(ctx):
@@ -152,6 +155,7 @@ def test_news_lists_the_stories_and_moves_that_name_him_newest_first(card):
         ('New player: Pat Doe (3B), Reds', '/news/TEST77/moves'),
         ('Player development', '/news/development/TEST77/p/100'),
         ('Association news', '/news/TEST77/'),
+        ('Follow', '/news/card/TEST77/p/100/follow'),
     ]
     lines = body.split('\n')
     assert lines[-4:] == ['News', '- Signed: Pat Doe (3B), Free agents to Reds', '- Pat Doe homers twice',
@@ -168,10 +172,11 @@ def test_each_card_lists_only_the_news_that_names_its_player(card):
         ('Bo Bee strikes out nine', '/news/TEST77/' + OTHER),
         ('Player development', '/news/development/TEST77/p/205'),
         ('Association news', '/news/TEST77/'),
+        ('Follow', '/news/card/TEST77/p/205/follow'),
     ]
     head, body = page(ctx, spool, '/news/card/TEST77/p/300')
     assert body.split('\n')[-2:] == ['News', 'No news yet.']
-    assert [label for label, _ in links_of(head)] == ['Player development', 'Association news']
+    assert [label for label, _ in links_of(head)] == ['Player development', 'Association news', 'Follow']
 
 
 @pytest.mark.parametrize('path, text', [
@@ -452,3 +457,158 @@ def test_the_card_picture_shows_the_badge_in_its_header_and_in_its_text(card, mo
     hall(ctx, '{"torn')
     head, body = page(ctx, spool, '/news/card/TEST77/p/100')
     assert head['image'] == '1' and 'Hall of Fame' not in body and 'Hall of Fame' not in cards[-1]['header'][1]
+
+
+# My Player: Follow / Unfollow on the card (follow.json in the watcher's folder)
+
+FOLLOW = '/news/card/TEST77/p/%d/follow'
+UNFOLLOW = '/news/card/TEST77/p/%d/unfollow'
+BASE_100 = '/news/card/TEST77/p/100'
+
+
+def follow_file(ctx):
+    with open(os.path.join(ctx.data, 'TEST77', 'follow.json'), encoding='utf-8') as fh:
+        return json.load(fh)
+
+
+def watched(ctx):
+    os.makedirs(os.path.join(ctx.data, 'TEST77'), exist_ok=True)
+
+
+def births_of(game):
+    return focus.births(str(game / 'Assn' / 'TEST77.PYR'))
+
+
+def test_the_card_says_following_no_and_links_to_follow(card):
+    ctx, spool, _ = card
+    head, body = page(ctx, spool, BASE_100)
+    lines = body.split('\n')
+    assert 'Following: no' in lines and 'Following: yes' not in lines
+    assert lines.index('Following: no') == lines.index('No focus.') + 1
+    assert links_of(head)[-1] == ('Follow', FOLLOW % 100)
+
+
+def test_following_writes_follow_json_and_the_card_shows_it(card):
+    ctx, spool, game = card
+    watched(ctx)
+    head, body = page(ctx, spool, FOLLOW % 100)
+    assert head['status'] == 'ok' and head['http'] == '200' and head['path'] == BASE_100
+    assert head['title'] == 'Pat Doe (3B, 25)' and has_line(body, 'Following: yes')
+    assert links_of(head)[-1] == ('Unfollow', UNFOLLOW % 100)
+    doc = follow_file(ctx)
+    assert doc['kind'] == 'follow' and len(doc['players']) == 1
+    assert (doc['players'][0]['pid'], doc['players'][0]['birth']) == (100, births_of(game)[100])
+    assert re.fullmatch(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d', doc['players'][0]['since'])
+    head, body = page(ctx, spool, BASE_100)                      # a later visit to the card shows it too
+    assert has_line(body, 'Following: yes') and links_of(head)[-1][0] == 'Unfollow'
+    assert has_line(page(ctx, spool, '/news/card/TEST77/p/205')[1], 'Following: no')     # another player is not
+
+
+def test_unfollowing_removes_him_and_leaves_the_others(card):
+    ctx, spool, _ = card
+    watched(ctx)
+    page(ctx, spool, FOLLOW % 100)
+    page(ctx, spool, FOLLOW % 205)
+    head, body = page(ctx, spool, UNFOLLOW % 100)
+    assert head['http'] == '200' and head['path'] == BASE_100 and has_line(body, 'Following: no')
+    assert links_of(head)[-1] == ('Follow', FOLLOW % 100)
+    assert [p['pid'] for p in follow_file(ctx)['players']] == [205]
+    page(ctx, spool, UNFOLLOW % 100)                              # not followed: nothing to do, nothing breaks
+    assert [p['pid'] for p in follow_file(ctx)['players']] == [205]
+
+
+def test_following_twice_keeps_one_entry_with_the_first_time(card):
+    ctx, spool, _ = card
+    watched(ctx)
+    page(ctx, spool, FOLLOW % 100)
+    first = follow_file(ctx)
+    page(ctx, spool, FOLLOW % 100)
+    assert follow_file(ctx) == first
+
+
+def test_a_fourth_follow_replaces_the_oldest(card):
+    ctx, spool, game = card
+    watched(ctx)
+    (game / 'Assn' / 'TEST77.PYR').write_bytes(pyr_bytes(RECORDS + [card_record(301, 'Four', 'Th', 5, 1950),
+                                                                    card_record(302, 'Five', 'Th', 5, 1951)]))
+    for pid in (100, 205, 300, 301):
+        page(ctx, spool, FOLLOW % pid)
+    assert [p['pid'] for p in follow_file(ctx)['players']] == [205, 300, 301]
+    assert has_line(page(ctx, spool, BASE_100)[1], 'Following: no')
+    assert has_line(page(ctx, spool, '/news/card/TEST77/p/301')[1], 'Following: yes')
+
+
+def test_follow_without_a_watcher_folder_is_a_409_and_writes_nothing(card):
+    ctx, spool, _ = card
+    head, body = page(ctx, spool, FOLLOW % 100)
+    assert head['status'] == 'error' and head['http'] == '409' and head['path'] == FOLLOW % 100
+    assert body == 'The news watcher has not seen this association yet.'
+    assert not os.path.exists(os.path.join(ctx.data, 'TEST77'))
+    head, body = page(ctx, spool, UNFOLLOW % 100)
+    assert head['http'] == '409' and body == 'The news watcher has not seen this association yet.'
+    assert os.listdir(ctx.data) == []
+
+
+@pytest.mark.parametrize('path', ['/news/card/NOPE/p/100/follow', '/news/card/TEST77/p/777/follow',
+                                  '/news/card/TEST77/p/0/unfollow'])
+def test_follow_for_no_such_association_or_player_is_a_404(card, path):
+    ctx, spool, _ = card
+    watched(ctx)
+    head, body = page(ctx, spool, path)
+    assert head['http'] == '404' and body == NO_SUCH
+    assert not os.path.exists(os.path.join(ctx.data, 'TEST77', 'follow.json'))
+
+
+@pytest.mark.parametrize('path', ['/news/card/TEST77/p/100/follow/', '/news/card/TEST77/p/100/follow/3',
+                                  '/news/card/TEST77/p/100/FOLLOW', '/news/card/TEST77/p/100/followx',
+                                  '/news/card/TEST77/p/100/follow/../x', '/news/card/TEST77/p/100000/follow',
+                                  '/news/card/TEST77/follow', '/news/card/../p/100/follow'])
+def test_other_follow_paths_are_not_found_and_write_nothing(card, path):
+    ctx, spool, _ = card
+    watched(ctx)
+    head, body = page(ctx, spool, path)
+    assert head['http'] == '404' and 'Following' not in body
+    assert not os.path.exists(os.path.join(ctx.data, 'TEST77', 'follow.json'))
+
+
+def test_a_follow_for_a_player_whose_id_was_reused_is_not_shown_as_followed(card):
+    ctx, spool, game = card
+    watched(ctx)
+    with open(os.path.join(ctx.data, 'TEST77', 'follow.json'), 'w', encoding='utf-8') as fh:
+        json.dump({'kind': 'follow', 'players': [{'pid': 100, 'birth': births_of(game)[100] + 1, 'since': 'x'}]}, fh)
+    head, body = page(ctx, spool, BASE_100)
+    assert has_line(body, 'Following: no') and links_of(head)[-1][0] == 'Follow'
+    page(ctx, spool, FOLLOW % 100)                                # following him now replaces the stale entry
+    assert [(p['pid'], p['birth']) for p in follow_file(ctx)['players']] == [(100, births_of(game)[100])]
+
+
+@pytest.mark.parametrize('text', ['junk', '[1]', '{"kind": "other", "players": [{"pid": 100, "birth": null}]}'])
+def test_a_bad_follow_file_reads_as_nobody_followed_and_is_replaced_on_follow(card, text):
+    ctx, spool, _ = card
+    watched(ctx)
+    path = os.path.join(ctx.data, 'TEST77', 'follow.json')
+    with open(path, 'w', encoding='utf-8') as fh:
+        fh.write(text)
+    assert has_line(page(ctx, spool, BASE_100)[1], 'Following: no')
+    assert has_line(page(ctx, spool, FOLLOW % 100)[1], 'Following: yes')
+    assert [p['pid'] for p in follow_file(ctx)['players']] == [100]
+
+
+def test_follow_writes_into_the_folder_found_without_regard_to_case(card):
+    ctx, spool, _ = card
+    os.makedirs(os.path.join(ctx.data, 'test77'))
+    assert page(ctx, spool, FOLLOW % 100)[0]['http'] == '200'
+    assert os.path.exists(os.path.join(ctx.data, 'test77', 'follow.json'))
+    assert not os.path.exists(os.path.join(ctx.data, 'TEST77'))
+
+
+def test_the_follow_state_does_not_disturb_the_news_and_focus_lines(card):
+    ctx, spool, _ = card
+    watcher(ctx)
+    page(ctx, spool, FOLLOW % 100)
+    head, body = page(ctx, spool, BASE_100)
+    lines = body.split('\n')
+    assert lines[-4:] == ['News', '- Signed: Pat Doe (3B), Free agents to Reds', '- Pat Doe homers twice',
+                          '- New player: Pat Doe (3B), Reds']
+    assert lines[lines.index('No focus.') + 1] == 'Following: yes'
+    assert [label for label, _ in links_of(head)][-3:] == ['Player development', 'Association news', 'Unfollow']

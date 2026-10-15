@@ -14,11 +14,14 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import feed      # noqa: E402
 import contracts  # noqa: E402
+import arc       # noqa: E402
 import draft     # noqa: E402
+import focus     # noqa: E402
 import fog       # noqa: E402
 import gamedata  # noqa: E402
 import history   # noqa: E402
 import hive      # noqa: E402
+import myplayer  # noqa: E402
 import recap     # noqa: E402
 import records   # noqa: E402
 import watch     # noqa: E402
@@ -2142,3 +2145,388 @@ def test_a_malformed_old_draft_file_is_left_alone(draft_world):
     assert sorted(os.listdir(out / 'draft')) == ['1990.json', '1991.json', '1992.json', '1993.json', 'notes.json']
     assert json.loads((out / 'draft' / '1990.json').read_text()) == {'kept': True}
     assert st['draft_reads'] == [] and not any('revisited' in s for s in st['lines'])
+
+
+# My Player (myplayer.py): follow.json, the game log recaps() keeps, and the page data and columns follow_piece writes
+
+H10, H20 = '30L1998.H10', '30L1998.H20'
+BAT_LINE = {'g': 20, 'ab': 80, 'h': 24, 'hr': 3, 'rbi': 9, 'sb': 1, 'w': 0, 'so': 0, 'sv': 0, 'outs': 0, 'er': 0}
+
+
+def follow(data, *entries):
+    """follow.json of 30L1998 naming (pid, birth) entries."""
+    path = data / '30L1998' / 'follow.json'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({'kind': 'follow', 'players': [{'pid': p, 'birth': b, 'since': 'x'} for p, b in entries]}))
+
+
+def player_file(data, pid, suffix=''):
+    path = data / '30L1998' / 'player' / ('%d%s.json' % (pid, suffix))
+    return json.loads(path.read_text()) if path.exists() else None
+
+
+def quiet(w, gd=None, clear=True):
+    """w.scan() that fails on an exception the scan logs instead of raising."""
+    if clear:
+        w.seen.clear()
+    w.scan()
+    bad = [line for line in w.logged if 'Error' in line or 'Exception' in line]
+    assert not bad, bad
+
+
+def follower(gd, data, complete=None, budget=None):
+    logged = []
+    w = watch.Watcher(str(gd), str(data), budget, complete, log=logged.append,
+                      salary_table=str(data.parent / 'no-table.json'))
+    w.logged = logged
+    return w
+
+
+def test_a_followed_players_games_go_to_his_log_once_each(world):
+    gd, data, st = world
+    (gd / 'Assn' / '30L1998.PYR').write_bytes(pyr_bytes([player(100, 'Al', 'Winner', pos=9), player(200, 'Bo', 'Loser', pos=1)]))
+    follow(data, (100, None), (200, None), (300, None))
+    st['boxfile'](H10, {'away': side(1, 3, 100), 'home': side(2, 1, 200)})
+    st['boxfile'](H20, {'away': side(2, 0, 200), 'home': side(1, 5, 100)})
+    w = follower(gd, data)
+    quiet(w)
+    al = player_file(data, 100)
+    assert (al['pid'], al['name'], al['season_year'], al['columns']) == (100, 'Al Winner', None, [])
+    assert [(g['month'], g['day'], g['slot'], g['opp'], g['home']) for g in al['games']] == [
+        (4, 1, 0, 'BIR', False), (4, 2, 0, 'BIR', True)]
+    assert al['games'][0]['bat'] == side(1, 3, 100)['batting'][0] and al['games'][0]['pit']['outs'] == 27
+    bo = player_file(data, 200)
+    assert [(g['day'], g['opp'], g['home']) for g in bo['games']] == [(1, 'ASH', True), (2, 'ASH', False)]
+    assert player_file(data, 300) is None                          # followed, but never in a box score
+    assert al['updated']
+    quiet(w)
+    assert player_file(data, 100)['games'] == al['games'] and player_file(data, 200)['games'] == bo['games']
+
+
+def test_a_game_already_in_the_log_is_not_added_again(world):
+    gd, data, st = world
+    follow(data, (100, None))
+    old = {'month': 4, 'day': 1, 'slot': 0, 'opp': 'OLD', 'home': True, 'bat': None, 'pit': None}
+    (data / '30L1998' / 'player').mkdir(parents=True)
+    (data / '30L1998' / 'player' / '100.json').write_text(json.dumps(
+        {'pid': 100, 'name': 'Al Winner', 'season_year': None, 'games': [old], 'columns': []}))
+    st['boxfile'](H10, {'away': side(1, 3, 100), 'home': side(2, 1, 200)})
+    st['boxfile'](H20, {'away': side(2, 0, 200), 'home': side(1, 5, 100)})
+    quiet(follower(gd, data))
+    assert [(g['day'], g['opp']) for g in player_file(data, 100)['games']] == [(1, 'OLD'), (2, 'BIR')]
+
+
+def test_no_follow_json_writes_no_player_files(world):
+    gd, data, st = world
+    st['boxfile'](H10, {'away': side(1, 3, 100), 'home': side(2, 1, 200)})
+    quiet(follower(gd, data))
+    assert not (data / '30L1998' / 'player').exists() and not (data / '30L1998' / 'follow.json').exists()
+    assert len(stories(data)) == 1
+
+
+@pytest.mark.parametrize('text', ['junk', '[1]', '{"kind": "other", "players": [{"pid": 100}]}', '{"kind": "follow"}'])
+def test_a_bad_follow_json_follows_nobody(world, text):
+    gd, data, st = world
+    (data / '30L1998').mkdir(parents=True)
+    (data / '30L1998' / 'follow.json').write_text(text)
+    st['boxfile'](H10, {'away': side(1, 3, 100), 'home': side(2, 1, 200)})
+    quiet(follower(gd, data))
+    assert not (data / '30L1998' / 'player').exists() and len(stories(data)) == 1
+
+
+def test_the_stories_are_the_same_with_and_without_a_followed_player(world, tmp_path):
+    gd, data, st = world
+    st['boxfile'](H10, {'away': side(1, 3, 100), 'home': side(2, 1, 200)})
+    st['boxfile'](H20, {'away': side(2, 0, 200), 'home': side(1, 5, 100)})
+    quiet(follower(gd, data))
+    other = tmp_path / 'other'
+    follow(other, (100, None))
+    quiet(follower(gd, other))
+    for sub in ('recaps', 'feed'):
+        for f in os.listdir(data / '30L1998' / sub):
+            a = json.loads((data / '30L1998' / sub / f).read_text())
+            b = json.loads((other / '30L1998' / sub / f).read_text())
+            assert {k: v for k, v in a.items() if k != 'created'} == {k: v for k, v in b.items() if k != 'created'}
+
+
+def test_a_new_season_starts_a_new_log_and_moves_the_old_one_aside(world, monkeypatch):
+    gd, data, st = world
+    named(monkeypatch, '1998 Test', season_year=1998)
+    follow(data, (100, None))
+    st['boxfile'](H10, {'away': side(1, 3, 100), 'home': side(2, 1, 200)})
+    w = follower(gd, data)
+    quiet(w)
+    first = player_file(data, 100)
+    assert first['season_year'] == 1998 and [g['day'] for g in first['games']] == [1]
+    named(monkeypatch, '1998 Test', season_year=1999)
+    st['games'] = [game(5, 0, 1, 2, 2, 0)]
+    st['boxfile']('30L1998.H50', {'away': side(1, 2, 100), 'home': side(2, 0, 200)})
+    quiet(w)
+    assert player_file(data, 100, '-1998')['games'] == first['games']
+    now = player_file(data, 100)
+    assert now['season_year'] == 1999 and [g['day'] for g in now['games']] == [5] and now['columns'] == []
+
+
+def test_a_follow_whose_birth_the_pyr_contradicts_is_ignored(world):
+    gd, data, st = world
+    pyr = gd / 'Assn' / '30L1998.PYR'
+    pyr.write_bytes(pyr_bytes([player(100, 'Al', 'Winner', pos=9, born=1970), player(200, 'Bo', 'Loser', pos=1, born=1975)]))
+    births = focus.births(str(pyr))
+    follow(data, (100, births[100] + 1), (200, births[200]))        # the id 100 was reused by a new player
+    st['boxfile'](H10, {'away': side(1, 3, 100), 'home': side(2, 1, 200)})
+    quiet(follower(gd, data))
+    assert player_file(data, 100) is None and [g['day'] for g in player_file(data, 200)['games']] == [1]
+
+
+# the page data and the weekly column (follow_piece called as a scan would)
+
+def fp_games(start=4, n=6, pid=100, **bat):
+    return [{'month': 4, 'day': start + i, 'slot': 0, 'opp': 'BIR', 'home': True,
+             'bat': dict({'pid': pid, 'ab': 4, 'h': 1, 'hr': 0, 'rbi': 1}, **bat), 'pit': None} for i in range(n)]
+
+
+@pytest.fixture
+def fworld(world, monkeypatch):
+    """world with a real PYR (Al Winner 100 RF, Cy Young 101 P on no roster, Bo Loser 200 P), season 1998, and the
+    association's assoc dict: Ash is 2-0."""
+    gd, data, st = world
+    named(monkeypatch, '1998 Test', season_year=1998)
+    pyr = gd / 'Assn' / '30L1998.PYR'
+    pyr.write_bytes(pyr_bytes([player(100, 'Al', 'Winner', pos=9, born=1970), player(101, 'Cy', 'Young', pos=1, born=1960),
+                               player(200, 'Bo', 'Loser', pos=1, born=1975)]))
+    st['births'] = focus.births(str(pyr))
+    st['pyr'] = str(pyr)
+    st['assoc'] = {'name': '1998 Test', 'season_year': 1998, 'teams': TEAMS,
+                   'games': [game(1, 0, 1, 2, 3, 1), game(2, 0, 2, 1, 0, 5)]}
+    st['lines'] = {'bat': {100: dict(BAT_LINE)}, 'pit': {}}
+    return gd, data, st
+
+
+def write_page(data, pid, games, columns=(), name='Al Winner', year=1998):
+    path = data / '30L1998' / 'player' / ('%d.json' % pid)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({'pid': pid, 'name': name, 'season_year': year, 'games': games, 'columns': list(columns)}))
+
+
+def run_piece(w, data, st):
+    w.follow_piece(str(data / '30L1998'), st['assoc'], st['lines'], st['pyr'])
+    bad = [line for line in w.logged if 'Error' in line]
+    assert not bad, bad
+
+
+def test_the_page_data_of_a_followed_hitter(fworld, monkeypatch):
+    gd, data, st = fworld
+    b = st['births']
+    follow(data, (100, b[100]), (200, b[200]), (101, b[101]))
+    (gd / 'Mods').mkdir()
+    (gd / 'Mods' / 'focus.txt').write_text(focus.format([
+        {'pid': 100, 'birth': b[100], 'kind': 'power', 'assn': '30L1998'},
+        {'pid': 200, 'birth': b[200] + 1, 'kind': 'control', 'assn': '30L1998'}]))      # 200's id was reused: no plan
+    out = data / '30L1998'
+    (out / 'moves').mkdir(parents=True)
+    (out / 'moves' / 'log.json').write_text(json.dumps({'events': (
+        [{'kind': 'new', 'pid': 100, 'name': 'Al Winner', 'n': i} for i in range(25)]
+        + [{'kind': 'signed', 'pid': 200, 'name': 'Bo Loser'}]), 'count': 26}))
+    (out / 'contracts.json').write_text(json.dumps({'kind': 'contracts', 'contracts': {
+        '100': {'salary': 4000000, 'years': 3, 'left': 2, 'team': 1, 'class': 'arb'}}}))
+    (gd / 'Assn' / '30L1998.PYF').write_bytes(pyf_bytes([101]))
+    w = follower(gd, data)
+    run_piece(w, data, st)
+    al = player_file(data, 100)
+    assert (al['pid'], al['name'], al['season_year'], al['games'], al['columns']) == (100, 'Al Winner', 1998, [], [])
+    assert (al['pos'], al['team'], al['age']) == ('RF', 'Ash', 28)
+    assert al['season'] == {'bat': BAT_LINE, 'pit': None}
+    assert al['career'] == dict({k: BAT_LINE.get(k, 0) for k in history.BAT_KEYS}, seasons=1, kind='bat')
+    assert al['contract'] == {'salary': 4000000, 'years': 3, 'left': 2, 'team': 1, 'class': 'arb'}
+    assert al['plan'] == 'Offseason training plan: power' and al['arc'] == arc.player_hint(100, b[100], 1998)
+    assert [e['n'] for e in al['milestones']] == list(range(24, 4, -1))
+    bo = player_file(data, 200)
+    assert (bo['pos'], bo['team'], bo['age'], bo['season'], bo['career'], bo['contract']) == (
+        'P', 'Birch', 23, {'bat': None, 'pit': None}, None, None)
+    assert bo['plan'] == 'No offseason plan set.' and bo['arc'] is None and [e['kind'] for e in bo['milestones']] == ['signed']
+    assert player_file(data, 101)['team'] == 'Free agent'
+    (gd / 'Assn' / '30L1998.PYF').write_bytes(pyf_bytes([]))
+    run_piece(w, data, st)
+    assert player_file(data, 101)['team'] == 'Retired'
+
+
+def test_the_career_is_the_archived_seasons_and_this_one(fworld):
+    gd, data, st = fworld
+    st['assoc']['season_year'] = 1999
+    follow(data, (100, st['births'][100]))
+    hist = data / '30L1998' / 'history'
+    hist.mkdir(parents=True)
+    old = dict({k: 0 for k in history.BAT_KEYS}, g=150, ab=500, h=150, hr=30, rbi=90)
+    (hist / '1998.json').write_text(json.dumps({'year': 1998, 'bat': {'100': old}, 'pit': {}, 'team': {}}))
+    run_piece(follower(gd, data), data, st)
+    career = player_file(data, 100)['career']
+    assert (career['kind'], career['seasons'], career['g'], career['ab'], career['h'], career['hr'], career['rbi']) == (
+        'bat', 2, 170, 580, 174, 33, 99)
+
+
+def test_a_missing_or_unreadable_pyr_writes_no_page(fworld):
+    gd, data, st = fworld
+    follow(data, (100, st['births'][100]))
+    w = follower(gd, data)
+    w.follow_piece(str(data / '30L1998'), st['assoc'], st['lines'], None)
+    assert player_file(data, 100) is None
+    (gd / 'Assn' / '30L1998.PYR').write_bytes(b'pyr')
+    w.follow_piece(str(data / '30L1998'), st['assoc'], st['lines'], st['pyr'])
+    assert player_file(data, 100) is None and any('follow' in line for line in w.logged)
+
+
+def test_the_page_is_not_rewritten_when_nothing_changed(fworld, monkeypatch):
+    gd, data, st = fworld
+    follow(data, (100, st['births'][100]))
+    ticks = iter(range(1, 100))
+    monkeypatch.setattr(watch, 'now_iso', lambda: 'T%d' % next(ticks))
+    w = follower(gd, data)
+    run_piece(w, data, st)
+    first = (data / '30L1998' / 'player' / '100.json').read_text()
+    run_piece(w, data, st)
+    assert (data / '30L1998' / 'player' / '100.json').read_text() == first
+    st['lines']['bat'][100]['hr'] = 4
+    run_piece(w, data, st)
+    assert player_file(data, 100)['season']['bat']['hr'] == 4 and player_file(data, 100)['updated'] != 'T1'
+
+
+def test_a_new_season_moves_the_page_of_the_old_one_aside(fworld):
+    gd, data, st = fworld
+    follow(data, (100, st['births'][100]))
+    write_page(data, 100, fp_games(n=3), year=1997)
+    run_piece(follower(gd, data), data, st)
+    assert len(player_file(data, 100, '-1997')['games']) == 3
+    assert player_file(data, 100)['season_year'] == 1998 and player_file(data, 100)['games'] == []
+
+
+def test_the_weekly_column_comes_after_six_games_and_the_template_text_is_exact(fworld):
+    gd, data, st = fworld
+    follow(data, (100, st['births'][100]))
+    write_page(data, 100, fp_games(n=5))
+    w = follower(gd, data)
+    run_piece(w, data, st)
+    assert player_file(data, 100)['columns'] == []                  # five games: not yet
+    write_page(data, 100, fp_games(n=6))
+    run_piece(w, data, st)
+    (col,) = player_file(data, 100)['columns']
+    assert col['through'] == [4, 9] and col['source'] == 'template'
+    assert col['text'] == ("Al Winner went 6 for 24 with 0 home runs and 6 RBI over his team's last 6 games. Al Winner is "
+                           'hitting .300 with 3 home runs and 9 RBI on the season.')
+    assert col['facts'] == myplayer.week_facts('Al Winner', fp_games(n=6), {'bat': BAT_LINE, 'pit': None},
+                                               {'w': 2, 'l': 0})
+    assert col['facts']['team_w'] == 2 and set(col) == {'through', 'text', 'source', 'facts'}
+    assert recap.numbers_ok(col['text'], col['facts'])
+    run_piece(w, data, st)
+    assert len(player_file(data, 100)['columns']) == 1               # no second column for the same games
+
+
+def test_the_next_column_covers_the_games_after_the_last_one(fworld):
+    gd, data, st = fworld
+    follow(data, (100, st['births'][100]))
+    write_page(data, 100, fp_games(n=8))
+    w = follower(gd, data)
+    run_piece(w, data, st)
+    page = player_file(data, 100)
+    assert [c['through'] for c in page['columns']] == [[4, 11]] and page['columns'][0]['facts']['n'] == 8
+    write_page(data, 100, fp_games(n=8) + fp_games(start=12, n=5), page['columns'])
+    run_piece(w, data, st)
+    assert len(player_file(data, 100)['columns']) == 1               # five new games
+    write_page(data, 100, fp_games(n=8) + fp_games(start=12, n=6, hr=1), page['columns'])
+    run_piece(w, data, st)
+    cols = player_file(data, 100)['columns']
+    assert [c['through'] for c in cols] == [[4, 11], [4, 17]] and cols[1]['facts']['hr'] == 6    # newest last
+
+
+def test_a_pitchers_column_is_about_his_innings(fworld):
+    gd, data, st = fworld
+    follow(data, (200, st['births'][200]))
+    games = [{'month': 4, 'day': 3 + i, 'slot': 0, 'opp': 'ASH', 'home': True, 'bat': None,
+              'pit': {'pid': 200, 'outs': 20, 'er': 2, 'so': 5}} for i in range(6)]
+    write_page(data, 200, games, name='Bo Loser')
+    st['lines']['pit'][200] = {'g': 6, 'outs': 120, 'er': 40, 'so': 30, 'w': 1, 'l': 4, 'sv': 0}
+    run_piece(follower(gd, data), data, st)
+    (col,) = player_file(data, 200)['columns']
+    assert col['text'] == ('Bo Loser pitched 40.0 innings over 6 games with a 2.70 ERA. Bo Loser has a 9.00 ERA over '
+                           '40.0 innings on the season.')
+
+
+GOOD = "Winner's week\n\nAl Winner kept swinging and the team kept winning."
+
+
+def test_a_model_column_passes_the_number_check_or_the_template_stands_in(fworld):
+    gd, data, st = fworld
+    follow(data, (100, st['births'][100]))
+    write_page(data, 100, fp_games(n=6))
+    seen = []
+
+    def complete(system, user, budget):
+        seen.append(user)
+        return GOOD, {}
+    run_piece(follower(gd, data, complete=complete), data, st)
+    (col,) = player_file(data, 100)['columns']
+    assert col['source'] == 'glm' and col['text'] == 'Al Winner kept swinging and the team kept winning.'
+    assert '"season_avg": ".300"' in seen[0]
+    write_page(data, 100, fp_games(n=6))
+    run_piece(follower(gd, data, complete=lambda s, u, b: ("Big week\n\nAl Winner hit .999 with 40 homers.", {})),
+              data, st)
+    (col,) = player_file(data, 100)['columns']
+    assert col['source'] == 'template' and col['text'].startswith('Al Winner went 6 for 24')
+
+
+def test_at_most_follow_calls_columns_ask_the_model_per_scan_and_the_rest_wait(fworld):
+    gd, data, st = fworld
+    assert watch.FOLLOW_CALLS == 2
+    b = st['births']
+    follow(data, (100, b[100]), (101, b[101]), (200, b[200]))
+    for pid, name in ((100, 'Al Winner'), (101, 'Cy Young'), (200, 'Bo Loser')):
+        write_page(data, pid, fp_games(n=6, pid=pid), name=name)
+    calls = []
+
+    def complete(system, user, budget):
+        calls.append(user)
+        return GOOD, {}
+    w = follower(gd, data, complete=complete)
+    run_piece(w, data, st)
+    assert len(calls) == 2
+    assert [len(player_file(data, pid)['columns']) for pid in (100, 101, 200)] == [1, 1, 0]
+    assert '30L1998' in w.follow_open
+    run_piece(w, data, st)                                           # same scan: the calls are spent
+    assert len(calls) == 2 and player_file(data, 200)['columns'] == []
+    w.follow_left = watch.FOLLOW_CALLS                               # the next scan
+    run_piece(w, data, st)
+    assert len(calls) == 3 and len(player_file(data, 200)['columns']) == 1 and '30L1998' not in w.follow_open
+
+
+def test_a_spent_budget_leaves_the_column_for_later(fworld):
+    gd, data, st = fworld
+    follow(data, (100, st['births'][100]))
+    write_page(data, 100, fp_games(n=6))
+
+    def complete(system, user, budget):
+        raise hive.BudgetExceeded('spent')
+    w = follower(gd, data, complete=complete)
+    run_piece(w, data, st)
+    assert player_file(data, 100)['columns'] == [] and '30L1998' in w.follow_open
+
+
+def test_a_waiting_column_is_written_by_a_scan_with_nothing_else_changed(world, monkeypatch):
+    """follow_open makes scan() look at an association whose files did not change, as scouting_open does."""
+    gd, data, st = world
+    named(monkeypatch, '1998 Test', season_year=1998)
+    pyr = gd / 'Assn' / '30L1998.PYR'
+    pyr.write_bytes(pyr_bytes([player(100, 'Al', 'Winner', pos=9, born=1970), player(101, 'Cy', 'Young', pos=9, born=1960),
+                               player(200, 'Bo', 'Loser', pos=1, born=1975)]))
+    births = focus.births(str(pyr))
+    for p in (pyr, gd / 'Assn' / '30L1998.ASN'):
+        os.utime(p, (1, 1))
+    follow(data, *[(pid, births[pid]) for pid in (100, 101, 200)])
+    for pid in (100, 101, 200):
+        write_page(data, pid, fp_games(n=6, pid=pid), name='P%d' % pid)
+    complete = lambda system, user, budget: (GOOD, {})
+    w = follower(gd, data, complete=complete)
+    quiet(w, clear=False)
+    assert [len(player_file(data, pid)['columns']) for pid in (100, 101, 200)] == [1, 1, 0]
+    assert w.seen['30L1998'] and '30L1998' in w.follow_open
+    quiet(w, clear=False)                                            # nothing changed, but a column is waiting
+    assert [len(player_file(data, pid)['columns']) for pid in (100, 101, 200)] == [1, 1, 1]
+    assert '30L1998' not in w.follow_open

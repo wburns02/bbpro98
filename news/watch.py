@@ -21,6 +21,8 @@ Data layout (server.py reads it):
     <data>/<ASSN>/hof.json, hof/<YEAR>-<PID>.json      the Hall of Fame (once a season year) and an induction story each
     <data>/<ASSN>/records.json                         the record book and its bar (records.py)
     <data>/<ASSN>/replay.json                          the season against its Lahman namesake (with --db; replay.py)
+    <data>/<ASSN>/follow.json                          the players followed from the player card (written by the bridge)
+    <data>/<ASSN>/player/<PID>.json                    a followed player's game log, columns and page data (myplayer.py)
     <data>/<ASSN>/past/<YEAR>/                         the last seasons' news, moved there at each rollover
 
 The game files are only read. A box score is matched to its schedule game by teams and final score (gamedata); one
@@ -36,11 +38,13 @@ import pathlib
 import re
 import shutil
 import sqlite3
+import stat
 import struct
 import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import arc        # noqa: E402
 import bracket    # noqa: E402
 import contracts  # noqa: E402
 import draft      # noqa: E402
@@ -52,6 +56,7 @@ import history   # noqa: E402
 import hof       # noqa: E402
 import hive      # noqa: E402
 import moves     # noqa: E402
+import myplayer  # noqa: E402
 import recap     # noqa: E402
 import records   # noqa: E402
 import replay    # noqa: E402
@@ -65,6 +70,7 @@ LLM_DAYS = 3          # columns for the newest dates go to the model; older date
 SCOUT_CALLS = 3       # scouting reports asked of the model per scan, so a backfill never holds up box scores
 MOVE_CALLS = 3        # transaction notes asked of the model per scan; the rest of a scan's notes get the template
 HOF_CALLS = 3         # induction stories asked of the model per scan; the rest wait for a later scan
+FOLLOW_CALLS = myplayer.FOLLOW_CALLS    # weekly columns on followed players asked of the model per scan; the rest wait
 MOVE_KEEP = 3000      # events kept in moves/log.json
 MOVE_CATCHUP = 20     # missing notes of this season written per pass, after an interrupted pass left some out
 DEFAULT_TABLE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'salary_table.json')
@@ -177,8 +183,10 @@ class Watcher:
         self.scout_left = SCOUT_CALLS   # model scouting reports left in this scan
         self.move_left = MOVE_CALLS     # model transaction notes left in this scan
         self.hof_left = HOF_CALLS       # model induction stories left in this scan
+        self.follow_left = FOLLOW_CALLS     # model weekly columns on followed players left in this scan
         self.scouting_open = set()      # stems with teams still waiting for a scouting report
         self.hof_open = set()           # stems with inductees still waiting for a story
+        self.follow_open = set()        # stems with a followed player's weekly column still waiting for the model
         self.hof_bad = set()            # stems whose hof.json does not parse: logged once, never overwritten
         self.real_seasons = {}  # (year, leagues) -> replay.real(): the database is read once per season
         self.off_season = set() # stems whose season_year is not the year their name gives: logged once
@@ -208,10 +216,12 @@ class Watcher:
         self.scout_left = SCOUT_CALLS
         self.move_left = MOVE_CALLS
         self.hof_left = HOF_CALLS
+        self.follow_left = FOLLOW_CALLS
         for stem, asn_path in sorted(associations(self.game).items()):
             try:
                 sig = self.signature(stem, asn_path)
-                if self.seen.get(stem) == sig and stem not in self.scouting_open and stem not in self.hof_open:
+                if (self.seen.get(stem) == sig and stem not in self.scouting_open and stem not in self.hof_open
+                        and stem not in self.follow_open):
                     continue
                 self.association(stem, asn_path)
                 # Files younger than SETTLE were left for later; only a settled set may be skipped next time.
@@ -250,6 +260,7 @@ class Watcher:
         self.records_piece(out, assoc, names, pyr)
         self.moves(out, assoc, pyr, dat)
         self.contracts_piece(out, assoc, pyr, dat)
+        self.follow_piece(out, assoc, season, pyr)
         self.replay_piece(out, assoc, names, season)
         self.rookie_class(out, assoc, pyr)
         self.draft_piece(out, assoc, pyr)
@@ -596,6 +607,186 @@ class Watcher:
         write_json(path, dict(state, kind='contracts', payroll=contracts.payroll(state['contracts'], assoc['teams']),
                               created=now_iso()))
 
+    def births(self, stem):
+        """{pid: birth serial} from the association's PYR, or None without one or when it cannot be read."""
+        try:
+            pyr = gamedata.find(os.path.join(self.game, 'Assn'), stem + '.PYR')
+            return focus.births(pyr) if pyr else None
+        except (OSError, ValueError, struct.error):
+            return None
+
+    def following(self, stem, out):
+        """{pid: birth} for the players follow.json names, without those the PYR contradicts (myplayer.matching: an id a
+        new player reused). {} without the file or any player; the PYR is read only when someone is followed, and one
+        that cannot be read drops nobody."""
+        follows = myplayer.followed(read_json(os.path.join(out, 'follow.json')))
+        return myplayer.matching(follows, self.births(stem)) if follows else {}
+
+    def player_page(self, out, pid, name, year):
+        """The page data of pid for the season `year`: player/<pid>.json, or a new page when there is none (or it does
+        not parse). A file of another season is moved to player/<pid>-<its year>.json first (-2, -3 ... for a name
+        already taken), so a new season starts with no games and no columns."""
+        path = os.path.join(out, 'player', '%d.json' % pid)
+        page = read_json(path)
+        if page is None:
+            return myplayer.new_page(pid, name, year)
+        if myplayer.rolled(page, year):
+            base, n = os.path.join(out, 'player', '%d-%d' % (pid, page['season_year'])), 1
+            dest = base + '.json'
+            while os.path.exists(dest):
+                n += 1
+                dest = '%s-%d.json' % (base, n)
+            os.replace(path, dest)
+            return myplayer.new_page(pid, name, year)
+        for key in ('games', 'columns'):
+            if not isinstance(page.get(key), list):
+                page[key] = []
+        page.update(pid=pid, name=name)
+        if year is not None:
+            page['season_year'] = year
+        return page
+
+    def save_player(self, out, page):
+        """Writes the page data to player/<pid>.json with 'updated' set, unless the file already holds the same page
+        apart from that. True when it wrote."""
+        page = json.loads(json.dumps(page))
+        path = os.path.join(out, 'player', '%d.json' % page['pid'])
+        old = read_json(path)
+        bare = lambda d: {k: v for k, v in d.items() if k != 'updated'}
+        if old is not None and bare(old) == bare(page):
+            return False
+        write_json(path, dict(page, updated=now_iso()))
+        return True
+
+    def log_games(self, out, assoc, names, box, game, follows):
+        """Adds one matched regular-season game to the log of each followed player (follows is {pid: birth}) who has
+        a batting or pitching line in its box score (myplayer.game_line). A game a log already has, by (month, day,
+        slot), is not added again."""
+        abbrevs = {tid: t['abbrev'] for tid, t in assoc['teams'].items()}
+        year = year_of(assoc.get('season_year'))
+        for pid in follows:
+            line = myplayer.game_line(box, game, pid, abbrevs)
+            if line is None:
+                continue
+            page = self.player_page(out, pid, recap.name_of(names, pid), year)
+            games = myplayer.append_game(page['games'], line)
+            if games != page['games']:
+                page['games'] = games
+                self.save_player(out, page)
+
+    def focus_entries(self):
+        """focus.parse of <game>/Mods/focus.txt: [] when Mods or the file is missing, Mods is a symlink or the file is
+        not a regular file. At most focus.MAX_FILE bytes are read. Read only; the bridge writes the file."""
+        mods = os.path.join(self.game, 'Mods')
+        path = os.path.join(mods, 'focus.txt')
+        try:
+            if os.path.islink(mods) or not stat.S_ISREG(os.lstat(path).st_mode):
+                return []
+            with open(path, 'rb') as fh:
+                return focus.parse(fh.read(focus.MAX_FILE).decode('latin-1'))
+        except OSError:
+            return []
+
+    def career_totals(self, stem, pid, kind, line, year, who, conn):
+        """history.totals (plus 'kind') over a player's seasons, or None when he has none: his real seasons before the
+        association's start year (when conn, the Lahman database, finds him by `who`, (first, last, born)), the
+        archived simulated seasons, and this season's `line` unless that season is archived already."""
+        start, real = history.start_year(stem, year), []
+        if conn is not None and who is not None and who[2] is not None:
+            try:
+                lid = history.lahman_id(conn, *who)
+                real = history.real_seasons(conn, lid, kind, before=start) if lid else []
+            except sqlite3.Error:
+                real = []
+        sim = history.drop_seeded(history.sim_seasons(self.data, stem, pid, kind), stem)
+        keys = history.BAT_KEYS if kind == 'bat' else history.PIT_KEYS
+        if line and line.get('g') and year is not None and not any(r['year'] == year for r in sim):
+            sim.append(dict({k: line.get(k, 0) for k in keys}, year=year, team=''))
+        rows = history.merge(real, sim, start)
+        return dict(history.totals(rows, kind), kind=kind) if rows else None
+
+    def weekly_column(self, stem, page, games, facts):
+        """Adds the weekly column over `games` (myplayer.window) to page['columns']: the model's while this scan has
+        FOLLOW_CALLS left, else it waits (the stem stays in follow_open), and so does a spent budget; the template when
+        there is no model or the model does not give a column that passes recap.numbers_ok."""
+        if self.complete is not None and self.follow_left <= 0:
+            self.follow_open.add(stem)
+            return
+        if self.complete is not None:
+            self.follow_left -= 1
+        piece = _llm_or_template(myplayer.write, facts, self.budget, self.complete)
+        if piece is not None and piece.get('reason') == 'budget':
+            self.follow_open.add(stem)
+            return
+        if piece is None:
+            piece = dict(myplayer.template(facts), source='template', reason='off')
+        page['columns'].append(myplayer.column(piece, facts, games))
+        self.log('%s follow column %s (%s)' % (stem, facts['name'], piece['source']))
+
+    def follow_piece(self, out, assoc, lines, pyr):
+        """My Player (myplayer.py): the page data of each followed player present in the PYR, written to
+        player/<pid>.json after the game log recaps() keeps in it. A follow whose birth serial no longer matches the PYR
+        is skipped. The page gets his team, position, age, this season's lines, his career totals (history, plus his
+        real seasons when the Lahman database finds him), his contract, the offseason focus as a training plan
+        (focus.txt, read only), the arc hint and his moves-log events newest first. When WEEK or more games are logged
+        after the last column's date a weekly column over them is added (weekly_column). Nothing is read or written
+        without a follow.json that names players."""
+        stem = os.path.basename(out)
+        self.follow_open.discard(stem)
+        follows = myplayer.followed(read_json(os.path.join(out, 'follow.json')))
+        if not follows or pyr is None:
+            return
+        try:
+            births, players = focus.births(pyr), gamedata.players(pyr)
+        except (OSError, ValueError, struct.error) as e:
+            self.log('%s follow: %s: %s' % (stem, type(e).__name__, e))
+            return
+        live = [pid for pid in myplayer.matching(follows, births) if pid in players]
+        if not live:
+            return
+        year, entries = year_of(assoc.get('season_year')), self.focus_entries()
+        events = (read_json(os.path.join(out, 'moves', 'log.json')) or {}).get('events')
+        book = (read_json(os.path.join(out, 'contracts.json')) or {}).get('contracts')
+        tally = recap.tally(assoc['games'])
+        rosters = {pid: tid for tid, t in assoc['teams'].items() for pid in t['roster']}
+        conn = self.hof_db()
+        try:
+            who = identities(pyr) if conn is not None else {}
+        except (OSError, ValueError, struct.error):
+            who = {}
+        try:
+            free = gamedata.free_agents(gamedata.find(os.path.dirname(pyr), stem + '.PYF'))
+        except (OSError, ValueError, TypeError):
+            free = None         # no readable PYF: a player on no roster is not called free or retired
+        try:
+            for pid in live:
+                p, tid = players[pid], rosters.get(pid)
+                page = self.player_page(out, pid, p['name'], year)
+                kind = 'pit' if p['pos'] == 'P' else 'bat'
+                season_line = {k: lines[k].get(pid) for k in ('bat', 'pit')}
+                if tid is not None:
+                    team = assoc['teams'][tid]['name']
+                else:
+                    team = '' if free is None else 'Free agent' if pid in free else 'Retired'
+                contract = book.get(str(pid)) if isinstance(book, dict) else None
+                page.update(
+                    pos=p['pos'], team=team, season=season_line,
+                    age=year - p['born'] if year is not None and p['born'] is not None else None,
+                    career=self.career_totals(stem, pid, kind, season_line[kind], year, who.get(pid), conn),
+                    contract=contract if isinstance(contract, dict) else None,
+                    plan=myplayer.plan_text(focus.find(entries, pid, births[pid])),
+                    arc=arc.player_hint(pid, births[pid], year),
+                    milestones=myplayer.milestones(events if isinstance(events, list) else [], pid))
+                games = myplayer.window(page['games'], page['columns'])
+                if games:
+                    w, l = tally.get(tid, (0, 0))
+                    facts = myplayer.week_facts(p['name'], games, season_line, {'w': w, 'l': l})
+                    self.weekly_column(stem, page, games, facts)
+                self.save_player(out, page)
+        finally:
+            if conn is not None:
+                conn.close()
+
     def replay_piece(self, out, assoc, names, season):
         """The replay scorecard, written on every pass of a Lahman-named association while a database is given: this
         season's standings and leaders against the real season of the same name. A sqlite error is logged and
@@ -929,6 +1120,7 @@ class Watcher:
     def recaps(self, stem, out, assoc, names, stats_dir, asn_path=None):
         rdir, pdir = os.path.join(out, 'recaps'), os.path.join(out, 'pending')
         used, post_used = set(), set()
+        follows = self.following(stem, out)      # {} unless players are followed (follow.json)
         if os.path.isdir(rdir):
             for f in os.listdir(rdir):
                 r = read_json(os.path.join(rdir, f)) if f.endswith('.json') else None
@@ -984,6 +1176,8 @@ class Watcher:
                     self.capture(stem)
                 continue
             game = cands[-1]
+            if follows:
+                self.log_games(out, assoc, names, box, game, follows)
             facts = recap.game_facts(assoc, box, game, names)
             story = _llm_or_template(recap.write, facts, self.budget, self.complete)
             if story is None:

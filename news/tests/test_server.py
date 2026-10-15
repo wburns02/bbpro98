@@ -2496,3 +2496,151 @@ def test_draft_room_link_is_on_the_first_page_only(drafted):
         write(drafted.root / '30L1998' / 'recaps' / ('%016x.json' % i), story('%016x' % i, slot=i))
     assert 'draft">Draft room' in drafted.get('/news/30L1998/')[2].decode()
     assert 'Draft room' not in drafted.get('/news/30L1998/?page=2')[2].decode()
+
+
+# My Player: the Following box and /news/<assn>/player/<pid>
+
+def bat_game(day, opp, home, h=1, ab=4, hr=0, rbi=0):
+    return {'month': 4, 'day': day, 'slot': 0, 'opp': opp, 'home': home,
+            'bat': {'pid': 100, 'ab': ab, 'h': h, 'hr': hr, 'rbi': rbi}, 'pit': None}
+
+
+def player_page(**over):
+    """A player's page data as the watcher writes it: a hitter with two games, one column, a milestone and a contract."""
+    base = {
+        'pid': 100, 'name': 'Al Winner', 'season_year': 1998, 'updated': '2026-10-09T14:03:11', 'team': 'New York Yankees',
+        'pos': 'RF', 'age': 29, 'arc': 'ages well', 'plan': 'Offseason training plan: power',
+        'contract': {'salary': 2000000, 'years': 2, 'left': 1, 'team': 1, 'class': 'arb'},
+        'season': {'bat': {'g': 20, 'ab': 80, 'h': 24, 'hr': 3, 'rbi': 9}, 'pit': None},
+        'career': {'kind': 'bat', 'seasons': 3, 'g': 400, 'ab': 1500, 'h': 450, 'hr': 60, 'rbi': 250},
+        'games': [bat_game(1, 'BOS', True, h=2, hr=1, rbi=3), bat_game(2, 'BOS', False)],
+        'columns': [{'through': [4, 6], 'text': 'First week text.', 'source': 'template', 'facts': {}},
+                    {'through': [4, 12], 'text': 'Second week text.\nAnd more.', 'source': 'glm', 'facts': {}}],
+        'milestones': [{'kind': 'milestone', 'pid': 100, 'name': 'Al Winner', 'to': 'New York Yankees',
+                        'stat': 'career hr', 'value': 500, 'date': 'April 9', 'year': 1998},
+                       {'kind': 'signed', 'pid': 100, 'name': 'Al Winner', 'from': 'Free agents',
+                        'to': 'New York Yankees', 'date': 'Offseason', 'year': 1998}],
+    }
+    base.update(over)
+    return base
+
+
+def follow_doc(*pids):
+    return {'kind': 'follow', 'players': [{'pid': p, 'birth': None, 'since': 'x'} for p in pids]}
+
+
+def test_player_page_renders_every_section(seeded):
+    write(seeded.root / '30L1998' / 'player' / '100.json', player_page())
+    status, headers, body = seeded.get('/news/30L1998/player/100')
+    html = body.decode()
+    assert status == 200 and headers['content-type'] == HTML
+    assert_secure(headers, body)
+    assert '<h1>Al Winner</h1>' in html and 'New York Yankees' in html and 'Age 29' in html and 'RF' in html
+    assert 'Career arc: ages well' in html and 'Offseason training plan: power' in html
+    assert 'Contract: $2M a year, 2 years, 1 left (Arbitration)' in html
+    assert 'Batting this season: .300 AVG, 3 HR, 9 RBI in 20 games' in html
+    assert 'Career, 3 seasons: .300 AVG, 60 HR, 250 RBI in 400 games' in html
+    assert '<caption>Game log</caption>' in html
+    assert '<td class="t">April 1</td><td class="t">BOS</td><td class="t">2-for-4, 1 HR, 3 RBI</td>' in html
+    assert '<td class="t">April 2</td><td class="t">@BOS</td><td class="t">1-for-4</td>' in html
+    assert 'Milestone: Al Winner (New York Yankees) reached 500 career home runs' in html
+    assert 'Signed: Al Winner, Free agents to New York Yankees' in html
+    assert html.index('Second week text.') < html.index('First week text.')           # newest first
+    assert 'Week through April 12' in html and 'Week through April 6' in html and 'And more.' in html
+    assert 'Staff writer' in html and 'Wire report' in html
+    assert 'href="/news/30L1998/"' in html
+
+
+def test_player_page_for_a_pitcher_and_a_page_with_little(seeded):
+    write(seeded.root / '30L1998' / 'player' / '200.json', {
+        'pid': 200, 'name': 'Bo Loser', 'games': [{'month': 4, 'day': 3, 'slot': 0, 'opp': 'SEA', 'home': True, 'bat': None,
+                                                    'pit': {'outs': 19, 'er': 2, 'so': 7, 'w': 1}}],
+        'season': {'bat': None, 'pit': {'g': 9, 'w': 3, 'l': 1, 'outs': 121, 'er': 40, 'so': 35, 'sv': 0}}})
+    html = seeded.get('/news/30L1998/player/200')[2].decode()
+    assert 'Pitching this season: 3-1, 8.93 ERA, 40.1 IP, 35 SO in 9 games' in html
+    assert '6.1 IP, 2 ER, 7 SO, W' in html
+    assert 'No contract on file.' in html and 'No milestones or moves yet.' in html
+    assert 'No weekly column yet.' in html and 'Batting this season' not in html and 'Career' not in html
+    write(seeded.root / '30L1998' / 'player' / '300.json', {'pid': 300})
+    html = seeded.get('/news/30L1998/player/300')[2].decode()
+    assert 'Player 300' in html and 'No games logged yet.' in html
+
+
+@pytest.mark.parametrize('path', ['/news/30L1998/player/101', '/news/30L1998/player/0100', '/news/30L1998/player/abc',
+                                  '/news/30L1998/player/100000', '/news/30L1998/player/', '/news/30L1998/player',
+                                  '/news/30L1998/player/100/x', '/news/NOPE/player/100'])
+def test_player_page_is_a_404_without_player_data(seeded, path):
+    write(seeded.root / '30L1998' / 'player' / '100.json', player_page())
+    assert seeded.get(path)[0] == 404
+
+
+def test_player_page_404s_on_a_file_that_is_not_an_object(seeded):
+    write(seeded.root / '30L1998' / 'player' / '100.json', '[1, 2]')
+    assert seeded.get('/news/30L1998/player/100')[0] == 404
+    write(seeded.root / '30L1998' / 'player' / '100.json', '{"name": ')
+    assert seeded.get('/news/30L1998/player/100')[0] == 404
+
+
+EVIL = '<script>alert(1)</script>'
+
+
+def test_player_page_escapes_every_value(seeded):
+    page = player_page(
+        name=EVIL, team=EVIL, pos=EVIL, age=EVIL, arc=EVIL, plan=EVIL,
+        contract={'salary': EVIL, 'years': EVIL, 'left': EVIL, 'class': EVIL},
+        games=[{'month': 4, 'day': 1, 'slot': 0, 'opp': EVIL, 'home': False, 'bat': {'h': EVIL, 'ab': EVIL}, 'pit': None}],
+        columns=[{'through': [4, 6], 'text': EVIL + '\n' + EVIL, 'source': EVIL, 'facts': {}},
+                 {'through': EVIL, 'text': EVIL, 'source': 'glm', 'facts': {}}],
+        milestones=[{'kind': 'milestone', 'pid': 100, 'name': EVIL, 'to': EVIL, 'stat': EVIL, 'value': EVIL},
+                    {'kind': 'new', 'pid': 100, 'name': EVIL, 'to': EVIL, 'pos': EVIL, 'age': EVIL}])
+    write(seeded.root / '30L1998' / 'player' / '100.json', page)
+    status, _, body = seeded.get('/news/30L1998/player/100')
+    html = body.decode()
+    assert status == 200 and '<script>' not in html and '&lt;script&gt;alert(1)&lt;/script&gt;' in html
+
+
+def test_player_page_survives_values_of_the_wrong_type(seeded):
+    page = {'pid': 100, 'name': 5, 'team': ['x'], 'age': {'a': 1}, 'arc': None, 'plan': 7, 'contract': 'big',
+            'season': 'x', 'career': [1], 'games': 'many', 'columns': [None, 3, {'through': None, 'text': None}],
+            'milestones': 'none'}
+    write(seeded.root / '30L1998' / 'player' / '100.json', page)
+    assert seeded.get('/news/30L1998/player/100')[0] == 200
+    write(seeded.root / '30L1998' / 'player' / '100.json', player_page(
+        games=[None, 3, {'month': 'x', 'day': None, 'bat': 'x', 'pit': []}],
+        season={'bat': {'ab': 'x'}, 'pit': 5}, career={'kind': 'bogus', 'seasons': 'many'}))
+    assert seeded.get('/news/30L1998/player/100')[0] == 200
+
+
+def test_the_following_box_lists_followed_players_with_links(seeded):
+    assert 'class="following"' not in seeded.get('/news/30L1998/')[2].decode()
+    write(seeded.root / '30L1998' / 'follow.json', follow_doc(100, 200))
+    write(seeded.root / '30L1998' / 'player' / '100.json', player_page())
+    html = seeded.get('/news/30L1998/')[2].decode()
+    assert ('<section class="following"><h2>Following</h2><ul class="moves">'
+            '<li><a href="/news/30L1998/player/100">Al Winner</a></li>'
+            '<li><a href="/news/30L1998/player/200">Player 200</a></li></ul></section>') in html
+
+
+def test_the_following_box_is_left_out_when_nobody_is_followed_or_the_file_is_bad(seeded):
+    base = seeded.get('/news/30L1998/')[2]
+    for doc in (follow_doc(), '[1]', '{"kind": "follow", "players": 3}', '{"kind": "other", "players": [{"pid": 1}]}',
+                'junk'):
+        write(seeded.root / '30L1998' / 'follow.json', doc)
+        assert seeded.get('/news/30L1998/')[2] == base
+
+
+def test_the_following_box_escapes_the_name_and_shows_on_page_one_only(site):
+    write(site.root / '30L1998' / 'meta.json', meta())
+    for i in range(31):
+        write(site.root / '30L1998' / 'recaps' / ('%016x.json' % i), story('%016x' % i, slot=i))
+    write(site.root / '30L1998' / 'follow.json', follow_doc(100))
+    write(site.root / '30L1998' / 'player' / '100.json', player_page(name=EVIL))
+    one, two = site.get('/news/30L1998/')[2].decode(), site.get('/news/30L1998/?page=2')[2].decode()
+    assert '<script>' not in one and '&lt;script&gt;' in one and 'Following' in one and 'Following' not in two
+
+
+def test_the_association_page_is_unchanged_without_a_follow_file(seeded):
+    """The Following box adds nothing to the page of an association nobody follows anyone in."""
+    before = seeded.get('/news/30L1998/')[2]
+    write(seeded.root / '30L1998' / 'player' / '100.json', player_page())     # page data alone is not a follow
+    assert seeded.get('/news/30L1998/')[2] == before

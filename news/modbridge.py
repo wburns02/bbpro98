@@ -40,6 +40,7 @@ import focus
 import gamedata
 import history
 import hof
+import myplayer
 import portrait
 import recap
 import roster
@@ -777,8 +778,14 @@ def _development(ctx, path):
 
 # The player card under /news/card/<STEM>/p/<pid>: what the game's card shows for one player, as text for the Mods menu's
 # reader. It reads the association's files (ASN, PYR, PYF, Stats) and the watcher's data folder, which need not have had
-# a pass. Ratings are shown now and at peak; a stats row is shown for each period the stats file has for him.
+# a pass. Ratings are shown now and at peak; a stats row is shown for each period the stats file has for him. The card
+# ends with Following: yes/no and a Follow or Unfollow link; /follow and /unfollow under the card's path write follow.json
+# in the watcher's folder (myplayer.py) and answer with the card.
 CARD_RE = re.compile(r'/news/card/([A-Za-z0-9]{1,8})/p/([0-9]{1,5})(?:/(batting|pitching|career|news)(?:/([0-9]{1,3}))?)?')
+FOLLOW_RE = re.compile(r'/news/card/([A-Za-z0-9]{1,8})/p/([0-9]{1,5})/(follow|unfollow)')
+FOLLOW_FILE = 'follow.json'
+NOT_SEEN_TEXT = 'The news watcher has not seen this association yet.'
+_FOLLOW_LOCK = threading.Lock()     # held for each read-modify-write of follow.json
 CARD_TABS = (('', 'Overview'), ('batting', 'Batting'), ('pitching', 'Pitching'), ('career', 'Career'), ('news', 'News'))
 CAREER_ROWS = 20                # career table rows a page shows (the totals rows go on the last page)
 CARD_NEWS = 10                  # news items a card lists, newest first
@@ -957,6 +964,43 @@ def _watch_folder(ctx, stem):
     return folder if folder and os.path.isdir(folder) else None
 
 
+def _is_followed(ctx, lg, pid):
+    """True when the watcher folder's follow.json follows pid and his birth serial still matches the PYR's."""
+    folder = _watch_folder(ctx, lg.stem)
+    if folder is None:
+        return False
+    doc = myplayer.followed(server._read_obj(os.path.join(folder, FOLLOW_FILE)))
+    return pid in myplayer.matching(doc, lg.births)
+
+
+def _follow_link(lg, pid, following):
+    """('Follow' or 'Unfollow', the path that toggles it) for the card."""
+    base = '/news/card/%s/p/%d' % (lg.stem, pid)
+    return ('Unfollow', base + '/unfollow') if following else ('Follow', base + '/follow')
+
+
+def _follow(ctx, path, stem, pid, action):
+    """Follows or unfollows a player for the card routes: writes follow.json in the watcher's folder for the association
+    and returns None (the caller then shows the card), or the refusal reply: 404 for no such association or player, 409
+    when the watcher has no folder for it yet."""
+    lg = _league(ctx, stem)
+    if lg is None or pid not in lg.players:
+        return _news_reply(404, path, 'Not found', 'No such association or player.', [])
+    folder = _watch_folder(ctx, lg.stem)
+    if folder is None:
+        back = ('Back to the card', '/news/card/%s/p/%d' % (lg.stem, pid))
+        return _news_reply(409, path, 'Not followed', NOT_SEEN_TEXT, [back])
+    target = os.path.join(folder, FOLLOW_FILE)
+    with _FOLLOW_LOCK:
+        doc = server._read_obj(target)
+        if action == 'follow':
+            doc = myplayer.add(doc, pid, lg.births.get(pid), watch.now_iso())
+        else:
+            doc = myplayer.remove(doc, pid)
+        watch.write_json(target, doc)
+    return None
+
+
 def _hall_of_fame(ctx, lg, pid):
     """The year pid was inducted into the association's Hall of Fame, from <watcher folder>/hof.json, or None: no
     folder, no file, a file torn or not an hof dict, or he is not among its inductees. Read once per card render."""
@@ -1041,18 +1085,27 @@ def _card_page(ctx, stem, pid):
                                                               for pos in gamedata.POSITIONS if pos in games)]
     kind = _focus_of(_read_focus(ctx.game), pid, lg.births[pid])
     lines += ['', 'Current focus: %s' % kind if kind else 'No focus.']
+    following = _is_followed(ctx, lg, pid)
+    lines.append('Following: %s' % ('yes' if following else 'no'))
     folder = _watch_folder(ctx, lg.stem)
     news = _card_news(folder, lg, pid)
     lines += ['', 'News'] + (['- %s' % label for label, _ in news] or ['No news yet.'])
     links = list(news) + [('Player development', '/news/development/%s/p/%d' % (lg.stem, pid))]
     if folder is not None:
         links.append(('Association news', '/news/%s/' % os.path.basename(folder)))
+    links.append(_follow_link(lg, pid, following))
     return title, '\n'.join(lines), links
 
 
 def _card(ctx, path):
     """The reply for a path under /news/card: the player's card as a picture page (_card_image) when the game's fonts
     can be read, else as text; Not found for anything else."""
+    f = FOLLOW_RE.fullmatch(urllib.parse.urlsplit(path).path)
+    if f is not None:       # toggle the follow, then show the card itself (a refusal is the reply as it stands)
+        refused = _follow(ctx, path, f.group(1), int(f.group(2)), f.group(3))
+        if refused is not None:
+            return refused
+        path = '/news/card/%s/p/%s' % (f.group(1), f.group(2))
     m = CARD_RE.fullmatch(urllib.parse.urlsplit(path).path)
     fonts = _card_fonts(ctx.game) if m else None
     if m and fonts is not None:
@@ -1254,8 +1307,10 @@ def _card_tab_body(ctx, lg, pid, tab, page, p, rec, base, who):
     pic = portrait.portrait(seed, age=(lg.year - p['born']) if lg.year and p['born'] else 28, pos=p['pos'],
                             power=scout.grade(ratings['power'][0]), speed=scout.grade(ratings['speed'][0]),
                             bats=p['bats'], throws=p['throws'], era=lg.year or 1998, letter=team[:1])
+    following = _is_followed(ctx, lg, pid)
     return {'kind': 'overview', 'portrait': pic, 'ratings': rows, 'facts': facts,
-            'links': [('Player development', '/news/development/%s/p/%d' % (lg.stem, pid))]}
+            'links': [('Player development', '/news/development/%s/p/%d' % (lg.stem, pid)),
+                      ('Following: %s' % ('yes' if following else 'no'), None), _follow_link(lg, pid, following)]}
 
 
 def _card_image(ctx, fonts, stem, pid, tab, page):
@@ -1286,10 +1341,13 @@ def _card_image(ctx, fonts, stem, pid, tab, page):
             'status_right': '%d season' % lg.year if lg.year else ''}
     bmp, hots = cardimg.render(card, fonts)
     path = base + ('/' + tab if tab else '') + ('/%d' % page if tab == 'career' and page else '')
+    following = _is_followed(ctx, lg, pid)
     header, text = _news_reply(200, path, p['name'], '\n'.join(_heading(_who(p, lg.year)) +
                                                                 badge +
-                                                                ['This card is a picture page.']),
-                               [(label, target) for label, target, sel in tabs if not sel])
+                                                                ['This card is a picture page.',
+                                                                 'Following: %s' % ('yes' if following else 'no')]),
+                               [(label, target) for label, target, sel in tabs if not sel]
+                               + [_follow_link(lg, pid, following)])
     header += [('image', '1'), ('hots', str(len(hots)))]
     header += [('hot.%d' % i, '%d,%d,%d,%d\t%s' % (x, y, w, h, _plain(target)))
                for i, (x, y, w, h, target) in enumerate(hots)]
