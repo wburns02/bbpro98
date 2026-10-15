@@ -481,7 +481,7 @@ def _past_seasons(data_dir, assn):
 def _champion_rows(data_dir, assn):
     """One row per season with a postseason file, newest first: the current folder's first, then the archived ones.
     Each row takes the World Series (the round whose 'round' is 3) for the runner-up and the series score."""
-    folders = [(data_dir / assn, '/news/%s/' % assn, None, '')]
+    folders = [(data_dir / assn, '/news/%s/' % assn, None, 'Current season')]
     folders += [(data_dir / assn / 'past' / d, '/news/%s/past/%s/' % (assn, d), d, _past_label(d))
                 for d, _ in _past_seasons(data_dir, assn)]
     rows = []
