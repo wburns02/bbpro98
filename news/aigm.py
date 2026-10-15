@@ -499,16 +499,24 @@ def validate(before, after, players):
 def deadline_window(assoc):
     """True when the league's mean fraction of scheduled games played is in DEADLINE_LO..DEADLINE_HI (0.55 to 0.65, both
     ends in). assoc['games'] lists {'away', 'home', 'played'}; a team's fraction is its played games over its scheduled
-    ones, and a league with no scheduled game (or games naming no team) is not in the window."""
-    counts = {}
+    ones. Games that name no team count by their own share played; a league with no scheduled game is not in the
+    window."""
+    counts, loose = {}, [0, 0]
     for g in assoc.get('games', ()):
-        for tid in {g.get('away'), g.get('home')} - {None}:
+        teams = {g.get('away'), g.get('home')} - {None}
+        for tid in teams:
             row = counts.setdefault(tid, [0, 0])
             row[0] += 1
             row[1] += bool(g.get('played'))
-    if not counts:
+        if not teams:
+            loose[0] += 1
+            loose[1] += bool(g.get('played'))
+    shares = [played / scheduled for scheduled, played in counts.values()]
+    if not shares and loose[0]:
+        shares = [loose[1] / loose[0]]
+    if not shares:
         return False
-    mean = sum(played / scheduled for scheduled, played in counts.values()) / len(counts)
+    mean = sum(shares) / len(shares)
     return DEADLINE_LO - 1e-9 <= mean <= DEADLINE_HI + 1e-9
 
 

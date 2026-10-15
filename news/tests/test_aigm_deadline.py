@@ -126,6 +126,11 @@ def test_the_window_is_the_mean_of_each_teams_share_not_the_share_of_all_games()
     assert aigm.deadline_window({'games': g}) is True
 
 
+@pytest.mark.parametrize('played, inside', [(10, False), (11, True), (13, True), (14, False)])
+def test_games_that_name_no_team_count_by_their_own_share_played(played, inside):
+    assert aigm.deadline_window({'games': [{'played': i < played} for i in range(20)]}) is inside
+
+
 @pytest.mark.parametrize('assoc', [{}, {'games': []}, {'games': [{'played': True}] * 4}])
 def test_a_league_with_no_scheduled_game_is_outside_the_window(assoc):
     assert aigm.deadline_window(assoc) is False
