@@ -86,9 +86,10 @@ news=$(sent -rl --checksum --include='*.py' --include='salary_table.json' --excl
 more=$(sent -rl --checksum "$REPO/work/ctree.py" "$REPO/work/hdecode.py" "$REPO/work/league.py" "$REPO/work/stats.py" \
          "$HOST:$NEWS/work/")
 news+=${news:+${more:+$'\n'}}$more
-# The Lahman season builder, run by the in-game Mods menu's bridge (news/modbridge.py) for Build a Season.
+# The Lahman season builder, run by the in-game Mods menu's bridge (news/modbridge.py) for Build a Season, and its era
+# config (era.json): without it the hosted build falls back to the all-zero era.
 [ ${#DRY[@]} -eq 0 ] && ssh "$HOST" "mkdir -p '$NEWS/work/lahman'"
-more=$(sent -rl --checksum --include='*.py' --exclude='*' "$REPO/work/lahman/" "$HOST:$NEWS/work/lahman/")
+more=$(sent -rl --checksum --include='*.py' --include='era.json' --exclude='*' "$REPO/work/lahman/" "$HOST:$NEWS/work/lahman/")
 news+=${news:+${more:+$'\n'}}$more
 # Full team names for Lahman-built associations (work/lahman/teamnames.py writes it; it is not in the repo).
 NAMES=${NAMES:-/mnt/nvme/bbpro98/teamnames.json}
