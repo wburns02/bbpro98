@@ -20,6 +20,7 @@ import history     # noqa: E402
 import modbridge   # noqa: E402
 import season      # noqa: E402
 import watch       # noqa: E402
+from tests.test_cardimg import GREEN, draw, fonts, game   # noqa: E402,F401
 from tests.test_modbridge import NAMES, ask, bridge, pyf_bytes, pyr_bytes, site   # noqa: E402,F401
 from tests.test_modbridge_card import REAL, RECORDS, TEAMS, YEAR, card_record, page   # noqa: E402,F401
 
@@ -382,6 +383,48 @@ def test_real_install_career_has_chipper_jones_real_seasons(tmp_path, monkeypatc
     assert real_rows['1995']['cells'][1] == 'ATL' and real_rows['1995']['cells'][hr] == '23'
     assert real_rows['1996']['cells'][hr] == '30'
     assert body['caption'].endswith('Yellow: this association.')
+
+
+def test_other_note_names_the_years_between_real_and_archived_seasons():
+    assert modbridge._other_note([{'year': 1996, 'sim': False}, {'year': 2007, 'sim': True}]) == \
+        'Other: 1997 to 2006, seasons simmed before they were saved.'
+
+
+def test_other_note_single_year_is_singular():
+    note = modbridge._other_note([{'year': 1996, 'sim': False}, {'year': 1998, 'sim': True}])
+    assert note == 'Other: 1997, a season simmed before it was saved.'
+
+
+FALLBACK = 'Other: career games the game kept with no season.'
+
+
+@pytest.mark.parametrize('rows', [
+    [{'year': 2007, 'sim': True}],                                  # no real rows
+    [{'year': 1996, 'sim': False}],                                 # no sim rows
+    [{'year': 1996, 'sim': False}, {'year': 1996, 'sim': True}],    # lo > hi: the gap is empty
+])
+def test_other_note_falls_back_when_no_gap_or_no_rows(rows):
+    assert modbridge._other_note(rows) == FALLBACK
+
+
+def test_other_note_uses_min_and_max_not_first_and_last():
+    rows = [{'year': 2007, 'sim': True}, {'year': 1996, 'sim': False},
+            {'year': 1998, 'sim': False}, {'year': 2004, 'sim': True}]
+    assert modbridge._other_note(rows) == 'Other: 1999 to 2003, seasons simmed before they were saved.'
+
+
+def test_other_note_font_width(fonts):
+    body = {'kind': 'table', 'columns': ['Year'], 'rows': [], 'note': modbridge._other_note(
+        [{'year': 1996, 'sim': False}, {'year': 2007, 'sim': True}])}
+    _, _, at, _ = draw(fonts, body=body)
+    for y in range(92, 428):
+        for x in list(range(0, 12)) + list(range(668, 680)):
+            assert at(x, y) == GREEN, (x, y)
+
+
+def test_other_note_longest_form_is_within_the_card():
+    note = modbridge._other_note([{'year': 1996, 'sim': False}, {'year': 2007, 'sim': True}])
+    assert len(note) == 59 and len(note) <= 60
 
 
 def test_career_lists_games_no_season_holds_as_other(pic, monkeypatch):
