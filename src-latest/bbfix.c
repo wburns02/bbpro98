@@ -377,7 +377,7 @@ static uint32_t pref_base(HMODULE m){ static struct { HMODULE m; uint32_t pref; 
     char p[MAX_PATH]; if(!GetModuleFileNameA(m,p,MAX_PATH)) return 0;
     for(int i=0;i<nc;i++) if(c[i].m==m&&!strcmp(c[i].path,p)) return c[i].pref;
     uint8_t b[1024]; DWORD got=0; HANDLE f=CreateFileA(p,GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE,0,OPEN_EXISTING,0,0); if(f==INVALID_HANDLE_VALUE) return 0;
-    ReadFile(f,b,sizeof b,&got,0); CloseHandle(f); uint32_t e=got>=0x40?*(uint32_t*)(b+0x3c):0; if(e+0x38>got) return 0;
+    ReadFile(f,b,sizeof b,&got,0); CloseHandle(f); uint32_t e=got>=0x40?*(uint32_t*)(b+0x3c):0; if(e>got||got-e<0x38) return 0;   /* e+0x38 could wrap */
     uint32_t pref=*(uint32_t*)(b+e+0x34); int i=nc<16?nc++:15; c[i].m=m; c[i].pref=pref; strcpy(c[i].path,p); return pref; }
 static void *m_addr(const char *module,uint32_t va){ HMODULE m=GetModuleHandleA(module); if(!m) return 0;
     IMAGE_NT_HEADERS *nt=(IMAGE_NT_HEADERS*)((char*)m+((IMAGE_DOS_HEADER*)m)->e_lfanew); uint32_t rva=va-pref_base(m);
@@ -446,9 +446,13 @@ static void mods_apply(HMODULE m,const char *bn){
             VirtualProtect(p,h->n,PAGE_EXECUTE_READWRITE,&old); memcpy(p,h->inst,h->n); VirtualProtect(p,h->n,old,&o2); FlushInstructionCache(GetCurrentProcess(),p,h->n); }
         T("MOD    %s: applied %d hooks to %s at %p (pref %08x)",mod_names[o],cnt,bn,m,pref); } }
 static void mods_load(void){
-    char list[512],dir[MAX_PATH]; GetPrivateProfileStringA("mods","load","",list,sizeof list,ini_path); if(!list[0]) return;
+    char list[2048],dir[MAX_PATH]; DWORD len=GetPrivateProfileStringA("mods","load","",list,sizeof list,ini_path); if(!list[0]) return;
+    if(len>=sizeof list-1) T("MOD    [mods] load= is longer than %u characters; the rest is ignored",(unsigned)sizeof list-1);
     strcpy(dir,ini_path); *strrchr(dir,'\\')=0;
-    for(char *s=strtok(list,", ");s&&nmods<32;s=strtok(0,", ")){ char p[MAX_PATH]; snprintf(p,sizeof p,"%s\\%s",dir,s);
+    for(char *s=strtok(list,", ");s&&nmods<32;s=strtok(0,", ")){ char p[MAX_PATH];
+        /* a mod is a file under the game folder (mods\x.dll): no drive, no absolute path, no way up */
+        if(strstr(s,"..")||strchr(s,'/')||strchr(s,':')||s[0]=='\\'){ T("MOD    %s: refused, not a path under the game folder",s); continue; }
+        snprintf(p,sizeof p,"%s\\%s",dir,s);
         HMODULE dl=LoadLibraryA(p); bbmod_init_fn init=dl?(bbmod_init_fn)GetProcAddress(dl,"bbmod_init"):0;
         if(!init){ T("MOD    %s: load failed (%s, err=%lu)",s,dl?"no bbmod_init export":"LoadLibrary",GetLastError()); continue; }
         snprintf(mod_names[nmods],64,"%s",s); cur_owner=nmods++; int first=nmh, r=init(&mod_api); cur_owner=-1;

@@ -7,11 +7,14 @@ EXHIBITION PLAY, D from ARCADE PLAY, S from WWW SITE), so the glyphs and palette
 originals as WEB*.BMP.orig and every run composes from those, so it is safe to repeat. Writes game files: run it on
 an install, never on the repo.
 """
+import io
 import os
-import shutil
 import sys
 
 from PIL import Image
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from atomicfile import write_atomic  # noqa: E402
 
 ROWS = (3, 28)                   # text band; rows outside it (the bevel) stay as they are
 CLEAR = (18, 129)                # WWW SITE columns to repaint
@@ -34,7 +37,8 @@ def compose(d, state):
     web = find(d, 'WEB%s.BMP' % state)
     orig = web + '.orig'
     if not os.path.exists(orig):
-        shutil.copy2(web, orig)
+        with open(web, 'rb') as fh:
+            write_atomic(orig, fh.read())   # a torn .orig would be the source of every later run
     src = {'WEB': Image.open(orig)}
     for k in ('LM', 'EXHB', 'BUTN'):
         src[k] = Image.open(find(d, '%s%s.BMP' % (k, state)))
@@ -50,7 +54,9 @@ def compose(d, state):
     for k, a, b in LETTERS:
         new.paste(src[k].crop((a, ROWS[0], b + 1, ROWS[1])), (x, ROWS[0]))
         x += b - a + 1 + GAP
-    new.save(web)
+    buf = io.BytesIO()
+    new.save(buf, format='BMP')
+    write_atomic(web, buf.getvalue())
 
 
 def main():

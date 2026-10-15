@@ -38,6 +38,8 @@ import os
 import struct
 import sys
 
+from atomicfile import write_atomic
+
 # ---------------------------------------------------------------- crush (LZ)
 def uncrush(blob):
     ng = blob[0] | (blob[1] << 8)
@@ -355,6 +357,8 @@ def encode_file(meta, frames):
 
 
 def main():
+    if len(sys.argv) != 4:
+        raise SystemExit('usage: codec.py decode in.bin out/ | encode out/ in.bin')
     cmd, src, dst = sys.argv[1], sys.argv[2], sys.argv[3]
     if cmd == 'decode':
         with open(src, 'rb') as f:
@@ -379,12 +383,13 @@ def main():
             if len(px) != fr['w'] * fr['h']:
                 raise SystemExit('frame %s size mismatch' % fr['file'])
             frames.append((fr['w'], fr['h'], px))
-        data = encode_file(man['meta'], frames)
-        with open(dst, 'wb') as f:
-            f.write(data)
+        write_atomic(dst, encode_file(man['meta'], frames))
     else:
         raise SystemExit('usage: codec.py decode in.bin out/ | encode out/ in.bin')
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except (struct.error, ValueError, IndexError, KeyError, TypeError, UnicodeDecodeError) as e:
+        raise SystemExit('chunkgfx: bad input (%s: %s)' % (type(e).__name__, e))

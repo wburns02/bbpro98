@@ -7,7 +7,8 @@
    open <spooldir> <path>: prints OPEN <mm_open_page(path)> for that spool folder; only useful with no fresh alive.txt
      there, where it returns 1 at once (a live bridge would open the reader window).
    visible: makes a window with make_win and prints VISIBLE 1 when it is shown (a top-level popup without WS_VISIBLE
-     and no ShowWindow is never mapped, so the menu would open invisibly). */
+     and no ShowWindow is never mapped, so the menu would open invisibly).
+   hots <header>: parses the header ('|' for newlines), runs load_hots on a 680x450 picture and prints HOTS <count>. */
 #include "../mods/modmenu.c"
 
 static void tlog(const char *f, ...) { (void)f; }
@@ -67,6 +68,20 @@ int main(int argc, char **argv) {
         snprintf(line, sizeof line, "VISIBLE %d\n", h && IsWindowVisible(h) ? 1 : 0);
         wrs(line);
         if (h) DestroyWindow(h);
+        return 0;
+    }
+    if (argc == 3 && !strcmp(argv[1], "hots")) {
+        static NewsState st;
+        char *buf = malloc(strlen(argv[2]) + 1), *q;
+        if (!buf) return 4;
+        strcpy(buf, argv[2]);
+        for (q = buf; *q; q++)
+            if (*q == '|') *q = '\n';
+        if (mm_parse(buf, &st.pg)) { wrs("BAD\n"); return 4; }
+        st.bw = 680; st.bh = 450;
+        load_hots(&st);
+        snprintf(line, sizeof line, "HOTS %d\n", st.nhot);
+        wrs(line);
         return 0;
     }
     if (argc < 4 || strcmp(argv[1], "send")) {

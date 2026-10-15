@@ -49,6 +49,8 @@ import json
 import struct
 import sys
 
+from atomicfile import write_atomic
+
 POINT_NAMES = (
     "pelvis", "throw_hand", "glove_hand", "throw_side_foot", "glove_side_foot",
     "head", "throw_elbow", "glove_elbow", "throw_side_knee", "glove_side_knee",
@@ -282,9 +284,7 @@ def main(argv):
             raw = fh.read()
         with open(argv[3], "r") as fh:
             doc = json.load(fh)
-        blob = encode(raw, doc)
-        with open(argv[4], "wb") as fh:
-            fh.write(blob)
+        write_atomic(argv[4], encode(raw, doc))
         return 0
     sys.stderr.write(
         "usage: dmp.py decode in.bin out.json | dmp.py encode in.bin edited.json out.bin\n"
@@ -293,4 +293,7 @@ def main(argv):
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv))
+    try:
+        sys.exit(main(sys.argv))
+    except (struct.error, ValueError, IndexError, KeyError, TypeError, UnicodeDecodeError) as e:
+        sys.exit("dmp: bad input (%s: %s)" % (type(e).__name__, e))

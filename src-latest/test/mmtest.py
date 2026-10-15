@@ -191,6 +191,16 @@ def main():
         outs.append((r.stdout.decode('latin-1').strip(), leftover(sp, 'q', '')))
     check(13, 'open_page with no bridge', outs == [('OPEN 1', [])] * 2 and time.time() - t0 < 20, 'out %r' % outs)
 
+    # 14-15. load_hots: a huge hots count is clamped (no 2e9-step loop on the UI thread); x + w that wraps is refused
+    t0 = time.time()
+    try:
+        got = run(['hots', 'status=ok|hots=2000000000|hot.0=10,10,50,20\t/news/x'], timeout=30).stdout
+    except subprocess.TimeoutExpired:
+        got = b'timed out'
+    check(14, 'huge hots count', got == b'HOTS 1\n' and time.time() - t0 < 30, 'out %r' % got[:100])
+    r = run(['hots', 'status=ok|hots=2|hot.0=2147483640,0,100,10\t/news/a|hot.1=0,0,680,450\t/news/b'])
+    check(15, 'wrapping hot rect', r.stdout == b'HOTS 1\n', 'out %r' % r.stdout[:100])
+
     # 7. the real bridge, when it imports
     sys.path.insert(0, os.path.join(ROOT, 'news'))
     try:

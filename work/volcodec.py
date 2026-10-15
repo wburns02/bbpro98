@@ -49,6 +49,8 @@ import os
 import struct
 import sys
 
+from atomicfile import write_atomic
+
 MAGIC = b"VOLM"
 NAME_LEN = 12
 REC_LEN = 18  # name/filler[12] + u16 dir+type + u32 offset
@@ -181,8 +183,7 @@ def pack(outdir, inpath):
     head = (MAGIC + struct.pack("<IBBH", meta.get("version", 1), 0, len(dirs),
                                 len(dirblk)) + dirblk
             + struct.pack("<HI", n, REC_LEN * n))
-    with open(inpath, "wb") as fh:
-        fh.write(head + b"".join(recs) + b"".join(blobs))
+    write_atomic(inpath, head + b"".join(recs) + b"".join(blobs))
 
 
 def main():
