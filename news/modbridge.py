@@ -3,9 +3,10 @@ the game's Mods/spool directory. The game runs in a sandbox with no network, so 
 repo's own Python: league news pages (server.route), the player development pages under /news/development/ and the
 Mods/focus.txt they set (focus.py), which aging.dll reads at each offseason, the offseason trade pages under /news/gm/
 (aigm.py: the computer teams' preseason trades, written into the ASN, and each human team's proposals to accept or
-reject), the player cards under /news/card/ (the Team Statistics screen's click, playercard.dll), Create a Player
-(create.validate and createweb.commit), and a season built from the Lahman database
-(work/lahman/build.py, run as a subprocess). Standard library only.
+reject; roster.py: a Lahman build's real midseason moves, applied to the ASN as the season is played), the player
+cards under /news/card/ (the Team Statistics screen's click, playercard.dll), Create a Player (create.validate and
+createweb.commit), and a season built from the Lahman database (work/lahman/build.py, run as a subprocess). Standard
+library only.
 
 The DLL writes q<ID>.tmp and renames it to q<ID>.req. The bridge claims the request by renaming it to q<ID>.work,
 writes r<ID>.tmp and renames that to r<ID>.rsp, then removes the .work file. A picture page (a player card tab drawn
@@ -41,6 +42,7 @@ import history
 import hof
 import portrait
 import recap
+import roster
 import scout
 import server
 import watch
@@ -1305,8 +1307,8 @@ _GM_LOCK = threading.Lock()
 
 def _gm_league(ctx, stem):
     """What the offseason pages read of one association (STEM upper-cased): its label, season year, teams, players, the
-    ASN's path and whether its season has started (a game has been played). None when the game has no association with
-    that STEM."""
+    regular-season games, the ASN's path and whether its season has started (a game has been played). None when the
+    game has no association with that STEM."""
     stem = stem.upper()
     asn = watch.associations(ctx.game).get(stem)
     if asn is None:
@@ -1315,7 +1317,7 @@ def _gm_league(ctx, stem):
     pyr = gamedata.find(os.path.join(ctx.game, 'Assn'), stem + '.PYR')
     return types.SimpleNamespace(stem=stem, asn=asn, label=createweb._label(stem, asn), year=info['season_year'],
                                  teams=info['teams'], players=gamedata.players(pyr) if pyr else {},
-                                 started=any(g['played'] for g in info['games']))
+                                 games=info['games'], started=any(g['played'] for g in info['games']))
 
 
 def _ledger_for(ctx, stem, year):
@@ -1430,6 +1432,8 @@ def _gm_reply(ctx, lg, status=200, note=''):
             body += ["Computer-run teams trade bench players to fill each other's needs.",
                      'Human-run teams only get proposals.']
             links += [('Run computer trades', base + 'run')]
+    if _moves_doc(ctx, lg) is not None:
+        links += [('Midseason moves', base + 'moves')]
     links += [('Player development', '/news/development/%s/' % lg.stem), ('League news', '/news/%s/' % lg.stem)]
     text = ([note, ''] if note else []) + _heading(title) + body
     return status, base, title, '\n'.join(text), links
@@ -1527,11 +1531,111 @@ def _gm_reject(ctx, stem, n):
         return _gm_reply(ctx, lg, 200, 'Proposal rejected.')
 
 
+# The real midseason moves of a Lahman build (--moves): <game>/Assn/<STEM>.MOV lists them and roster.py applies each one
+# once its team has played enough of the season. The season's ledger is <data>/<STEM>/moves.json.
+MOVES_FILE = 'moves.json'
+NO_MOVES_TEXT = 'No real midseason moves for this association.'
+
+
+def _move_ok(m):
+    """True when a MOV move has the fields the page and roster.due read, with the right types."""
+    return (isinstance(m, dict) and all(type(m.get(k)) is int for k in ('pid', 'from', 'to'))
+            and isinstance(m.get('name'), str) and type(m.get('at')) in (int, float))
+
+
+def _moves_doc(ctx, lg):
+    """The association's MOV document for its season year, or None: no file, an unreadable one, one of another kind or
+    season, or one whose moves are not all well formed."""
+    path = gamedata.find(os.path.join(ctx.game, 'Assn'), lg.stem + '.MOV')
+    doc = watch.read_json(path) if path else None
+    if doc is None or doc.get('kind') != 'moves' or doc.get('year') != lg.year or not isinstance(doc.get('moves'), list):
+        return None
+    return doc if all(_move_ok(m) for m in doc['moves']) else None
+
+
+def _moves_ledger(ctx, lg):
+    """The ledger of lg's season (roster.apply_due's), or None: a missing or unreadable file, one of another kind or
+    season, or one whose entries are not dicts."""
+    led = watch.read_json(os.path.join(ctx.data, lg.stem, MOVES_FILE))
+    if led is None or led.get('kind') != 'moves' or led.get('year') != lg.year or not isinstance(led.get('done'), dict):
+        return None
+    return led if all(isinstance(e, dict) for e in led['done'].values()) else None
+
+
+def _moves_reply(ctx, lg, status=200, note=''):
+    """(status, path, title, text, links) for the midseason moves of lg: one line per move with its status (done and
+    skipped from the ledger, else due or pending), the Apply due moves link when any is due, after an optional note."""
+    base = '/news/gm/%s/' % lg.stem
+    title = 'Midseason moves: %s' % lg.label
+    doc = _moves_doc(ctx, lg)
+    body, links = [], []
+    if doc is None or not doc['moves']:
+        body += [NO_MOVES_TEXT]
+    else:
+        led = _moves_ledger(ctx, lg)
+        done = led['done'] if led else {}
+        due = set(roster.due(doc, {'games': lg.games}, led))
+        for i, m in enumerate(doc['moves']):
+            e = done.get(str(i), {})
+            if e.get('status') == 'done':
+                state = 'done'
+            elif e.get('status') == 'skipped':
+                state = 'skipped: %s' % e.get('reason', '')
+            else:
+                state = 'due' if i in due else 'pending'
+            body.append(_plain('%s: %s to %s at %d%% of the season (%s)' % (
+                m['name'], _team_name(lg, m['from']), _team_name(lg, m['to']), round(m['at'] * 100), state)))
+        if due:
+            links += [('Apply due moves', base + 'moves/apply')]
+    links += [('Offseason trades', base), ('League news', '/news/%s/' % lg.stem)]
+    text = ([note, ''] if note else []) + _heading(title) + body
+    return status, base + 'moves', title, '\n'.join(text), links
+
+
+def _team_name(lg, tid):
+    return lg.teams.get(tid, {}).get('name') or 'Team %d' % tid
+
+
+def _gm_moves(ctx, stem):
+    with _GM_LOCK:
+        lg = _gm_league(ctx, stem)
+        return None if lg is None else _moves_reply(ctx, lg)
+
+
+def _gm_moves_apply(ctx, stem):
+    """Applies the moves that are due (roster.apply_due) to the ASN, with a copy of it first, and writes the ledger. The
+    game must not hold the files. Not found without a MOV for the season; 409 when none is due."""
+    with _GM_LOCK:
+        lg = _gm_league(ctx, stem)
+        doc = None if lg is None else _moves_doc(ctx, lg)
+        if doc is None:
+            return None
+        if _held(ctx, lg):
+            return _moves_reply(ctx, lg, 409, OPEN_TEXT % lg.label)
+        led = _moves_ledger(ctx, lg)
+        assoc = {'games': lg.games}
+        todo = roster.due(doc, assoc, led)
+        if not todo:
+            return _moves_reply(ctx, lg, 409, 'No moves are due.')
+        old = _read_bytes(lg.asn)
+        try:
+            new, led = roster.apply_due(old, doc, assoc, lg.players, lg.year, led)
+        except ValueError as e:
+            return _moves_reply(ctx, lg, 500, 'Move check failed: %s' % e)
+        if new != old:
+            _put_asn(ctx, lg, new)
+        watch.write_json(os.path.join(ctx.data, lg.stem, MOVES_FILE), led)
+        made = sum(led['done'][str(i)]['status'] == 'done' for i in todo)
+        return _moves_reply(ctx, lg, 200, '%d moves made, %d skipped.' % (made, len(todo) - made))
+
+
 GM_PAGES = (
     (re.compile(r'/news/gm/([A-Za-z0-9]{1,8})/'), _gm_view),
     (re.compile(r'/news/gm/([A-Za-z0-9]{1,8})/run'), _gm_run),
     (re.compile(r'/news/gm/([A-Za-z0-9]{1,8})/accept/([0-9]{1,3})'), _gm_accept),
     (re.compile(r'/news/gm/([A-Za-z0-9]{1,8})/reject/([0-9]{1,3})'), _gm_reject),
+    (re.compile(r'/news/gm/([A-Za-z0-9]{1,8})/moves'), _gm_moves),
+    (re.compile(r'/news/gm/([A-Za-z0-9]{1,8})/moves/apply'), _gm_moves_apply),
 )
 
 

@@ -13,6 +13,11 @@ rotations and bullpens; players rated from that season's stats (ratings.py); car
 and last season's line. Template slots no real team fills get filler teams from the template's own generated
 players; real teams that do not fit, and roster overflow, go to the free-agent pool.
 
+With --moves a player who changed teams that season starts with his first club (not the one he played most games
+for), and the real midseason moves are written to <install>/Assn/<NAME>.MOV for news/roster.py to apply as the
+season is played (moves.py). Without it no .MOV is written and nothing else changes (a .MOV left by an earlier
+--moves build of the same name is renamed to .MOV.old so its moves are never applied to the new rosters).
+
 Game files (templates, the install's MLBPA96E.PYR, _DEFAULT.ASN and _DEFAULT.PYR) are read at build time and never copied into
 the repository.
 """
@@ -29,7 +34,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import ctree                                             # noqa: E402
 from stats import BAT as STATS_BAT, PIT as STATS_PIT     # noqa: E402
-from lahman import lahdb, structure, ratings as RT       # noqa: E402
+from lahman import lahdb, structure, moves as M, ratings as RT       # noqa: E402
 from lahman.asnfile import AsnFile, put_str, cstr          # noqa: E402
 
 DB = '/mnt/nvme/bbpro98/lahman2025/lahman2025.sqlite'     # work/lahman/load_csv.py, SABR 2025 release
@@ -198,6 +203,51 @@ def template_slots(asn, shape):
 def primary_owner(app):
     """playerID -> the teamID he played the most games for (ties: teamID order)."""
     return {pid: min(teams.items(), key=lambda kv: (-kv[1]['G_all'], kv[0]))[0] for pid, teams in app.items()}
+
+
+def mov_doc(year, moves, stint_map, key_of, id_of, listed, names):
+    """(doc, written, dropped): the MOV file's content for the moves moves_for made (written + dropped = len(moves)).
+    key_of maps a Lahman teamID to its team key in the association (real teams only), id_of a playerID to his game id,
+    listed a team key to the game ids on its active or reserve list, names a playerID to "First Last". A move is kept
+    when both its teams are in key_of and the player is on the from team's list (his first move) or his earlier move
+    was kept; a later move of a dropped one is dropped. The kept ones are in play order: by at (a player's later move
+    never before his earlier one), then game id, then stint order."""
+    kept, alive, floor = [], {}, {}
+    chain = sorted(moves, key=lambda m: (str(m['player']), stint_map[m['player']].index(m['from'])))
+    for rank, m in enumerate(chain):
+        pid = m['player']
+        ok = m['from'] in key_of and m['to'] in key_of
+        if ok and pid not in alive:
+            ok = id_of.get(pid) in listed.get(key_of[m['from']], ())
+        ok = ok and alive.get(pid, True)
+        alive[pid] = ok
+        if ok:
+            floor[pid] = at = max(m['at'], floor.get(pid, 0))
+            kept.append((at, id_of[pid], rank, {'pid': id_of[pid], 'name': names.get(pid) or str(pid),
+                                                'from': key_of[m['from']], 'to': key_of[m['to']], 'at': at}))
+    kept.sort(key=lambda k: k[:3])
+    return ({'kind': 'moves', 'year': year, 'moves': [k[3] for k in kept]}, len(kept), len(moves) - len(kept))
+
+
+def write_moves(install, name, doc):
+    """Writes doc as JSON to <install>/Assn/<name>.MOV and returns the path. Refuses (SystemExit, nothing written) a
+    symlink at the target; the file goes to <path>.tmp (O_EXCL and O_NOFOLLOW, as write_outputs) and is renamed in."""
+    path = os.path.join(install, 'Assn', name + '.MOV')
+    if os.path.islink(path):
+        raise SystemExit('refusing to write %s: it is a symlink' % path)
+    tmp = path + '.tmp'
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0), 0o666)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as fh:
+            json.dump(doc, fh, indent=1, sort_keys=True)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.lexists(tmp):
+            os.remove(tmp)
+        raise
+    return path
 
 
 def pa_of(b):
@@ -504,7 +554,7 @@ def era_line(year, era):
         year, era['alpha']['bat'], era['alpha']['pit'], {k: v for k, v in era['offset'].items() if v})
 
 
-def build(year, install, db=DB, name=None, log=print, leagues=lahdb.MLB_LEAGUES, force=False, era=None):
+def build(year, install, db=DB, name=None, log=print, leagues=lahdb.MLB_LEAGUES, force=False, era=None, moves=False):
     """era is a ratings.load_era dict (alpha blends, rating offsets); None builds with today's ratings."""
     con = lahdb.connect(db)
     teams = lahdb.teams(con, year, leagues)
@@ -525,6 +575,12 @@ def build(year, install, db=DB, name=None, log=print, leagues=lahdb.MLB_LEAGUES,
     model = RT.Model.fit(os.path.join(install, 'Assn', 'MLBPA96E.PYR'), con)
     model.set_era(era, season=season, con=con)
     owner = primary_owner(season.app)
+    stint_map = {}
+    if moves:
+        # a player who changed clubs starts with his first one, when it is in the association
+        stint_map = M.stints(con, year, leagues)
+        in_assn = {t for t in team_of_slot.values() if t}
+        owner.update({pid: t for pid, t in M.first_team(stint_map).items() if pid in owner and t in in_assn})
     rosters = {}
     for pid, tid in owner.items():
         rosters.setdefault(tid, []).append(pid)
@@ -611,6 +667,7 @@ def build(year, install, db=DB, name=None, log=print, leagues=lahdb.MLB_LEAGUES,
     fillers = iter(generated)
     filler_n = 0
     free = []
+    listed = {}                                  # t key -> game ids on its active or reserve list (real teams)
     for off, p in sorted(asn.recs['t'], key=lambda r: asn.key('t', r[1])):
         k = asn.key('t', p)
         tid = team_of_slot.get(k)
@@ -693,6 +750,7 @@ def build(year, install, db=DB, name=None, log=print, leagues=lahdb.MLB_LEAGUES,
             conv = lambda xs: [add_real(x) if isinstance(x, str) else x for x in xs]
             active, reserve, order, align, rot, pen = (conv(active), conv(reserve), conv(order), conv(align),
                                                        conv(rot), conv(pen))
+            listed[k] = set(active) | set(reserve)
             log('  %s %-28s %-24s act %d res %d over %d rot %d pen %d%s' % (
                 abbrev, t['name'], park[:24], len(active), len(reserve), len(over), len(rot), len(pen),
                 ' (+%d generated)' % len(fs_recs) if fs_recs else ''))
@@ -727,6 +785,18 @@ def build(year, install, db=DB, name=None, log=print, leagues=lahdb.MLB_LEAGUES,
                     struct.pack('<%dH' % len(free_ids), *free_ids),
              'DAT': dat_out}
     out = write_outputs(install, name, blobs, force, log)
+    mov_path = os.path.join(install, 'Assn', name + '.MOV')
+    if moves:
+        key_of = {t: k for k, t in team_of_slot.items() if t}
+        names = {pid: ('%s %s' % (p['first'], p['last'])).strip() for pid, p in people.items()}
+        doc, written, dropped = mov_doc(year, M.moves_for(stint_map, season.app, {t['teamID']: t['G'] for t in teams}),
+                                        stint_map, key_of, id_of, listed, names)
+        write_moves(install, name, doc)
+        log('moves: %d written, %d dropped' % (written, dropped))
+    elif os.path.lexists(mov_path):
+        # an earlier --moves build's list would be applied to this association's different rosters: set it aside
+        os.replace(mov_path, mov_path + '.old')
+        log('moved %s aside to %s.old: it was left from an earlier --moves build' % (mov_path, mov_path))
     log('wrote %s: %d players (%d free agents), %d stat lines' % (name, len(new_recs), len(free_ids), len(lines)))
     return out
 
@@ -740,6 +810,9 @@ def main(argv=None):
     ap.add_argument('--name', help='file name (max 8 chars), default <teams>L<year>')
     ap.add_argument('--force', action='store_true',
                     help='replace an existing association; a copy is kept under <install>/build-backup')
+    ap.add_argument('--moves', action='store_true',
+                    help='real midseason moves: multi-team players start with their first club and a .MOV file '
+                         'lists the moves for news/roster.py (default off)')
     ap.add_argument('--templates', help='directory of minted structure templates (default %s)' % TEMPLATES)
     ap.add_argument('--leagues', default=','.join(lahdb.MLB_LEAGUES),
                     help='comma-separated Lahman lgIDs to build (default the majors; e.g. NN2,NAL for 1937-48)')
@@ -779,7 +852,7 @@ def main(argv=None):
             print('warning: %s has no %d; League News will show 16-letter team names until work/lahman/teamnames.py is rerun'
                   % (teamnames.OUT, a.year))
     print(era_line(a.year, era))
-    build(a.year, a.install, a.db, a.name, leagues=leagues, force=a.force, era=era)
+    build(a.year, a.install, a.db, a.name, leagues=leagues, force=a.force, era=era, moves=a.moves)
     return 0
 
 
