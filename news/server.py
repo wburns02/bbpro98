@@ -36,6 +36,8 @@ MONTHS = ('January', 'February', 'March', 'April', 'May', 'June', 'July', 'Augus
 LEADERS = (('avg', 'AVG'), ('hr', 'HR'), ('rbi', 'RBI'), ('w', 'W'), ('era', 'ERA'), ('so', 'SO'), ('sv', 'SV'))
 MOVES_BOX = 5       # newest transaction lines in the association's side column
 NOTE_RE = re.compile(r'[0-9]{1,6}')
+HOF_RE = re.compile(r'([0-9]{4})-([0-9]{1,5})')      # a Hall of Fame story: <induction year>-<player id>
+HOF_EMPTY = 'No one has been inducted yet. Players appear on the ballot five years after they retire.'
 SIGNINGS = 20       # newest contract events on the payroll page
 CONTRACT_STATUS = {'pre': 'Pre-arb', 'arb': 'Arbitration', 'fa': 'Free agent contract'}
 STAT_WORDS = {'hr': 'home run', 'h': 'hit', 'sb': 'stolen base', 'w': 'win', 'sv': 'save', 'so_p': 'strikeout'}
@@ -441,7 +443,8 @@ def _association(data_dir, assn, qs):
     name = _text(meta.get('name')) or assn
     folder, home = data_dir / assn, '/news/%s/' % assn
     moves = _moves_box(data_dir, assn) if page == 1 else ''
-    season = _season_links(folder, home, _rookie_years(data_dir, assn)) if page == 1 else ''
+    season = (_season_links(folder, home, _rookie_years(data_dir, assn), _read_obj(folder / 'hof.json') is not None)
+              if page == 1 else '')
     past = _past_box(data_dir, assn) if page == 1 else ''
     replay = _replay_link(folder, home) if page == 1 else ''
     payroll = _payroll_box(data_dir, assn) if page == 1 else ''
@@ -867,15 +870,18 @@ def _rookie_years(data_dir, assn):
     return sorted((int(m.group(1)) for m in found if m and (folder / m.group(0)).is_file()), reverse=True)
 
 
-def _season_links(folder, home, rookie_years=()):
+def _season_links(folder, home, rookie_years=(), hall=False):
     """The Season box for the side column: postseason above awards above preview, each only when its file exists, then
-    a link per year in rookie_years (the current front page passes them; a past season's does not). '' for none."""
+    a link per year in rookie_years and, when hall is true, one to the Hall of Fame (the current front page passes
+    them; a past season's does not). '' for none."""
     links = ['<li><a href="%s%s">%s</a></li>' % (esc(home), which, label)
              for which, label in (('postseason', 'Postseason'), ('awards', 'Season awards'),
                                   ('preview', 'Season preview'))
              if _season_file(folder, which) is not None]
     links += ['<li><a href="%srookies/%04d">%04d rookie class</a></li>' % (esc(home), y, y)
               for y in rookie_years]
+    if hall:
+        links.append('<li><a href="%shof">Hall of Fame</a></li>' % esc(home))
     if not links:
         return ''
     return '<section class="season"><h2>Season</h2><ul>%s</ul></section>' % ''.join(links)
@@ -936,6 +942,82 @@ def _rookies(data_dir, assn, year):
     if rec is None:
         return _not_found()
     return _rookies_page(assn, year, rec, '/news/%s/' % assn)
+
+
+def _hof_line(entry):
+    """An inductee's short career line from his entry's totals: 'G, H, HR, RBI, AVG' for a hitter ('1450 G, 1700 H,
+    120 HR, 800 RBI, .301 AVG'), 'W-L, ERA, SO, SV' for a pitcher ('212-150, 3.12 ERA, 2200 SO, 3 SV'). A rate with
+    nothing to divide by is '---'; a total that is not an int counts 0."""
+    line = _d(entry.get('line'))
+
+    def n(key):
+        return line.get(key) if type(line.get(key)) is int else 0
+    if entry.get('kind') == 'pit':
+        era = '%.2f' % (27 * n('er') / n('outs')) if n('outs') > 0 else '---'
+        return '%d-%d, %s ERA, %d SO, %d SV' % (n('w'), n('l'), era, n('so'), n('sv'))
+    avg = _pct_text(n('h') / n('ab')) if n('ab') > 0 else '---'
+    return '%d G, %d H, %d HR, %d RBI, %s AVG' % (n('g'), n('h'), n('hr'), n('rbi'), avg)
+
+
+def _kind_text(kind):
+    return 'Pitcher' if kind == 'pit' else 'Hitter'
+
+
+def _hof_page(data_dir, assn):
+    """The Hall of Fame page: the inductees grouped by induction year, newest first (a name links its story when the
+    story file exists), then the latest ballot, best first. HOF_EMPTY while nobody is inducted. 404 without the
+    association's meta.json; a missing or unreadable hof.json is the empty page."""
+    meta = _read_obj(data_dir / assn / 'meta.json')
+    if meta is None:
+        return _not_found()
+    name = _text(meta.get('name')) or assn
+    doc = _read_obj(data_dir / assn / 'hof.json') or {}
+    classes = {}
+    for e in _dicts(doc.get('inducted')):
+        if type(e.get('year')) is int:
+            classes.setdefault(e['year'], []).append(e)
+    sections = []
+    for year in sorted(classes, reverse=True):
+        rows = []
+        for e in sorted(classes[year], key=lambda e: (-_int(e, 'pct'), _text(e.get('name')))):
+            key = e.get('story')
+            who = esc(e.get('name'))
+            if (isinstance(key, str) and HOF_RE.fullmatch(key)
+                    and (data_dir / assn / 'hof' / (key + '.json')).is_file()):
+                who = '<a href="/news/%s/hof/%s">%s</a>' % (esc(assn), esc(key), who)
+            rows.append([_Markup(who), _kind_text(e.get('kind')), e.get('retired'), e.get('pct'), _hof_line(e)])
+        sections.append(_table('Class of %d' % year, ('Player', 'Position', 'Retired', 'Pct', 'Career'), rows,
+                               text=(0, 1, 4)))
+    ballot = sorted(_dicts(doc.get('ballot')), key=lambda b: (-_int(b, 'pct'), _text(b.get('name'))))
+    rows = [[b.get('name'), _kind_text(b.get('kind')), b.get('retired'), b.get('years_on'), b.get('pct')]
+            for b in ballot]
+    year = doc.get('year')
+    caption = 'Ballot, %d' % year if type(year) is int else 'Ballot'
+    inducted = ''.join(sections) or '<p class="empty">%s</p>' % esc(HOF_EMPTY)
+    table = _table(caption, ('Player', 'Position', 'Retired', 'Years on', 'Pct'), rows, text=(0, 1)) if rows else ''
+    body = (_masthead('Hall of Fame') + _league_nav(assn, {'association': name})
+            + '<section>%s</section><section>%s</section>' % (inducted, table))
+    return _page_reply(200, 'Hall of Fame', body)
+
+
+def _hof_story(data_dir, assn, key):
+    """An induction story in the story layout, then the career totals; 404 when its file is missing, unreadable or not
+    an induction story."""
+    rec = _read_obj(data_dir / assn / 'hof' / (key + '.json'))
+    if rec is None or rec.get('kind') != 'hof':
+        return _not_found()
+    facts = _d(rec.get('facts'))
+    line = _d(facts.get('line'))
+    if facts.get('kind') == 'pit':
+        table = _table('Career pitching', ('Seasons', 'G', 'W', 'L', 'SV', 'IP', 'SO', 'ERA'),
+                       [[facts.get('seasons'), line.get('g'), line.get('w'), line.get('l'), line.get('sv'),
+                         facts.get('ip'), line.get('so'), facts.get('era')]], text=0)
+    else:
+        table = _table('Career batting', ('Seasons', 'G', 'AB', 'R', 'H', 'HR', 'RBI', 'SB', 'AVG'),
+                       [[facts.get('seasons'), line.get('g'), line.get('ab'), line.get('r'), line.get('h'),
+                         line.get('hr'), line.get('rbi'), line.get('sb'), facts.get('avg')]], text=0)
+    back = '<p class="nav"><a href="/news/%s/hof">Hall of Fame</a></p>' % esc(assn)
+    return _story_layout(assn, rec, 'Hall of Fame, %s' % _text(facts.get('year')), [table, back])
 
 
 def _move_log(data_dir, assn):
@@ -1293,6 +1375,10 @@ def route(data_dir, target):
         return _move_note(data_dir, assn, rest[2])
     if len(rest) == 2 and rest[1] == 'champions':
         return _champions(data_dir, assn)
+    if len(rest) == 2 and rest[1] == 'hof':
+        return _hof_page(data_dir, assn)
+    if len(rest) == 3 and rest[1] == 'hof' and HOF_RE.fullmatch(rest[2]):
+        return _hof_story(data_dir, assn, rest[2])
     if len(rest) == 2 and rest[1] == 'payroll':
         return _payroll(data_dir, assn)
     if len(rest) == 3 and rest[1] == 'payroll' and TID_RE.fullmatch(rest[2]) and str(int(rest[2])) == rest[2]:

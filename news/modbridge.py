@@ -38,6 +38,7 @@ import createweb
 import focus
 import gamedata
 import history
+import hof
 import portrait
 import recap
 import scout
@@ -954,6 +955,15 @@ def _watch_folder(ctx, stem):
     return folder if folder and os.path.isdir(folder) else None
 
 
+def _hall_of_fame(ctx, lg, pid):
+    """The year pid was inducted into the association's Hall of Fame, from <watcher folder>/hof.json, or None: no
+    folder, no file, a file torn or not an hof dict, or he is not among its inductees. Read once per card render."""
+    folder = _watch_folder(ctx, lg.stem)
+    if folder is None:
+        return None
+    return hof.inducted_year(server._read_obj(os.path.join(folder, 'hof.json')), pid)
+
+
 def _card_news(folder, lg, pid):
     """The news that names a player, newest first, as (label, path): the game stories from the watcher's folder and
     its past/<D> seasons whose text has his name (a story's place in time is its season, which is the association's
@@ -1011,6 +1021,9 @@ def _card_page(ctx, stem, pid):
         lines.append('Age: %d' % (lg.year - p['born']))
     if p['bats'] or p['throws']:
         lines.append('Bats/throws: %s/%s' % (p['bats'] or '?', p['throws'] or '?'))
+    hall = _hall_of_fame(ctx, lg, pid)
+    if hall is not None:
+        lines.append('Hall of Fame, %d' % hall)
     rows = _rating_rows(rec, p['pos'])
     if rows:
         lines += [''] + _grid([['Ratings', 'Now', 'Peak']] + rows)
@@ -1260,6 +1273,9 @@ def _card_image(ctx, fonts, stem, pid, tab, page):
         head.append('Age %d' % (lg.year - p['born']))
     head.append('Bats %s, throws %s' % (p['bats'] or '?', p['throws'] or '?'))
     line2 = ['Born %s' % who[2].strftime('%b %-d, %Y') if who[2] else 'Birth date unknown']
+    hall = _hall_of_fame(ctx, lg, pid)
+    badge = ['Hall of Fame, %d' % hall] if hall is not None else []
+    line2 += badge
     body = _card_tab_body(ctx, lg, pid, tab, page, p, rec, base, who)
     tabs = [(label, base + ('/' + key if key else ''), key == tab) for key, label in CARD_TABS]
     card = {'title': p['name'], 'subtitle': lg.label, 'tabs': tabs,
@@ -1269,6 +1285,7 @@ def _card_image(ctx, fonts, stem, pid, tab, page):
     bmp, hots = cardimg.render(card, fonts)
     path = base + ('/' + tab if tab else '') + ('/%d' % page if tab == 'career' and page else '')
     header, text = _news_reply(200, path, p['name'], '\n'.join(_heading(_who(p, lg.year)) +
+                                                                badge +
                                                                 ['This card is a picture page.']),
                                [(label, target) for label, target, sel in tabs if not sel])
     header += [('image', '1'), ('hots', str(len(hots)))]

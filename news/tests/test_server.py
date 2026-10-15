@@ -1899,3 +1899,214 @@ def test_a_replay_file_with_nan_games_played_still_renders(scorecard):
     write(scorecard.root / '30L1998' / 'replay.json', replay_file(played=float('nan'), scheduled=float('inf')))
     status, _, body = scorecard.get('/news/30L1998/replay')
     assert status == 200 and 'After ' not in body.decode()
+
+
+BAT_LINE = {'g': 1450, 'ab': 5600, 'r': 900, 'h': 1700, 'hr': 120, 'rbi': 800, 'sb': 40, 'seasons': 12}
+PIT_LINE = {'g': 500, 'w': 212, 'l': 150, 'sv': 3, 'outs': 6000, 'er': 700, 'so': 2200, 'seasons': 15}
+
+
+def inductee(pid, name, year, kind='bat', pct=80, story=True, **over):
+    base = {'pid': pid, 'name': name, 'kind': kind, 'year': year, 'retired': year - 6, 'score': 55.0, 'pct': pct,
+            'line': BAT_LINE if kind == 'bat' else PIT_LINE, 'teams': ['Reds'],
+            'story': '%d-%d' % (year, pid) if story else None}
+    base.update(over)
+    return base
+
+
+def hof_file(**over):
+    base = {'stem': '30L1998', 'updated': '2026-10-09T14:03:11', 'year': 2040, 'dropped': [],
+            'inducted': [inductee(100, 'Pat Doe', 2036), inductee(101, 'Cy Ace', 2036, 'pit', 91),
+                         inductee(102, 'Old Timer', 2034, pct=76, story=False)],
+            'ballot': [{'pid': 200, 'name': 'Low Man', 'kind': 'bat', 'retired': 2033, 'years_on': 2, 'score': 8.0,
+                        'pct': 12},
+                       {'pid': 201, 'name': 'High Man', 'kind': 'pit', 'retired': 2031, 'years_on': 4, 'score': 30.0,
+                        'pct': 45}]}
+    base.update(over)
+    return base
+
+
+def hof_story_file(pid, year, **over):
+    base = {'kind': 'hof', 'pid': pid, 'year': year, 'name': 'Pat Doe', 'headline': 'Doe goes into the Hall',
+            'body': 'Pat Doe is in.\nA fine career.', 'source': 'glm', 'created': '2036-10-09T14:03:11',
+            'facts': {'association': '1998 Major Leagues', 'name': 'Pat Doe', 'kind': 'bat', 'year': year,
+                      'seasons': 12, 'line': BAT_LINE, 'avg': '.304', 'pct': 80}}
+    base.update(over)
+    return base
+
+
+@pytest.fixture
+def hall(seeded):
+    """seeded, plus a Hall of Fame with three inductees (two in 2036, one in 2034), the first two with story files."""
+    write(seeded.root / '30L1998' / 'hof.json', hof_file())
+    write(seeded.root / '30L1998' / 'hof' / '2036-100.json', hof_story_file(100, 2036))
+    write(seeded.root / '30L1998' / 'hof' / '2036-101.json',
+          hof_story_file(101, 2036, name='Cy Ace', headline='Ace is in', source='template'))
+    return seeded
+
+
+def test_hof_page_with_nothing_yet_says_so(seeded):
+    status, headers, body = seeded.get('/news/30L1998/hof')
+    html = body.decode()
+    assert status == 200 and headers['content-type'] == HTML
+    assert '<title>Hall of Fame</title>' in html and '<h1>Hall of Fame</h1>' in html
+    assert ('<p class="empty">No one has been inducted yet. Players appear on the ballot five years after they retire.'
+            '</p>') in html
+    assert '<table' not in html and '1998 Major Leagues' in html
+    assert_secure(headers, body)
+
+
+def test_hof_page_groups_inductees_by_year_newest_first_with_story_links_and_career_lines(hall):
+    html = hall.get('/news/30L1998/hof')[2].decode()
+    assert 'No one has been inducted yet' not in html
+    assert html.index('Class of 2036') < html.index('Class of 2034')
+    c36 = html[html.index('<caption>Class of 2036'):html.index('<caption>Class of 2034')]
+    assert ('<tr><td class="t"><a href="/news/30L1998/hof/2036-101">Cy Ace</a></td><td class="t">Pitcher</td>'
+            '<td>2030</td><td>91</td><td class="t">212-150, 3.15 ERA, 2200 SO, 3 SV</td></tr>') in c36
+    assert ('<tr><td class="t"><a href="/news/30L1998/hof/2036-100">Pat Doe</a></td><td class="t">Hitter</td>'
+            '<td>2030</td><td>80</td><td class="t">1450 G, 1700 H, 120 HR, 800 RBI, .304 AVG</td></tr>') in c36
+    assert c36.index('Cy Ace') < c36.index('Pat Doe')                      # best pct first within a class
+    c34 = html[html.index('<caption>Class of 2034'):]
+    assert '<td class="t">Old Timer</td>' in c34 and '/hof/2034-102' not in html     # no story: no link
+    assert ('<th class="t">Player</th><th class="t">Position</th><th>Retired</th><th>Pct</th>'
+            '<th class="t">Career</th>') in html
+
+
+def test_hof_page_ballot_is_best_first_with_years_on(hall):
+    html = hall.get('/news/30L1998/hof')[2].decode()
+    ballot = html[html.index('<caption>Ballot, 2040</caption>'):]
+    assert ('<tr><td class="t">High Man</td><td class="t">Pitcher</td><td>2031</td><td>4</td><td>45</td></tr>'
+            '<tr><td class="t">Low Man</td><td class="t">Hitter</td><td>2033</td><td>2</td><td>12</td></tr>') in ballot
+    assert '<th>Years on</th>' in ballot
+
+
+def test_hof_page_with_only_a_ballot_shows_the_empty_text_and_the_ballot(seeded):
+    write(seeded.root / '30L1998' / 'hof.json', hof_file(inducted=[]))
+    html = seeded.get('/news/30L1998/hof')[2].decode()
+    assert 'No one has been inducted yet.' in html and 'Class of' not in html and 'High Man' in html
+
+
+def test_hof_page_without_a_ballot_has_no_ballot_table(seeded):
+    write(seeded.root / '30L1998' / 'hof.json', hof_file(ballot=[]))
+    html = seeded.get('/news/30L1998/hof')[2].decode()
+    assert 'Class of 2036' in html and 'Ballot' not in html
+
+
+def test_hof_story_links_only_to_a_story_file_that_exists_with_a_valid_key(hall):
+    write(hall.root / '30L1998' / 'hof.json', hof_file(inducted=[
+        inductee(100, 'Pat Doe', 2036), inductee(103, 'No File', 2036), inductee(104, 'Bad Key', 2036, story='../x'),
+        inductee(105, 'Num Key', 2036, story=7)]))
+    html = hall.get('/news/30L1998/hof')[2].decode()
+    assert 'href="/news/30L1998/hof/2036-100"' in html
+    assert html.count('/news/30L1998/hof/') == 1
+    assert all(n in html for n in ('No File', 'Bad Key', 'Num Key'))
+
+
+def test_hof_story_page_has_the_story_layout_byline_and_career_table(hall):
+    status, headers, body = hall.get('/news/30L1998/hof/2036-100')
+    html = body.decode()
+    assert status == 200 and '<title>Doe goes into the Hall</title>' in html
+    assert '<h1>Doe goes into the Hall</h1>' in html and '<p class="dateline">Hall of Fame, 2036</p>' in html
+    assert '<p class="byline">Staff writer</p>' in html and '<p>Pat Doe is in.</p><p>A fine career.</p>' in html
+    assert ('<th>Seasons</th><th>G</th><th>AB</th><th>R</th><th>H</th><th>HR</th><th>RBI</th><th>SB</th><th>AVG</th>'
+            in html)
+    assert ('<td>12</td><td>1450</td><td>5600</td><td>900</td><td>1700</td><td>120</td><td>800</td><td>40</td>'
+            '<td>.304</td>') in html
+    assert 'href="/news/30L1998/hof">Hall of Fame</a>' in html and '&larr; 1998 Major Leagues' in html
+    assert_secure(headers, body)
+    pit = hall.get('/news/30L1998/hof/2036-101')[2].decode()
+    assert '<p class="byline">Wire report</p>' in pit and '<caption>Career batting' in pit     # a hitter's facts here
+    write(hall.root / '30L1998' / 'hof' / '2036-101.json',
+          hof_story_file(101, 2036, facts={'kind': 'pit', 'seasons': 15, 'line': PIT_LINE, 'era': '3.15',
+                                           'ip': '2000.0', 'year': 2036}))
+    pit = hall.get('/news/30L1998/hof/2036-101')[2].decode()
+    assert '<caption>Career pitching' in pit
+    assert '<td>15</td><td>500</td><td>212</td><td>150</td><td>3</td><td>2000.0</td><td>2200</td><td>3.15</td>' in pit
+
+
+@pytest.mark.parametrize('path', [
+    '/news/30L1998/hof/', '/news/30L1998/hof/2036', '/news/30L1998/hof/2036-', '/news/30L1998/hof/-100',
+    '/news/30L1998/hof/abc', '/news/30L1998/hof/2036-123456', '/news/30L1998/hof/20366-1', '/news/30L1998/hof/203-1',
+    '/news/30L1998/hof/2036-100/x', '/news/30L1998/hof/2036-100/', '/news/30L1998/hof/2036-1%0A',
+    '/news/30L1998/hof/..%2Fmeta', '/news/30L1998/hof/2036-999', '/news/30L1998/hof/2036-100.json',
+    '/news/30L1998/hof/2036-100%2F..', '/news/30L1998/hof/%2e%2e', '/news/30L1998/hofs', '/news/30L1998/HOF',
+    '/news/NOPE/hof', '/news/NOPE/hof/2036-100', '/news/30L1998/past/1997/hof',
+])
+def test_hof_routes_of_any_other_shape_are_404(hall, path):
+    assert hall.get(path)[0] == 404
+
+
+def test_hof_story_pages_404_for_unreadable_or_other_kinds_of_file(hall):
+    write(hall.root / '30L1998' / 'hof' / '2036-200.json', '{"kind": "hof", "head')
+    write(hall.root / '30L1998' / 'hof' / '2036-201.json', hof_story_file(201, 2036, kind='move'))
+    write(hall.root / '30L1998' / 'hof' / '2036-202.json', [1, 2])
+    for key in ('2036-200', '2036-201', '2036-202'):
+        assert hall.get('/news/30L1998/hof/' + key)[0] == 404
+
+
+def test_hof_page_is_the_empty_page_for_a_torn_or_odd_hof_json(seeded):
+    for text in ('{"inducted": [', '[1]', '"x"', 'null'):
+        write(seeded.root / '30L1998' / 'hof.json', text)
+        status, _, body = seeded.get('/news/30L1998/hof')
+        assert status == 200 and b'No one has been inducted yet.' in body
+
+
+def test_hof_page_survives_entries_of_the_wrong_types(seeded):
+    write(seeded.root / '30L1998' / 'hof.json', {
+        'year': 'x', 'inducted': ['junk', None, {'year': 'x', 'name': 'No Year'},
+                                  {'year': 2036, 'name': ['a'], 'kind': 5, 'retired': None, 'pct': 'high', 'line': 7,
+                                   'story': {}},
+                                  {'year': 2036, 'name': 'Bad Line', 'kind': 'pit', 'pct': 1, 'line': {'outs': 'x'}}],
+        'ballot': 'nope'})
+    status, _, body = seeded.get('/news/30L1998/hof')
+    html = body.decode()
+    assert status == 200 and 'Class of 2036' in html and 'Bad Line' in html and 'No Year' not in html
+    assert '0-0, --- ERA, 0 SO, 0 SV' in html and '0 G, 0 H, 0 HR, 0 RBI, --- AVG' in html
+    write(seeded.root / '30L1998' / 'hof.json', {'inducted': 3, 'ballot': [1, {'pct': 'x'}, {'pct': 5, 'name': 'Ok'}]})
+    status, _, body = seeded.get('/news/30L1998/hof')
+    assert status == 200 and b'Ok' in body and b'Ballot</caption>' in body
+
+
+def test_hof_values_are_escaped_everywhere(hall):
+    evil = '<script>alert(1)</script>'
+    write(hall.root / '30L1998' / 'hof.json', hof_file(
+        inducted=[inductee(100, evil, 2036, teams=[evil])],
+        ballot=[{'pid': 1, 'name': '<img src=x onerror=alert(1)>', 'kind': 'bat', 'retired': 2033, 'years_on': 2,
+                 'score': 1.0, 'pct': '<b>9</b>'}]))
+    write(hall.root / '30L1998' / 'hof' / '2036-100.json',
+          hof_story_file(100, 2036, headline=evil, body='<b>bold</b> & "q"', name=evil,
+                         facts={'kind': 'bat', 'year': 2036, 'seasons': evil, 'line': {'g': evil}, 'avg': evil}))
+    for path in ('/news/30L1998/hof', '/news/30L1998/hof/2036-100'):
+        html = hall.get(path)[2].decode()
+        assert '<script' not in html and '<img' not in html and '<b>' not in html
+    page = hall.get('/news/30L1998/hof')[2].decode()
+    assert '&lt;script&gt;alert(1)&lt;/script&gt;</a>' in page and '&lt;img src=x onerror=alert(1)&gt;' in page
+    story = hall.get('/news/30L1998/hof/2036-100')[2].decode()
+    assert '<h1>&lt;script&gt;alert(1)&lt;/script&gt;</h1>' in story
+    assert '&lt;b&gt;bold&lt;/b&gt; &amp; &quot;q&quot;' in story
+
+
+def test_season_box_links_the_hall_after_the_rookie_classes_when_hof_json_exists(rookied):
+    write(rookied.root / '30L1998' / 'hof.json', hof_file())
+    html = rookied.get('/news/30L1998/')[2].decode()
+    assert ('<li><a href="/news/30L1998/rookies/1997">1997 rookie class</a></li>'
+            '<li><a href="/news/30L1998/hof">Hall of Fame</a></li></ul></section>') in html
+
+
+def test_season_box_shows_for_the_hall_alone_and_not_without_hof_json(seeded):
+    assert b'Hall of Fame' not in seeded.get('/news/30L1998/')[2]
+    write(seeded.root / '30L1998' / 'hof.json', hof_file(inducted=[], ballot=[]))
+    html = seeded.get('/news/30L1998/')[2].decode()
+    assert ('<section class="season"><h2>Season</h2><ul><li><a href="/news/30L1998/hof">Hall of Fame</a></li></ul>'
+            '</section>') in html
+    write(seeded.root / '30L1998' / 'hof.json', '{"torn')
+    assert b'Hall of Fame' not in seeded.get('/news/30L1998/')[2]
+
+
+def test_the_hall_link_is_on_the_first_page_only_and_not_in_a_past_season(seeded):
+    write(seeded.root / '30L1998' / 'hof.json', hof_file())
+    for i in range(35):
+        write(seeded.root / '30L1998' / 'recaps' / ('%016x.json' % (i + 1)), story('%016x' % (i + 1), slot=i))
+    assert b'Hall of Fame' in seeded.get('/news/30L1998/')[2]
+    assert b'Hall of Fame' not in seeded.get('/news/30L1998/?page=2')[2]
+    write(seeded.root / '30L1998' / 'past' / '1997' / 'meta.json', meta(season_year=1997))
+    assert b'Hall of Fame' not in seeded.get('/news/30L1998/past/1997/')[2]
