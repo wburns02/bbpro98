@@ -1875,3 +1875,201 @@ def test_a_replay_file_with_nan_games_played_still_renders(scorecard):
     write(scorecard.root / '30L1998' / 'replay.json', replay_file(played=float('nan'), scheduled=float('inf')))
     status, _, body = scorecard.get('/news/30L1998/replay')
     assert status == 200 and 'After ' not in body.decode()
+
+
+def draft_pick(pid, name, pos, age, team, tid, grades, need=False, value=120.5):
+    return {'pid': pid, 'name': name, 'pos': pos, 'age': age, 'team': team, 'tid': tid, 'grades': grades,
+            'value': value, 'need': need}
+
+
+def draft_file(year=1998, revisit=None, **over):
+    """A draft/<year>.json in the shape the watcher writes: two teams, a hitter and a pitcher on Ash, a hitter on Birch
+    and a free agent."""
+    hit = {'contact': 70, 'power': 45, 'speed': 80, 'fielding': 60}
+    base = {
+        'year': year, 'created': '2026-10-09T14:03:11', 'revisit': revisit,
+        'picks': [
+            draft_pick(301, 'Ann Hart', 'CF', 20, 'Ash', 1, hit, need=True, value=150.25),
+            draft_pick(401, 'Cy Ace', 'P', 19, 'Ash', 1, {'control': 75, 'strikeout': 80, 'stamina': 70}, value=140.0),
+            draft_pick(302, 'Bo Lee', 'C', None, 'Birch', 2, {'contact': 50, 'power': None, 'speed': 50,
+                                                                'fielding': 50}, value=90.0),
+            draft_pick(303, 'Fran Free', '1B', 21, 'free agent', None, hit, value=80.0),
+        ],
+        'teams': [
+            {'tid': 1, 'name': 'Ash', 'picks': 2, 'value': 290.25, 'grade': 'A', 'needs': ['C', 'P']},
+            {'tid': 2, 'name': 'Birch', 'picks': 1, 'value': 90.0, 'grade': 'D', 'needs': []},
+        ],
+    }
+    base.update(over)
+    return base
+
+
+def revisit_file(year=2001):
+    return {'year': year,
+            'teams': [{'tid': 2, 'name': 'Birch', 'grade': 'A', 'value': 200.0},
+                      {'tid': 1, 'name': 'Ash', 'grade': 'F', 'value': 60.0}],
+            'picks': {'301': {'grades': {'contact': 55, 'power': 40, 'speed': 75, 'fielding': 65}, 'seasons': 3,
+                              'value': 99.0, 'gone': False},
+                      '401': {'grades': {}, 'seasons': 1, 'value': 2.0, 'gone': True},
+                      '302': {'grades': {'contact': 80, 'power': 80, 'speed': 80, 'fielding': 80}, 'seasons': 3,
+                              'value': 200.0, 'gone': False}}}
+
+
+@pytest.fixture
+def drafted(seeded):
+    """seeded, plus the 1997 draft (revisited) and the 1998 draft."""
+    write(seeded.root / '30L1998' / 'draft' / '1997.json', draft_file(1997, revisit=revisit_file(2000)))
+    write(seeded.root / '30L1998' / 'draft' / '1998.json', draft_file(1998))
+    return seeded
+
+
+def test_draft_index_lists_the_years_newest_first_with_the_top_team(drafted):
+    status, headers, body = drafted.get('/news/30L1998/draft')
+    html = body.decode()
+    assert status == 200 and headers['content-type'] == HTML
+    assert_secure(headers, body)
+    assert '<title>1998 Major Leagues · Draft room</title>' in html
+    assert '<caption>Draft classes</caption>' in html
+    assert ('<th class="t">Year</th><th class="t">Top team</th><th>Grade</th><th>Picks</th>') in html
+    assert ('<tr><td class="t"><a href="/news/30L1998/draft/1998">1998</a></td><td class="t">Ash</td><td>A</td>'
+            '<td>4</td></tr>'
+            '<tr><td class="t"><a href="/news/30L1998/draft/1997">1997</a></td><td class="t">Ash</td><td>A</td>'
+            '<td>4</td></tr>') in html
+
+
+def test_draft_index_top_team_is_the_highest_value_and_a_bad_file_is_a_blank_row(drafted):
+    rec = draft_file(1999)
+    rec['teams'] = [dict(rec['teams'][1], value=500.0), rec['teams'][0]]
+    write(drafted.root / '30L1998' / 'draft' / '1999.json', rec)
+    write(drafted.root / '30L1998' / 'draft' / '2000.json', '[1, 2]')
+    html = drafted.get('/news/30L1998/draft')[2].decode()
+    assert '<a href="/news/30L1998/draft/1999">1999</a></td><td class="t">Birch</td><td>D</td><td>4</td>' in html
+    assert '<a href="/news/30L1998/draft/2000">2000</a></td><td class="t"></td><td></td><td>0</td>' in html
+    assert html.index('>2000<') < html.index('>1999<') < html.index('>1998<')
+
+
+def test_draft_year_page_has_the_team_grades_table_then_the_picks(drafted):
+    status, headers, body = drafted.get('/news/30L1998/draft/1998')
+    html = body.decode()
+    assert status == 200 and headers['content-type'] == HTML
+    assert_secure(headers, body)
+    assert '<title>1998 Major Leagues · 1998 draft</title>' in html
+    assert ('<p class="nav"><a href="/news/30L1998/">&larr; 1998 Major Leagues</a> &middot; '
+            '<a href="/news/">All leagues</a></p>') in html
+    assert '<a href="/news/30L1998/draft">All drafts</a>' in html
+    assert "Grades are what the league&#x27;s scouts see: younger players are harder to read." in html
+    assert html.index('<caption>Team grades</caption>') < html.index('<caption>Picks</caption>')
+    assert ('<th class="t">Team</th><th>Grade</th><th>Picks</th><th>Needs filled</th></tr>') in html
+    assert '<tr><td class="t">Ash</td><td>A</td><td>2</td><td>1</td></tr>' in html          # Ann fills a need
+    assert '<tr><td class="t">Birch</td><td>D</td><td>1</td><td>0</td></tr>' in html
+    assert 'Revisit' not in html and 'Seasons' not in html
+    assert ('<th class="t">Player</th><th class="t">Pos</th><th>Age</th><th class="t">Team</th>'
+            '<th class="t">Grades</th><th>Fills a need</th></tr>') in html
+    assert ('<tr><td class="t">Ann Hart</td><td class="t">CF</td><td>20</td><td class="t">Ash</td>'
+            '<td class="t">Con 70 Pow 45 Spd 80 Fld 60</td><td>yes</td></tr>') in html
+    assert ('<tr><td class="t">Cy Ace</td><td class="t">P</td><td>19</td><td class="t">Ash</td>'
+            '<td class="t">Ctl 75 K 80 Sta 70</td><td></td></tr>') in html
+    assert ('<tr><td class="t">Bo Lee</td><td class="t">C</td><td></td><td class="t">Birch</td>'
+            '<td class="t">Con 50 Spd 50 Fld 50</td><td></td></tr>') in html            # a missing grade is left out
+    assert '<td class="t">free agent</td>' in html
+
+
+def test_draft_year_page_shows_the_revisit_grade_true_grades_now_and_seasons(drafted):
+    html = drafted.get('/news/30L1998/draft/1997')[2].decode()
+    assert '<p class="through">1997 class, revisited in 2000</p>' in html
+    assert '<th>Needs filled</th><th>Revisit grade</th></tr>' in html
+    assert '<tr><td class="t">Ash</td><td>A</td><td>2</td><td>1</td><td>F</td></tr>' in html
+    assert '<tr><td class="t">Birch</td><td>D</td><td>1</td><td>0</td><td>A</td></tr>' in html
+    assert '<th>Fills a need</th><th class="t">Now</th><th>Seasons</th></tr>' in html
+    assert ('<td class="t">Con 70 Pow 45 Spd 80 Fld 60</td><td>yes</td><td class="t">Con 55 Pow 40 Spd 75 Fld 65</td>'
+            '<td>3</td></tr>') in html
+    assert '<td class="t">Ctl 75 K 80 Sta 70</td><td></td><td class="t">gone</td><td>1</td></tr>' in html
+    assert '<td class="t">Con 80 Pow 80 Spd 80 Fld 80</td><td>3</td></tr>' in html
+    assert ('<td class="t">free agent</td><td class="t">Con 70 Pow 45 Spd 80 Fld 60</td><td></td><td class="t"></td>'
+            '<td></td></tr>') in html                      # no revisit entry for him: blank, not an error
+
+
+def test_draft_year_page_reads_the_year_it_is_asked_for(drafted):
+    assert 'revisited in 2000' in drafted.get('/news/30L1998/draft/1997')[2].decode()
+    assert 'revisited' not in drafted.get('/news/30L1998/draft/1998')[2].decode()
+
+
+def test_draft_pages_escape_every_value(site):
+    seed(site.root)
+    rec = draft_file(1998, revisit=revisit_file(2001))
+    rec['picks'][0].update(name='<img src=x onerror=1>', pos='"C"', team='<s>Ash</s>')
+    rec['picks'][1].update(name="O'Brien & Co", grades={'control': '<b>1</b>', 'strikeout': 80})
+    rec['teams'][0].update(name='<script>1</script>', grade='<i>A</i>')
+    rec['revisit']['teams'][1].update(name='<u>x</u>', grade='<u>F</u>')
+    write(site.root / '30L1998' / 'draft' / '1998.json', rec)
+    write(site.root / '30L1998' / 'meta.json', meta(name='<h1>League</h1>'))
+    for path in ('/news/30L1998/draft/1998', '/news/30L1998/draft'):
+        html = site.get(path)[2].decode()
+        for raw in ('<img', '<script', '<s>', '<b>', '<i>', '<u>', '<h1>League'):
+            assert raw not in html
+    html = site.get('/news/30L1998/draft/1998')[2].decode()
+    assert '&lt;img src=x onerror=1&gt;' in html and '&quot;C&quot;' in html and '&lt;s&gt;Ash&lt;/s&gt;' in html
+    assert 'O&#x27;Brien &amp; Co' in html and '&lt;script&gt;1&lt;/script&gt;' in html
+    assert '&lt;i&gt;A&lt;/i&gt;' in html and '&lt;u&gt;F&lt;/u&gt;' in html
+    assert 'Ctl' not in html.split('O&#x27;Brien')[1].split('</tr>')[0]       # a grade that is not a number is dropped
+    assert '<title>&lt;h1&gt;League&lt;/h1&gt; · Draft room</title>' in site.get('/news/30L1998/draft')[2].decode()
+
+
+@pytest.mark.parametrize('path', [
+    '/news/30L1998/draft/1996', '/news/30L1998/draft/98', '/news/30L1998/draft/19980', '/news/30L1998/draft/1998x',
+    '/news/30L1998/draft/1998.json', '/news/30L1998/draft/', '/news/30L1998/draft/1998/',
+    '/news/30L1998/draft/1998/x', '/news/30L1998/draft/ids', '/news/30L1998/draft/%E0%A5%A7998',
+    '/news/30L1998/draft/..', '/news/30L1998/draft/%2e%2e', '/news/30L1998/draft/0000', '/news/NOPE/draft',
+    '/news/NOPE/draft/1998', '/news/30L1998/drafts', '/news/30L1998/draft/past/1998',
+])
+def test_draft_pages_404_for_other_shapes_and_missing_files(drafted, path):
+    status, headers, body = drafted.get(path)
+    assert status == 404 and b'Not found' in body
+
+
+def test_draft_index_404s_without_any_draft_and_a_corrupt_year_page_404s(seeded):
+    assert seeded.get('/news/30L1998/draft')[0] == 404
+    write(seeded.root / '30L1998' / 'draft' / '1998.json', '{not json')
+    assert seeded.get('/news/30L1998/draft/1998')[0] == 404
+    write(seeded.root / '30L1998' / 'draft' / '1999.json', '[]')
+    assert seeded.get('/news/30L1998/draft/1999')[0] == 404
+    write(seeded.root / '30L1998' / 'draft' / '2000.json', {})
+    assert seeded.get('/news/30L1998/draft/2000')[0] == 200             # an empty draft still has its page
+
+
+def test_draft_year_page_survives_wrong_types(seeded):
+    write(seeded.root / '30L1998' / 'draft' / '1998.json', {'picks': 'x', 'teams': [1, None, {'tid': 'a'}],
+                                                              'revisit': {'teams': 5, 'picks': []}})
+    status, _, body = seeded.get('/news/30L1998/draft/1998')
+    assert status == 200 and b'Revisit grade' in body
+
+
+def test_draft_room_link_is_in_the_season_box_when_a_draft_exists(drafted):
+    write(drafted.root / '30L1998' / 'preview.json', preview_file())
+    html = drafted.get('/news/30L1998/')[2].decode()
+    assert ('<section class="season"><h2>Season</h2><ul>'
+            '<li><a href="/news/30L1998/preview">Season preview</a></li>'
+            '<li><a href="/news/30L1998/draft">Draft room</a></li></ul></section>') in html
+
+
+def test_draft_room_link_follows_the_rookie_classes_and_stands_alone(rookied):
+    write(rookied.root / '30L1998' / 'draft' / '1998.json', draft_file(1998))
+    html = rookied.get('/news/30L1998/')[2].decode()
+    assert ('<li><a href="/news/30L1998/rookies/1997">1997 rookie class</a></li>'
+            '<li><a href="/news/30L1998/draft">Draft room</a></li></ul></section>') in html
+
+
+def test_no_draft_no_link_and_the_front_page_is_unchanged(seeded):
+    base = seeded.get('/news/30L1998/')[2]
+    assert b'Draft room' not in base
+    (seeded.root / '30L1998' / 'draft').mkdir()
+    write(seeded.root / '30L1998' / 'draft' / 'notes.json', {})
+    write(seeded.root / '30L1998' / 'draft' / '98.json', {})
+    assert seeded.get('/news/30L1998/')[2] == base
+
+
+def test_draft_room_link_is_on_the_first_page_only(drafted):
+    for i in range(31):
+        write(drafted.root / '30L1998' / 'recaps' / ('%016x.json' % i), story('%016x' % i, slot=i))
+    assert 'draft">Draft room' in drafted.get('/news/30L1998/')[2].decode()
+    assert 'Draft room' not in drafted.get('/news/30L1998/?page=2')[2].decode()

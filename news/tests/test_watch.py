@@ -10,7 +10,11 @@ import time
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import contracts  # noqa: E402
+import draft     # noqa: E402
+import fog       # noqa: E402
 import gamedata  # noqa: E402
+import history   # noqa: E402
 import hive      # noqa: E402
 import watch     # noqa: E402
 
@@ -189,11 +193,13 @@ def test_full_team_names_from_the_data_dir(world):
     assert stories(data)[0]['headline'].startswith('Ashland Ashes 3')
 
 
+# Veterans of ten seasons: the public view reads them to within a couple of points (fog.py), so Bo Loser's 97 control
+# still grades 80.
 SCOUT_PLAYERS = {
     100: {'name': 'Al Winner', 'pos': 'RF', 'bats': 'L', 'throws': 'L', 'born': 1970, 'contact': 90, 'power': 60,
-          'speed': 70, 'stamina': 0, 'control': 0, 'strikeout': 0, 'fielding': 50},
+          'speed': 70, 'stamina': 0, 'control': 0, 'strikeout': 0, 'fielding': 50, 'seasons': 10},
     200: {'name': 'Bo Loser', 'pos': 'P', 'bats': '', 'throws': 'R', 'born': None, 'contact': 0, 'power': 0,
-          'speed': 0, 'stamina': 69, 'control': 97, 'strikeout': 47, 'fielding': 40},
+          'speed': 0, 'stamina': 69, 'control': 97, 'strikeout': 47, 'fielding': 40, 'seasons': 10},
 }
 
 
@@ -1283,3 +1289,208 @@ def test_main_once_still_raises_a_failed_pass(tmp_path, monkeypatch):
     monkeypatch.setattr(watch.Watcher, 'scan', lambda self: (_ for _ in ()).throw(FileNotFoundError('x')))
     with pytest.raises(FileNotFoundError):
         watch.main(['--game', str(tmp_path / 'g'), '--data', str(tmp_path / 'd'), '--no-llm', '--once'])
+
+
+def test_scouting_grades_the_public_fog_view_not_the_true_ratings(world, monkeypatch):
+    gd, data, st = world
+    (gd / 'Assn' / '30L1998.PYR').write_bytes(b'pyr')
+    unseen = {pid: dict(p, seasons=0) for pid, p in SCOUT_PLAYERS.items()}       # rookies: the widest fog
+    before = {pid: dict(p) for pid, p in unseen.items()}
+    monkeypatch.setattr(gamedata, 'players', lambda path: unseen)
+    watch.Watcher(str(gd), str(data), None, None, log=lambda s: None).scan()
+    assert unseen == before
+    ash = json.loads((data / '30L1998' / 'scout' / '1.json').read_text())
+    al = ash['roster']['hitters'][0]
+    for key in ('contact', 'power', 'speed', 'fielding'):
+        assert al[key] == watch.scout.grade(fog.rating(unseen[100][key], '30L1998', 0, 100, key, 1998, 0))
+    assert [al[k] for k in ('contact', 'power', 'speed', 'fielding')] != [
+        watch.scout.grade(unseen[100][k]) for k in ('contact', 'power', 'speed', 'fielding')]
+    assert (ash['facts']['hitters'][0]['contact'], ash['facts']['hitters'][0]['power']) == (al['contact'], al['power'])
+    birch = json.loads((data / '30L1998' / 'scout' / '2.json').read_text())['roster']['pitchers'][0]
+    for key in ('control', 'strikeout', 'stamina'):
+        assert birch[key] == watch.scout.grade(fog.rating(unseen[200][key], '30L1998', 0, 200, key, 1998, 0))
+
+
+@pytest.fixture
+def draft_world(league, monkeypatch):
+    """league (rosters, free agents, players, PYR and PYF, DAT), with a pass per season and a count of the PYR reads
+    draft_piece makes (st['draft_reads']; moves and contracts read it too, on every settled pass)."""
+    gd, data, st = league
+    st['draft_reads'], st['lines'] = [], []
+    inside = []
+    original = watch.Watcher.draft_piece
+
+    def draft_piece(self, *args):
+        inside.append(1)
+        try:
+            return original(self, *args)
+        finally:
+            inside.pop()
+
+    def players(path):
+        if inside:
+            st['draft_reads'].append(path)
+        return dict(st['players'])
+
+    monkeypatch.setattr(watch.Watcher, 'draft_piece', draft_piece)
+    monkeypatch.setattr(gamedata, 'players', players)
+
+    def scan(year, settled=True):
+        named(monkeypatch, '1998 Test', season_year=year)
+        w = watch.Watcher(str(gd), str(data), None, None, log=st['lines'].append)
+        league_scan(w, gd, st, settled)
+        return w
+
+    st['scan'] = scan
+    return gd, data / '30L1998', st
+
+
+def drafted(draft_world):
+    """draft_world after the 1997 baseline pass and the 1998 pass that writes the class of 300 (a shortstop on Ash) and
+    500 (a pitcher on Birch). Returns (gd, out, st)."""
+    gd, out, st = draft_world
+    st['scan'](1997)
+    st['players'][300] = league_player('Rick Rookie', 'SS', 1978)
+    st['players'][500] = league_player('Pete Pitcher', 'P', 1979)
+    st['rosters'][1].append(300)
+    st['rosters'][2].append(500)
+    st['fa'].discard(300)
+    st['scan'](1998)
+    return gd, out, st
+
+
+def draft_file(out, year=1998):
+    return json.loads((out / 'draft' / ('%d.json' % year)).read_text())
+
+
+def test_the_class_is_drafted_in_the_pass_that_writes_it_and_a_rescan_reads_nothing(draft_world):
+    gd, out, st = drafted(draft_world)
+    assert sorted(os.listdir(out / 'draft')) == ['1998.json']
+    doc = draft_file(out)
+    assert (doc['year'], doc['revisit']) == (1998, None) and doc['created']
+    assert [(p['pid'], p['name'], p['pos'], p['age'], p['team'], p['tid']) for p in sorted(doc['picks'], key=lambda p: p['pid'])] == [
+        (300, 'Rick Rookie', 'SS', 20, 'Ash', 1), (500, 'Pete Pitcher', 'P', 19, 'Birch', 2)]
+    for pick in doc['picks']:
+        seen = fog.view(st['players'][pick['pid']], '30L1998', 0, 1998, pid=pick['pid'])
+        assert pick['grades'] == draft.grades(seen) and pick['value'] == contracts._index(seen)
+    assert {t['tid'] for t in doc['teams']} == {1, 2} and all(t['grade'] in 'ABCDF' for t in doc['teams'])
+    assert '30L1998 draft 1998: 2 picks' in st['lines']
+    before = (out / 'draft' / '1998.json').read_text()
+    st['draft_reads'].clear()
+    st['lines'].clear()
+    st['scan'](1998)
+    assert (out / 'draft' / '1998.json').read_text() == before and st['draft_reads'] == []
+    assert not [s for s in st['lines'] if 'draft' in s]
+
+
+def test_the_pyr_is_not_read_for_a_draft_in_a_season_with_nothing_due(draft_world):
+    gd, out, st = drafted(draft_world)
+    for year in (1999, 2000):                                   # 1998 + 3 is 2001
+        st['draft_reads'].clear()
+        st['scan'](year)
+        assert draft.REVISIT_AFTER == 3 and draft_file(out)['revisit'] is None
+        assert st['draft_reads'] == [] and not [s for s in st['lines'] if 'revisited' in s]
+
+
+def test_an_existing_draft_file_is_never_rewritten_and_an_earlier_class_is_never_drafted_late(draft_world):
+    gd, out, st = draft_world
+    st['scan'](1997)
+    (out / 'rookies').mkdir(exist_ok=True)
+    (out / 'rookies' / '1997.json').write_text(json.dumps({'facts': {'hitters': [{'pid': 100}], 'pitchers': []}}))
+    st['scan'](1998)
+    assert not (out / 'draft').exists()                         # the 1997 class is not this season's
+    (out / 'draft').mkdir()
+    (out / 'draft' / '1998.json').write_text('{"kept": true}')
+    (out / 'rookies' / '1998.json').write_text(json.dumps({'facts': {'hitters': [{'pid': 100}], 'pitchers': []}}))
+    st['draft_reads'].clear()
+    st['scan'](1998)
+    assert json.loads((out / 'draft' / '1998.json').read_text()) == {'kept': True} and st['draft_reads'] == []
+
+
+def test_no_pyr_and_no_class_write_no_draft(world, monkeypatch):
+    gd, data, st = world
+    out = data / '30L1998'
+    (out / 'rookies').mkdir(parents=True)
+    (out / 'rookies' / '1998.json').write_text(json.dumps({'facts': {'hitters': [{'pid': 100}], 'pitchers': []}}))
+    named(monkeypatch, '1998 Test', season_year=1998)
+    watch.Watcher(str(gd), str(data), None, None, log=lambda s: None).scan()
+    assert not (out / 'draft').exists()                          # no PYR: nothing to grade
+    (gd / 'Assn' / '30L1998.PYR').write_bytes(b'pyr')
+    monkeypatch.setattr(gamedata, 'players', lambda path: {100: league_player('Al Winner', 'RF', 1970)})
+    (out / 'rookies' / '1998.json').unlink()
+    watch.Watcher(str(gd), str(data), None, None, log=lambda s: None).scan()
+    assert not (out / 'draft').exists()                          # a PYR but no class file
+
+
+def archive(data, year, bat=(), pit=()):
+    history.archive_season(str(data), '30L1998', year, {'bat': {pid: {'g': 5} for pid in bat},
+                                                       'pit': {pid: {'g': 5} for pid in pit}})
+
+
+def test_three_seasons_on_the_draft_is_revisited_once_with_true_grades_and_seasons(draft_world):
+    gd, out, st = drafted(draft_world)
+    data = out.parent
+    archive(data, 1997, bat=[300])                                # an earlier man of that pid: not counted
+    for y in (1998, 1999, 2000):
+        archive(data, y, bat=[300] if y != 1999 else [300, 500], pit=[500] if y == 1999 else [])
+    st['players'][300] = dict(st['players'][300], contact=99, power=99, speed=99, fielding=99)    # he grew
+    st['rosters'][2].remove(500)                                  # Pete left every roster and is no free agent
+    st['draft_reads'].clear()
+    st['scan'](2001)
+    doc = draft_file(out)
+    rev = doc['revisit']
+    assert rev['year'] == 2001 and sorted(rev['picks']) == ['300', '500']
+    assert rev['picks']['300'] == {'grades': {'contact': 80, 'power': 80, 'speed': 80, 'fielding': 80}, 'seasons': 3,
+                                   'value': contracts._index(st['players'][300]) + 6, 'gone': False}
+    assert rev['picks']['500'] == {'grades': {}, 'seasons': 1, 'value': 2.0, 'gone': True}
+    assert {t['tid'] for t in rev['teams']} == {1, 2} and all(t['grade'] in 'ABCDF' for t in rev['teams'])
+    assert [p['pid'] for p in doc['picks']] == [p['pid'] for p in draft_file(out)['picks']]
+    assert '30L1998 draft 1998 revisited in 2001: 2 picks' in st['lines']
+    before = (out / 'draft' / '1998.json').read_text()
+    for year in (2001, 2002):
+        st['draft_reads'].clear()
+        st['scan'](year)
+        assert (out / 'draft' / '1998.json').read_text() == before and st['draft_reads'] == []      # once
+
+
+def test_a_free_agent_is_not_retired_and_a_draft_found_late_is_revisited_when_it_is_due(draft_world):
+    gd, out, st = drafted(draft_world)
+    st['rosters'][2].remove(500)
+    st['fa'].add(500)                                             # Pete is a free agent now
+    st['scan'](2004)                                              # the watcher was off for years: still due
+    rev = draft_file(out)['revisit']
+    assert rev['year'] == 2004 and rev['picks']['500']['gone'] is False and rev['picks']['500']['seasons'] == 0
+    assert rev['picks']['500']['grades'] and rev['picks']['300']['gone'] is False
+
+
+def test_the_revisit_waits_for_a_settled_pyr_and_pyf_that_can_be_read(draft_world):
+    gd, out, st = drafted(draft_world)
+    st['scan'](2001, settled=False)
+    assert draft_file(out)['revisit'] is None
+    pyf = gd / 'Assn' / '30L1998.PYF'
+    st['scan'](2001)
+    assert draft_file(out)['revisit'] is not None                 # settled now
+    (out / 'draft' / '1998.json').write_text(json.dumps(dict(draft_file(out), revisit=None)))
+    for broken in (None, b'junk'):
+        if broken is None:
+            pyf.unlink()
+        else:
+            pyf.write_bytes(broken)
+        os.utime(gd / 'Assn' / '30L1998.PYR', (1, 1))
+        if pyf.exists():
+            os.utime(pyf, (1, 1))
+        st['draft_reads'].clear()
+        watch.Watcher(str(gd), str(out.parent), None, None, log=st['lines'].append).scan()
+        assert draft_file(out)['revisit'] is None and st['draft_reads'] == []   # a PYF that cannot be read waits
+
+
+def test_a_malformed_old_draft_file_is_left_alone(draft_world):
+    gd, out, st = draft_world
+    (out / 'draft').mkdir(parents=True)
+    for name, text in (('1990.json', '{"kept": true}'), ('1991.json', '[1]'), ('1992.json', 'junk'),
+                       ('1993.json', '{"picks": 1, "teams": [], "revisit": null}'), ('notes.json', '{}')):
+        (out / 'draft' / name).write_text(text)
+    st['scan'](2001)
+    assert sorted(os.listdir(out / 'draft')) == ['1990.json', '1991.json', '1992.json', '1993.json', 'notes.json']
+    assert json.loads((out / 'draft' / '1990.json').read_text()) == {'kept': True}
+    assert st['draft_reads'] == [] and not any('revisited' in s for s in st['lines'])

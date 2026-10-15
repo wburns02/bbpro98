@@ -13,6 +13,8 @@ Data layout (server.py reads it):
     <data>/<ASSN>/preview.json, awards.json            season preview (once), season awards (once all games are played)
     <data>/<ASSN>/scout/<tid>.json                     one scouting report per team (once)
     <data>/<ASSN>/rookies/<YEAR>.json, ids.json        a season's rookie class (once); the snapshot it is diffed against
+    <data>/<ASSN>/draft/<YEAR>.json                    the class as the public scouts saw it, team grades (once), revisited
+                                                       three seasons later (once, draft.py)
     <data>/<ASSN>/moves/log.json, notes/<n>.json       roster moves and milestones, newest last; a note per notable one
     <data>/<ASSN>/moves/last.json                      the snapshot the next scan diffs against
     <data>/<ASSN>/contracts.json                       contracts and payrolls, priced from news/salary_table.json
@@ -39,7 +41,9 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import bracket    # noqa: E402
 import contracts  # noqa: E402
+import draft      # noqa: E402
 import feed      # noqa: E402
+import fog        # noqa: E402
 import gamedata  # noqa: E402
 import history   # noqa: E402
 import hive      # noqa: E402
@@ -219,6 +223,7 @@ class Watcher:
         self.contracts_piece(out, assoc, pyr, dat)
         self.replay_piece(out, assoc, names, season)
         self.rookie_class(out, assoc, pyr)
+        self.draft_piece(out, assoc, pyr)
 
     def league(self, stem, asn_path, pyr_path, year):
         """The league's age make-up for meta.json: {'year', 'rostered', 'mean_age', 'le25', 'ge33', 'fa'}, or None
@@ -485,12 +490,13 @@ class Watcher:
         year = assoc.get('season_year')
         if type(year) is not int:
             year = scout.year_of(assoc['name'])
+        public = lambda p, pid: fog.view(p, stem, 0, year, pid=pid)     # what the newspaper's scouts see
         for tid in todo:
             if self.complete is not None and self.scout_left <= 0:
                 self.scouting_open.add(stem)
                 return
             team = assoc['teams'][tid]
-            facts = scout.team_facts(assoc, tid, players, last, year)
+            facts = scout.team_facts(assoc, tid, players, last, year, public)
             if self.complete is not None:
                 self.scout_left -= 1
             piece = _llm_or_template(scout.write, facts, self.budget, self.complete)
@@ -501,7 +507,7 @@ class Watcher:
                 piece = dict(scout.template(facts), source='template', reason='off')
             write_json(os.path.join(out, 'scout', '%d.json' % tid),
                        dict(piece, kind='scout', tid=tid, abbrev=team['abbrev'], team=team['name'], facts=facts,
-                            roster=scout.roster(assoc, tid, players, year), created=now_iso()))
+                            roster=scout.roster(assoc, tid, players, year, public), created=now_iso()))
             self.log('%s scout %s (%s)' % (stem, team['abbrev'], piece['source']))
         self.scouting_open.discard(stem)
 
@@ -536,6 +542,81 @@ class Watcher:
             self.log('%s rookie class %d: %d players (%s)' % (stem, year, len(pids), piece['source']))
         write_json(path, rookies.snapshot(players, year))
         self.rookies_due.discard(stem)
+
+    def draft_piece(self, out, assoc, pyr):
+        """The draft room (draft.py), no model. Once a season's rookie class is written (rookies/<season_year>.json) and
+        draft/<season_year>.json is not, the class is written there as the public scouts saw it, with the team grades.
+        Three seasons on or later (the season year >= the draft's + 3) a draft without a revisit gets one, once: the true
+        grades now, the sim seasons played (history archives) and the regraded teams. A class of an earlier season is
+        never drafted late. Only the folder listing and the older draft files are read unless there is something to
+        write; the PYR is read only then. The revisit waits for a PYR and PYF that have sat SETTLE seconds and a
+        readable PYF (without it a free agent would be called retired, for good)."""
+        stem = os.path.basename(out)
+        year = year_of(assoc.get('season_year'))
+        if pyr is None or year is None or not assoc['teams']:
+            return
+        folder = os.path.join(out, 'draft')
+        rookie_file = os.path.join(out, 'rookies', '%d.json' % year)
+        new = os.path.exists(rookie_file) and not os.path.exists(os.path.join(folder, '%d.json' % year))
+        due = self.revisits_due(folder, year)
+        free = None
+        if due:
+            pyf = gamedata.find(os.path.dirname(pyr), os.path.splitext(os.path.basename(pyr))[0] + '.PYF')
+            try:
+                if pyf is not None and time.time() - max(os.stat(p).st_mtime for p in (pyr, pyf)) >= SETTLE:
+                    free = gamedata.free_agents(pyf)
+            except (OSError, ValueError):
+                pass
+            if free is None:
+                due = []    # a torn or missing PYF/PYR pair would call a free agent retired, for good: retry next scan
+        if not new and not due:
+            return
+        players = gamedata.players(pyr)
+        if not players:
+            return
+        rosters = season._players(assoc)
+        if new:
+            pids = draft.class_pids(read_json(rookie_file))
+            doc = draft.build(year, stem, pids, players, rosters, {tid: t['name'] for tid, t in assoc['teams'].items()})
+            if doc['picks']:
+                write_json(os.path.join(folder, '%d.json' % year), dict(doc, created=now_iso()))
+                self.log('%s draft %d: %d picks' % (stem, year, len(doc['picks'])))
+        if not due:
+            return
+        retired = set(players) - {pid for pids in rosters.values() for pid in pids} - free
+        archives = self.archives(stem, min(y for y, _ in due))
+        for y, doc in due:
+            pids = [pick['pid'] for pick in doc['picks']]
+            rev = draft.revisit(doc, year, players, retired, draft.seasons_played(archives, pids, y))
+            write_json(os.path.join(folder, '%d.json' % y), dict(doc, revisit=rev))
+            self.log('%s draft %d revisited in %d: %d picks' % (stem, y, year, len(pids)))
+
+    def revisits_due(self, folder, year):
+        """[(draft year, draft)], oldest first, for each draft/<YYYY>.json that is REVISIT_AFTER seasons or more older than
+        `year`, holds picks and teams, and has no revisit yet. The folder is only listed, and a file is read only when
+        its name makes it old enough."""
+        try:
+            names = sorted(os.listdir(folder))
+        except OSError:
+            return []
+        due = []
+        for name in names:
+            if re.fullmatch(r'[0-9]{4}\.json', name) and int(name[:4]) + draft.REVISIT_AFTER <= year:
+                doc = read_json(os.path.join(folder, name))
+                if doc and doc.get('revisit') is None and isinstance(doc.get('picks'), list) \
+                        and isinstance(doc.get('teams'), list):
+                    due.append((int(name[:4]), doc))
+        return due
+
+    def archives(self, stem, since):
+        """[(year, doc)] for each readable history archive (history/<YYYY>.json) of year `since` or later, oldest first."""
+        folder = os.path.dirname(history.archive_path(self.data, stem, since))
+        try:
+            names = sorted(os.listdir(folder))
+        except OSError:
+            return []
+        found = ((int(n[:4]), read_json(os.path.join(folder, n))) for n in names if history.SIM_FILE_RE.fullmatch(n))
+        return [(y, doc) for y, doc in found if y >= since and doc is not None]
 
     def moves(self, out, assoc, pyr, dat):
         """Roster moves and milestones since the last scan (moves.py). The current snapshot is diffed against last.json;

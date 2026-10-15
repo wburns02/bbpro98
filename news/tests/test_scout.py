@@ -8,6 +8,7 @@ import sys
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import fog       # noqa: E402
 import gamedata  # noqa: E402
 import hive      # noqa: E402
 import recap     # noqa: E402
@@ -20,7 +21,7 @@ BORN_1970 = datetime.date(1970, 1, 2).toordinal() + 365
 
 
 def pyr_record(pid, first, last, serial=0, bats=0, throws=0, pos=0, contact=0, power=0, speed=0, stamina=0,
-               control=0, strikeout=0, fields=()):
+               control=0, strikeout=0, fields=(), seasons=0):
     """One 192-byte player record, plain. The offsets are written out here, not taken from gamedata, so the test checks
     gamedata's constants. fields: (position, rating) pairs written to the fielding slots."""
     p = bytearray(192)
@@ -28,7 +29,7 @@ def pyr_record(pid, first, last, serial=0, bats=0, throws=0, pos=0, contact=0, p
     p[30:47] = first.encode().ljust(17, b'\0')
     p[47:64] = last.encode().ljust(17, b'\0')
     struct.pack_into('<I', p, 0x1a, serial)
-    p[0x41], p[0x42], p[0x44] = bats, throws, pos
+    p[0x40], p[0x41], p[0x42], p[0x44] = seasons, bats, throws, pos
     p[0x5d], p[0x5e], p[0x5f] = contact, power, speed
     p[0x62], p[0x63] = stamina, control
     p[0x76] = strikeout
@@ -46,7 +47,7 @@ def write_pyr(path, records, seed=SEED):
 
 RECORDS = [
     pyr_record(100, 'Ann', 'Hart', serial=BORN_1966, bats=1, throws=1, pos=9, contact=92, power=21, speed=70,
-               strikeout=5, fields=((9, 60), (1, 11))),
+               strikeout=5, fields=((9, 60), (1, 11)), seasons=5),
     pyr_record(200, 'Bo', 'Lee', serial=0, bats=0, throws=2, pos=1, stamina=69, control=97, strikeout=47,
                fields=((1, 33),)),
     pyr_record(300, 'Cy', 'Ace', serial=BORN_1970, bats=3, throws=1, pos=10, contact=50, power=50, speed=50,
@@ -61,11 +62,14 @@ def test_players_reads_each_field_of_the_pyr_layout(tmp_path):
     got = gamedata.players(write_pyr(tmp_path / 'x.PYR', RECORDS))
     assert sorted(got) == [100, 200, 300, 400]
     assert got[100] == {'name': 'Ann Hart', 'pos': 'RF', 'bats': 'L', 'throws': 'L', 'born': 1966, 'contact': 92,
-                        'power': 21, 'speed': 70, 'stamina': 0, 'control': 0, 'strikeout': 5, 'fielding': 60}
+                        'power': 21, 'speed': 70, 'stamina': 0, 'control': 0, 'strikeout': 5, 'fielding': 60,
+                        'seasons': 5}
     assert got[200] == {'name': 'Bo Lee', 'pos': 'P', 'bats': '', 'throws': 'R', 'born': None, 'contact': 0,
-                        'power': 0, 'speed': 0, 'stamina': 69, 'control': 97, 'strikeout': 47, 'fielding': 33}
+                        'power': 0, 'speed': 0, 'stamina': 69, 'control': 97, 'strikeout': 47, 'fielding': 33,
+                        'seasons': 0}
     assert got[300] == {'name': 'Cy Ace', 'pos': '', 'bats': 'S', 'throws': 'L', 'born': 1970, 'contact': 50,
-                        'power': 50, 'speed': 50, 'stamina': 0, 'control': 0, 'strikeout': 99, 'fielding': None}
+                        'power': 50, 'speed': 50, 'stamina': 0, 'control': 0, 'strikeout': 99, 'fielding': None,
+                        'seasons': 0}
     assert got[400]['born'] is None and got[400]['bats'] == 'R' and got[400]['throws'] == 'R'
 
 
@@ -268,3 +272,63 @@ def test_write_falls_back_on_a_stray_number_a_budget_error_and_errors():
     assert (spent['source'], spent['reason']) == ('template', 'budget')
     down = scout.write(f, 'B', Scripted(hive.HiveError('down'), hive.HiveError('down')))
     assert (down['source'], down['reason']) == ('template', 'error')
+
+
+def public(assn='30L1998', year=1998):
+    """The newspaper's fog view as watch.scouting passes it."""
+    return lambda p, pid: fog.view(p, assn, 0, year, pid=pid)
+
+
+def test_fog_none_and_a_fog_that_changes_nothing_give_todays_roster_and_facts():
+    plain = scout.roster(world(), 1, PLAYERS, 1998)
+    assert scout.roster(world(), 1, PLAYERS, 1998, None) == plain
+    assert scout.roster(world(), 1, PLAYERS, 1998, lambda p, pid: p) == plain
+    facts = scout.team_facts(world(), 1, PLAYERS, LAST, 1998)
+    assert scout.team_facts(world(), 1, PLAYERS, LAST, 1998, None) == facts
+    assert scout.team_facts(world(), 1, PLAYERS, LAST, 1998, lambda p, pid: p) == facts
+
+
+def test_roster_grades_the_fogged_player_the_callable_returns_and_gives_it_the_pid():
+    seen = []
+
+    def lift(p, pid):
+        seen.append(pid)
+        return dict(p, contact=99, power=99, speed=99, control=99, strikeout=99, stamina=99, fielding=0)
+    before = {pid: dict(p) for pid, p in PLAYERS.items()}
+    r = scout.roster(world(), 1, PLAYERS, 1998, lift)
+    assert sorted(seen) == [101, 102, 103, 104, 105, 106, 107, 108, 201, 202, 203, 204, 205]     # 208 is not given
+    assert all((h['contact'], h['power'], h['speed'], h['fielding']) == (80, 80, 80, 20) for h in r['hitters'])
+    assert all((h['control'], h['strikeout'], h['stamina']) == (80, 80, 80) for h in r['pitchers'])
+    assert PLAYERS == before                                  # the true entries are never touched
+
+
+def test_roster_with_the_public_fog_moves_grades_and_the_pitcher_order_follows_what_is_shown():
+    plain = scout.roster(world(), 1, PLAYERS, 1998)
+    foggy = scout.roster(world(), 1, PLAYERS, 1998, public())
+    assert foggy != plain
+    key = ('contact', 'power', 'speed', 'fielding', 'control', 'strikeout', 'stamina')
+    moved = [(a, b) for a, b in zip(sorted(plain['hitters'] + plain['pitchers'], key=lambda r: r['pid']),
+                                    sorted(foggy['hitters'] + foggy['pitchers'], key=lambda r: r['pid']))
+             if any(a.get(k) != b.get(k) for k in key)]
+    assert moved
+    for a, b in moved:
+        assert (a['pid'], a['name'], a['age']) == (b['pid'], b['name'], b['age'])      # only grades move
+    shown = [r['control'] + r['strikeout'] + r['stamina'] for r in foggy['pitchers']]
+    assert shown == sorted(shown, reverse=True)
+    for h in foggy['hitters']:
+        for k in ('contact', 'power', 'speed'):
+            want = scout.grade(fog.rating(PLAYERS[h['pid']][k], '30L1998', 0, h['pid'], k, 1998, None))
+            assert h[k] == want
+
+
+def test_team_facts_with_fog_picks_its_best_by_the_fogged_grades_and_keeps_the_hand():
+    foggy = scout.team_facts(world(), 1, PLAYERS, LAST, 1998, public())
+    rows = scout.roster(world(), 1, PLAYERS, 1998, public())['hitters']
+    by = {h['name']: h for h in rows}
+    best = sorted(rows, key=lambda h: (-(h['contact'] + h['power'] + h['speed']), h['name']))[:scout.HITTERS]
+    assert [h['name'] for h in foggy['hitters']] == [h['name'] for h in best]
+    for h in foggy['hitters']:
+        assert (h['contact'], h['power'], h['speed'], h['fielding']) == tuple(
+            by[h['name']][k] for k in ('contact', 'power', 'speed', 'fielding'))
+    bats = {p['name']: scout.SIDES.get(p['bats'], '') for p in PLAYERS.values()}
+    assert len(foggy['hitters']) == scout.HITTERS and all(h['bats'] == bats[h['name']] for h in foggy['hitters'])

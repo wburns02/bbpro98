@@ -441,7 +441,8 @@ def _association(data_dir, assn, qs):
     name = _text(meta.get('name')) or assn
     folder, home = data_dir / assn, '/news/%s/' % assn
     moves = _moves_box(data_dir, assn) if page == 1 else ''
-    season = _season_links(folder, home, _rookie_years(data_dir, assn)) if page == 1 else ''
+    season = _season_links(folder, home, _rookie_years(data_dir, assn),
+                           bool(_year_files(data_dir, assn, 'draft'))) if page == 1 else ''
     past = _past_box(data_dir, assn) if page == 1 else ''
     replay = _replay_link(folder, home) if page == 1 else ''
     payroll = _payroll_box(data_dir, assn) if page == 1 else ''
@@ -853,12 +854,12 @@ def _season(folder, assn, which, home):
     return _preview_page(assn, rec, home) if which == 'preview' else _awards_page(assn, rec, home)
 
 
-def _rookie_years(data_dir, assn):
-    """The seasons with a rookie class page, newest first: the <4 digits>.json files in <assn>/rookies (ids.json, the
-    watcher's snapshot, is not one)."""
+def _year_files(data_dir, assn, sub):
+    """The years of the <4 digits>.json files in <assn>/<sub>, newest first (ids.json, the watcher's snapshot, is not
+    one). [] for a name that is not an association's or a folder that cannot be listed."""
     if not ASSN_RE.fullmatch(assn):
         return []
-    folder = data_dir / assn / 'rookies'
+    folder = data_dir / assn / sub
     try:
         names = os.listdir(folder)
     except OSError:
@@ -867,15 +868,23 @@ def _rookie_years(data_dir, assn):
     return sorted((int(m.group(1)) for m in found if m and (folder / m.group(0)).is_file()), reverse=True)
 
 
-def _season_links(folder, home, rookie_years=()):
+def _rookie_years(data_dir, assn):
+    """The seasons with a rookie class page, newest first: the <4 digits>.json files in <assn>/rookies."""
+    return _year_files(data_dir, assn, 'rookies')
+
+
+def _season_links(folder, home, rookie_years=(), draft=False):
     """The Season box for the side column: postseason above awards above preview, each only when its file exists, then
-    a link per year in rookie_years (the current front page passes them; a past season's does not). '' for none."""
+    a link per year in rookie_years and, when draft, one to the draft room (the current front page passes them; a past
+    season's does not). '' for none."""
     links = ['<li><a href="%s%s">%s</a></li>' % (esc(home), which, label)
              for which, label in (('postseason', 'Postseason'), ('awards', 'Season awards'),
                                   ('preview', 'Season preview'))
              if _season_file(folder, which) is not None]
     links += ['<li><a href="%srookies/%04d">%04d rookie class</a></li>' % (esc(home), y, y)
               for y in rookie_years]
+    if draft:
+        links.append('<li><a href="%sdraft">Draft room</a></li>' % esc(home))
     if not links:
         return ''
     return '<section class="season"><h2>Season</h2><ul>%s</ul></section>' % ''.join(links)
@@ -934,6 +943,86 @@ def _rookies(data_dir, assn, year):
     if rec is None:
         return _not_found()
     return _rookies_page(assn, year, rec, '/news/%s/' % assn)
+
+
+DRAFT_NOTE = "Grades are what the league's scouts see: younger players are harder to read."
+GRADE_LABELS = (('contact', 'Con'), ('power', 'Pow'), ('speed', 'Spd'), ('fielding', 'Fld'), ('control', 'Ctl'),
+                ('strikeout', 'K'), ('stamina', 'Sta'))
+
+
+def _league_name(data_dir, assn):
+    return _text(_d(_read_obj(data_dir / assn / 'meta.json')).get('name')) or assn
+
+
+def _top_team(rec):
+    """The team row with the highest value in a draft record (ties: the lower tid), or None without teams."""
+    return max(_dicts(rec.get('teams')), key=lambda t: (t.get('value') if _is_num(t.get('value')) else 0,
+                                                        -_int(t, 'tid')), default=None)
+
+
+def _grades_text(grades):
+    """'Con 70 Pow 45 Spd 80 Fld 60': the integer grades of a dict, in the page's order. '' for none."""
+    grades = _d(grades)
+    return ' '.join('%s %d' % (label, grades[key]) for key, label in GRADE_LABELS if type(grades.get(key)) is int)
+
+
+def _draft_index(data_dir, assn):
+    """The draft room: a row for each year with a draft file, newest first, with the year's top team. 404 without one."""
+    years = _year_files(data_dir, assn, 'draft')
+    if not years:
+        return _not_found()
+    rows = []
+    for y in years:
+        rec = _d(_read_obj(data_dir / assn / 'draft' / ('%04d.json' % y)))
+        top = _top_team(rec) or {}
+        rows.append([_Markup('<a href="/news/%s/draft/%04d">%04d</a>' % (esc(assn), y, y)), top.get('name'),
+                     top.get('grade'), len(_dicts(rec.get('picks')))])
+    name = _league_name(data_dir, assn)
+    body = (_masthead('Draft room') + _league_nav(assn, {'association': name})
+            + '<section>%s</section>' % _table('Draft classes', ('Year', 'Top team', 'Grade', 'Picks'), rows,
+                                               text=(0, 1)))
+    return _page_reply(200, '%s · Draft room' % name, body)
+
+
+def _draft_page(assn, name, year, rec):
+    """One year's draft: the team grades (grade, picks, picks that fill a need, the revisit grade when the draft has
+    been revisited), then every pick with the grades the scouts saw, and with a revisit the true grades now and the
+    seasons played."""
+    teams, picks = _dicts(rec.get('teams')), _dicts(rec.get('picks'))
+    rev = _d(rec.get('revisit'))
+    rev_grade = {_int(t, 'tid', None): t.get('grade') for t in _dicts(rev.get('teams'))}
+    rev_picks = _d(rev.get('picks'))
+    filled = {}
+    for pick in picks:
+        if pick.get('need') is True:
+            filled[_int(pick, 'tid', None)] = filled.get(_int(pick, 'tid', None), 0) + 1
+    team_rows = [[t.get('name'), t.get('grade'), t.get('picks'), filled.get(_int(t, 'tid', None), 0)]
+                 + ([rev_grade.get(_int(t, 'tid', None), '')] if rev else []) for t in teams]
+    team_heads = ('Team', 'Grade', 'Picks', 'Needs filled') + (('Revisit grade',) if rev else ())
+    pick_rows = []
+    for pick in picks:
+        row = [pick.get('name'), pick.get('pos'), pick.get('age'), pick.get('team'), _grades_text(pick.get('grades')),
+               'yes' if pick.get('need') is True else '']
+        if rev:
+            now = _d(rev_picks.get(_text(pick.get('pid'))))
+            row += ['gone' if now.get('gone') is True else _grades_text(now.get('grades')), now.get('seasons')]
+        pick_rows.append(row)
+    pick_heads = ('Player', 'Pos', 'Age', 'Team', 'Grades', 'Fills a need') + (('Now', 'Seasons') if rev else ())
+    through = '%04d class' % year + (', revisited in %s' % _text(rev.get('year')) if _text(rev.get('year')) else '')
+    body = (_masthead('Draft room', through) + _league_nav(assn, {'association': name})
+            + '<p class="nav"><a href="/news/%s/draft">All drafts</a></p>' % esc(assn)
+            + '<p class="meta">%s</p>' % esc(DRAFT_NOTE)
+            + '<section>%s</section>' % _table('Team grades', team_heads, team_rows, text=1)
+            + '<section>%s</section>' % _table('Picks', pick_heads, pick_rows, text=(0, 1, 3, 4, 6)))
+    return _page_reply(200, '%s · %04d draft' % (name, year), body)
+
+
+def _draft_year(data_dir, assn, year):
+    """A year's draft page; 404 for a year that is not four digits or a file missing or unreadable."""
+    rec = _read_obj(data_dir / assn / 'draft' / (year + '.json')) if YEAR_RE.fullmatch(year) else None
+    if rec is None:
+        return _not_found()
+    return _draft_page(assn, _league_name(data_dir, assn), int(year), rec)
 
 
 def _move_log(data_dir, assn):
@@ -1285,6 +1374,10 @@ def route(data_dir, target):
         return _past(data_dir, assn, rest[2:], qs)
     if len(rest) == 3 and rest[1] == 'rookies':
         return _rookies(data_dir, assn, rest[2])
+    if len(rest) == 2 and rest[1] == 'draft':
+        return _draft_index(data_dir, assn)
+    if len(rest) == 3 and rest[1] == 'draft':
+        return _draft_year(data_dir, assn, rest[2])
     if len(rest) == 2 and rest[1] == 'moves':
         return _transactions(data_dir, assn, qs)
     if len(rest) == 3 and rest[1] == 'moves' and NOTE_RE.fullmatch(rest[2]):
