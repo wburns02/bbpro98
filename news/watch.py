@@ -243,21 +243,24 @@ class Watcher:
         taken; meta.json is copied, the rest moved) and the new season starts as a new association. Returns that
         folder's name, or None when nothing rolled over: no meta.json, no year in it (written before this), no year
         in the association, or the same year. An OSError part way propagates to scan(), which logs it; what was not
-        moved stays, and the next pass tries again."""
+        moved stays, and the next pass tries again. The move is staged in the hidden <out>/past/.rolling-<year>/ and
+        renamed to its final name only at the end, so a failed pass leaves no half season under a season name and the
+        next pass reuses the stage and finishes into the same folder."""
         meta = read_json(os.path.join(out, 'meta.json'))
         stored, year = year_of(meta.get('season_year')) if meta else None, year_of(assoc.get('season_year'))
         if stored is None or year is None or stored == year:
             return None
+        stage = os.path.join(out, 'past', '.rolling-%d' % stored)
+        os.makedirs(stage, exist_ok=True)
+        shutil.copyfile(os.path.join(out, 'meta.json'), os.path.join(stage, 'meta.json'))
+        for entry in SEASON_ENTRIES:
+            if os.path.lexists(os.path.join(out, entry)):
+                os.replace(os.path.join(out, entry), os.path.join(stage, entry))
         name, n = str(stored), 1
         while os.path.exists(os.path.join(out, 'past', name)):
             n += 1
             name = '%d-%d' % (stored, n)
-        dest = os.path.join(out, 'past', name)
-        os.makedirs(dest)
-        shutil.copyfile(os.path.join(out, 'meta.json'), os.path.join(dest, 'meta.json'))
-        for entry in SEASON_ENTRIES:
-            if os.path.lexists(os.path.join(out, entry)):
-                os.replace(os.path.join(out, entry), os.path.join(dest, entry))
+        os.replace(stage, os.path.join(out, 'past', name))
         self.log('%s season %d news archived to past/%s' % (stem, stored, name))
         return name
 

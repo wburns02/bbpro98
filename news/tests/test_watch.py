@@ -784,7 +784,8 @@ def test_a_move_that_fails_leaves_the_rest_in_place_and_raises_for_scan_to_log(t
     monkeypatch.setattr(os, 'replace', replace)
     with pytest.raises(OSError):
         w.rollover('A', str(out), {'season_year': 1998})
-    assert (out / 'past' / '1997' / 'recaps').exists() and (out / 'feed' / '10-01.json').exists()
+    assert (out / 'past' / '.rolling-1997' / 'recaps').exists() and not (out / 'past' / '1997').exists()
+    assert (out / 'feed' / '10-01.json').exists()
     assert (out / 'scout').exists() and lines == []
 
 
