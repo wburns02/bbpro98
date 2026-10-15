@@ -139,36 +139,42 @@ def test_http_lockout(server):
 def test_known_browser_skips_the_global_limit_only():
     c = Clock()
     g = gate.Gate('4321', SECRET, now=c)
-    dev = g.device_token()
+    dev = g.device(g.device_token())
     for i in range(gate.GLOBAL_FAILS):
         g.attempt('10.0.%d.%d' % (i // 250, i % 250), '9999')
     assert g.attempt('9.9.9.9', '4321') == 'blocked'
-    assert g.known(dev) and g.attempt('9.9.9.9', '4321', known=True) == 'ok'
+    assert dev and g.attempt('9.9.9.9', '4321', dev) == 'ok'
     for _ in range(gate.IP_FAILS):
-        g.attempt('8.8.8.8', '0000', known=True)
-    assert g.attempt('8.8.8.8', '4321', known=True) == 'blocked'   # its own per-visitor limit still holds
+        g.attempt('8.8.8.8', '0000', g.device(g.device_token()))
+    assert g.attempt('8.8.8.8', '4321', dev) == 'blocked'          # the per-visitor limit still holds
 
 
-def test_copied_device_cookie_gets_a_small_pool_not_unlimited_guesses():
+def test_copied_device_cookie_uses_up_only_its_own_pool():
     c = Clock()
     g = gate.Gate('4321', SECRET, now=c)
-    for i in range(gate.KNOWN_FAILS):                               # one guess per address, so no per-IP limit
-        assert g.attempt('10.9.0.%d' % i, '0000', known=True) == 'wrong'
-    assert g.attempt('10.9.1.1', '4321', known=True) == 'blocked'
-    assert g.attempt('10.9.1.1', '4321') == 'ok'                    # strangers' pool untouched by known guesses
+    stolen = g.device(g.device_token())
+    c.t += 1
+    owner = g.device(g.device_token())
+    assert stolen != owner
+    for i in range(gate.DEVICE_FAILS):                              # one guess per address, so no per-IP limit
+        assert g.attempt('10.9.0.%d' % i, '0000', stolen) == 'wrong'
+    assert g.attempt('10.9.1.1', '4321', stolen) == 'blocked'
+    assert g.attempt('10.9.1.2', '4321', owner) == 'ok'             # the owner's browser is untouched
+    assert g.attempt('10.9.1.3', '4321') == 'ok'                    # and so is the strangers' pool
     c.t += gate.GLOBAL_WINDOW + 1
-    assert g.attempt('10.9.1.1', '4321', known=True) == 'ok'
+    assert g.attempt('10.9.1.1', '4321', stolen) == 'ok'
+    assert g.device_fails == {}
 
 
 def test_device_token_is_not_a_session_and_vice_versa():
     c = Clock()
     g = gate.Gate('4321', SECRET, now=c)
     dev, tok = g.device_token(), g.token()
-    assert not g.valid(dev) and not g.known(tok)
-    assert not gate.Gate('4321', b'x' * 32, now=c).known(dev)
-    assert not g.known('') and not g.known(None) and not g.known('9' * 40 + '.ab')
+    assert not g.valid(dev) and g.device(tok) is None
+    assert gate.Gate('4321', b'x' * 32, now=c).device(dev) is None
+    assert g.device('') is None and g.device(None) is None and g.device('9' * 40 + '.ab') is None
     c.t += gate.DEVICE_AGE + 1
-    assert not g.known(dev)
+    assert g.device(dev) is None
 
 
 def test_revoke_survives_a_restart_and_expires(tmp_path):

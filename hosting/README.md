@@ -51,8 +51,8 @@ Paths in the units assume `/mnt/data/bbpro98/{prefix,web,bin,news,news-data,gate
    `systemctl --user enable --now bbpro98-gate bbpro98-proxy`. The gate makes its cookie-signing secret
    (`~/.config/bbpro98/gate_secret`) on first start; delete that file and restart the gate to sign everyone out.
    Wrong PINs are limited to 5 per visitor per 15 minutes and 30 in total per hour; a browser that signed in
-   before (its `bbdev` cookie) counts against its own 10 an hour instead, so guessing from many addresses cannot lock
-   you out. Signing out revokes that sign-in for good (kept in `gate_secret.revoked`). Then create the proxied
+   before (its `bbdev` cookie) has its own 5 an hour instead (per cookie), so guessing from many addresses, or with a
+   copied cookie, cannot lock you out. Signing out revokes that sign-in for good (kept in `gate_secret.revoked`). Then create the proxied
    CNAME `<hostname> -> <tunnel-id>.cfargotunnel.com`. Gate first, DNS second: in the other order the game is
    public for the minutes in between, and noVNC here has no password.
 7. League news: put the Hive key in `~/.config/hivemodels/api_key.env` on the host (a `HIVEMODELS_API_KEY=` line,
