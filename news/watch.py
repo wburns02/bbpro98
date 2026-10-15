@@ -56,6 +56,7 @@ LLM_DAYS = 3          # columns for the newest dates go to the model; older date
 SCOUT_CALLS = 3       # scouting reports asked of the model per scan, so a backfill never holds up box scores
 MOVE_CALLS = 3        # transaction notes asked of the model per scan; the rest of a scan's notes get the template
 MOVE_KEEP = 3000      # events kept in moves/log.json
+MOVE_CATCHUP = 20     # missing notes of this season written per pass, after an interrupted pass left some out
 DEFAULT_TABLE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'salary_table.json')
 
 
@@ -533,8 +534,11 @@ class Watcher:
     def moves(self, out, assoc, pyr, dat):
         """Roster moves and milestones since the last scan (moves.py). The current snapshot is diffed against last.json;
         the events go to the end of log.json, which keeps MOVE_KEEP and counts every event ever logged, so a note's
-        number never changes; each notable event gets a note; then the snapshot becomes last.json. Nothing is written
-        without the PYR, the PYF beside it (the free agents) or the stats (DAT), or while one is younger than SETTLE."""
+        number never changes; then the snapshot becomes last.json, before any note is written, so a pass that stops
+        on a failed note write never logs its events again. Each notable event gets a note; a note of this season that
+        is still missing from an earlier pass is written on a later one (at most MOVE_CATCHUP a pass). Nothing is
+        written without the PYR, the PYF beside it (the free agents) or the stats (DAT), or while one is younger than
+        SETTLE."""
         if pyr is None or dat is None:
             return
         pyf = gamedata.find(os.path.dirname(pyr), os.path.splitext(os.path.basename(pyr))[0] + '.PYF')
@@ -560,23 +564,41 @@ class Watcher:
             if moves.notable(ev, cur):
                 ev['note'] = n
         if events:
-            write_json(log_path, {'events': (kept + events)[-MOVE_KEEP:], 'count': count + len(events)})
+            kept = (kept + events)[-MOVE_KEEP:]
+            write_json(log_path, {'events': kept, 'count': count + len(events)})
             self.log('%s moves: %d' % (stem, len(events)))
-        for ev in events:
-            if 'note' not in ev:
-                continue
-            facts = moves.facts(ev, assoc['name'], date, cur['career'].get(str(ev['pid'])))
-            if self.complete is None:
-                piece = dict(moves.template(facts), source='template', reason='off')
-            elif self.move_left > 0:
-                self.move_left -= 1
-                piece = moves.write(facts, self.budget, self.complete)
-            else:
-                piece = dict(moves.template(facts), source='template', reason='backfill')
-            write_json(os.path.join(mdir, 'notes', '%d.json' % ev['note']),
-                       dict(piece, kind='move', event=ev, facts=facts, created=now_iso()))
-            self.log('%s move: %s %s (%s)' % (stem, ev['kind'], ev['name'], piece['source']))
         write_json(os.path.join(mdir, 'last.json'), dict(cur, date=date))
+        for ev in events:
+            if 'note' in ev:
+                self._move_note(mdir, stem, assoc, cur, ev, date)
+        left = MOVE_CATCHUP
+        for ev in kept:
+            if left <= 0:
+                break
+            if (type(ev.get('note')) is not int or ev.get('year') != cur['year']
+                    or any(k not in ev for k in ('pid', 'kind', 'name'))
+                    or os.path.exists(os.path.join(mdir, 'notes', '%d.json' % ev['note']))):
+                continue
+            try:
+                self._move_note(mdir, stem, assoc, cur, ev, ev.get('date') or date)
+            except (KeyError, TypeError):
+                continue        # a logged event without the fields a note is built from is left alone
+            left -= 1
+
+    def _move_note(self, mdir, stem, assoc, cur, ev, date):
+        """Write the note of one logged event to moves/notes/<note>.json: the model's while this scan has calls left,
+        else the template."""
+        facts = moves.facts(ev, assoc['name'], date, cur['career'].get(str(ev['pid'])))
+        if self.complete is None:
+            piece = dict(moves.template(facts), source='template', reason='off')
+        elif self.move_left > 0:
+            self.move_left -= 1
+            piece = moves.write(facts, self.budget, self.complete)
+        else:
+            piece = dict(moves.template(facts), source='template', reason='backfill')
+        write_json(os.path.join(mdir, 'notes', '%d.json' % ev['note']),
+                   dict(piece, kind='move', event=ev, facts=facts, created=now_iso()))
+        self.log('%s move: %s %s (%s)' % (stem, ev['kind'], ev['name'], piece['source']))
 
     def capture(self, stem):
         """Copy every new box score of this association into <data>/<ASSN>/pending/ as parsed JSON. The game keeps
