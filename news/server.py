@@ -558,7 +558,8 @@ def _story(folder, assn, key, home):
 
 
 def _season_file(folder, which):
-    """The season file of that kind (which: 'preview', 'awards', 'replay' or 'contracts') as an object, else None."""
+    """The season file of that kind (which: 'preview', 'awards', 'postseason', 'replay' or 'contracts') as an object,
+    else None."""
     rec = _read_obj(folder / (which + '.json'))
     return rec if rec is not None and rec.get('kind') == which else None
 
@@ -620,6 +621,29 @@ def _awards_page(assn, rec, home=None):
         league = _text(lg.get('league')).strip() or 'The league'
         sections.append('<section><h2>%s</h2>%s</section>' % (esc(league), ''.join(tables)))
     return _story_layout(assn, rec, 'Season awards', sections, home)
+
+
+def _postseason_page(assn, rec, home=None):
+    """The bracket round by round: a table of games per series, a line for a series not started."""
+    facts = _d(rec.get('facts'))
+    sections = []
+    for rnd in _dicts(facts.get('rounds')):
+        series = []
+        for s in _dicts(rnd.get('series')):
+            caption = '%s vs %s' % tuple((_strings(s.get('teams')) + ['', ''])[:2])
+            rows = [[n, g.get('away'), g.get('away_runs'), g.get('home'), g.get('home_runs')]
+                    for n, g in enumerate(_dicts(s.get('games')), 1)]
+            series.append(_table(caption, ('Game', 'Away', 'R', 'Home', 'R'), rows, text=(1, 3)) if rows
+                          else '<p>%s</p>' % esc(caption))
+        sections.append('<section><h2>%s</h2>%s</section>' % (esc(rnd.get('name')), ''.join(series)))
+    label = '%s postseason' % _text(facts.get('season'))
+    return _story_layout(assn, rec, label.strip(), sections, home)
+
+
+def _postseason(folder, assn, home):
+    """The postseason page; 404 when its file is missing, unreadable or of another kind."""
+    rec = _season_file(folder, 'postseason')
+    return _postseason_page(assn, rec, home) if rec is not None else _not_found()
 
 
 def _is_num(value):
@@ -768,10 +792,11 @@ def _rookie_years(data_dir, assn):
 
 
 def _season_links(folder, home, rookie_years=()):
-    """The Season box for the side column: awards above preview, each only when its file exists, then a link per year
-    in rookie_years (the current front page passes them; a past season's does not). '' for none."""
+    """The Season box for the side column: postseason above awards above preview, each only when its file exists, then
+    a link per year in rookie_years (the current front page passes them; a past season's does not). '' for none."""
     links = ['<li><a href="%s%s">%s</a></li>' % (esc(home), which, label)
-             for which, label in (('awards', 'Season awards'), ('preview', 'Season preview'))
+             for which, label in (('postseason', 'Postseason'), ('awards', 'Season awards'),
+                                  ('preview', 'Season preview'))
              if _season_file(folder, which) is not None]
     links += ['<li><a href="%srookies/%04d">%04d rookie class</a></li>' % (esc(home), y, y)
               for y in rookie_years]
@@ -1113,14 +1138,16 @@ def _day_route(folder, assn, home, segment):
 
 
 def _season_pages(folder, assn, home, rest):
-    """The story, preview, awards, replay, team and day pages read from a season folder, linked under home. rest is
-    the path after the season's front page; None when it is none of those pages."""
+    """The story, preview, awards, postseason, replay, team and day pages read from a season folder, linked under
+    home. rest is the path after the season's front page; None when it is none of those pages."""
     if len(rest) == 2 and rest[0] == 'day':
         return _day_route(folder, assn, home, rest[1])
     if len(rest) == 1 and KEY_RE.fullmatch(rest[0]):
         return _story(folder, assn, rest[0], home)
     if len(rest) == 1 and rest[0] in ('preview', 'awards'):
         return _season(folder, assn, rest[0], home)
+    if len(rest) == 1 and rest[0] == 'postseason':
+        return _postseason(folder, assn, home)
     if len(rest) == 1 and rest[0] == 'replay':
         return _replay(folder, assn, home)
     if len(rest) == 2 and rest[0] == 'team' and TID_RE.fullmatch(rest[1]):
