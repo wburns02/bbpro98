@@ -77,6 +77,7 @@ open(f'{OUT}/.mark', 'w').close()
 if os.environ.get('SKIP_MENU') != '1':
     click(495, 677); time.sleep(2); click(495, 677); time.sleep(4)
 day = 0
+drafts = 0
 while day < N:
     if draft_pending():
         ok = run_draft()
@@ -90,18 +91,25 @@ while day < N:
     click(571, 565); time.sleep(8)     # OK
     ok = wait_done()
     if ok == 'draft':       # the notice ends the day's sim before any games: draft, then sim the same day again
+        drafts += 1
+        if drafts > 3:
+            print('amateur draft: gave up after 3 tries', flush=True)
+            shot('stuck_draft')
+            break
         ok = run_draft()
         print(f'amateur draft: done={ok}', flush=True)
         if ok: continue
         shot('stuck_draft'); break
     print(f'day {day+1}: done={ok}', flush=True)
     if ok and os.environ.get('SNAP_DAYS') == '1':   # per-day game.bki/bko + the box-score files written that day
-        subprocess.run(['bash', '-c', f'W=/mnt/nvme/bbpro98/work_install; D="{OUT}/day{day+1}"; mkdir -p "$D"; '
-                        f'cp -a "$W/game.bki" "$W/game.bko" "$D/"; find "$W/Stats" -maxdepth 1 -newer "{OUT}/.mark" '
-                        f'-iname "MLBPA97.[HN]*" -exec cp -a {{}} "$D/" \\;; touch "{OUT}/.mark"'])
+        subprocess.run(['bash', '-c', 'W=/mnt/nvme/bbpro98/work_install; D="$O/day$N"; mkdir -p "$D"; '
+                        'cp -a "$W/game.bki" "$W/game.bko" "$D/"; find "$W/Stats" -maxdepth 1 -newer "$O/.mark" '
+                        '-iname "MLBPA97.[HN]*" -exec cp -a {} "$D/" \\;; touch "$O/.mark"'],
+                       env={**os.environ, 'O': OUT, 'N': str(day + 1)})   # OUT goes in as data, never as shell source
     if not ok:
         shot(f'stuck_day{day+1}'); break
     day += 1
 # collect
-subprocess.run(['bash', '-c', f'W=/mnt/nvme/bbpro98/work_install; cp -a "$W/Assn" "$W/Stats" "$W"/bbtrace.log "{OUT}/" 2>/dev/null; true'])
+subprocess.run(['bash', '-c', 'W=/mnt/nvme/bbpro98/work_install; cp -a "$W/Assn" "$W/Stats" "$W"/bbtrace*.log "$O/" 2>/dev/null; true'],
+               env={**os.environ, 'O': OUT})
 print('collected to', OUT)
