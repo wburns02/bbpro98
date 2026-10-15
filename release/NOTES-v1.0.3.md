@@ -61,6 +61,10 @@ its text; they do not replace it.
 - Hosting: the PIN gate exempts a browser that signed in before (a signed device cookie, bound to the PIN) from the
   sitewide wrong-PIN limit, so guessing from many addresses cannot lock the owner out, and signing out revokes the
   sign-in so a copied cookie stops working. deploy.sh stops when a copy fails instead of reporting nothing changed.
+- Lahman builds refuse to overwrite an existing association (pass --force to replace one; a copy goes to
+  build-backup/) and never write over MLBPA97 or the donor files. The four files are written atomically with the ASN
+  last, and Build a Season treats a season as built only when all four are there. The bridge refuses a GM run whose
+  trade ledger is unreadable instead of planning the trades again.
 
 ## Known limits
 
