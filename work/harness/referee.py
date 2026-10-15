@@ -72,14 +72,14 @@ def load_bands(path):
 
 def split(lines):
     """[segment] in log order, one per demographics object plus a leading one for objects before any: {'demo': the
-    demographics object or None, 'base': True for the pre-run baseline, 'of': the largest "of" of its round objects or
-    None, 'objs': its season objects (those with "season" and "done")}."""
+    demographics object or None, 'base': True for the pre-run baseline (demographics "loaded"), 'of': the largest
+    "of" of its round objects or None, 'objs': its season objects (those with "season" and "done")}."""
     segs, cur = [], None
     for o in lines:
         if not isinstance(o, dict):
             continue
         if 'demographics' in o:
-            cur = {'demo': o, 'base': isinstance(o['demographics'], str), 'of': None, 'objs': []}
+            cur = {'demo': o, 'base': o['demographics'] == 'loaded', 'of': None, 'objs': []}
             segs.append(cur)
             continue
         if cur is None:
