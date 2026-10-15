@@ -605,10 +605,12 @@ def _write_atomic(path, data):
         raise
 
 
-def add_player(game_dir, spec, donor_path, backup_dir, now, proc='/proc'):
+def add_player(game_dir, spec, donor_path, backup_dir, now, proc='/proc', after=None):
     """Add the spec's player to one association's free agent pool: a new record at the end of its PYR and his id in its
     PYF, after backing both up. Raises AssociationOpen, and writes nothing, while the game has any of its files open.
-    Returns (new id, plain record bytes)."""
+    after (optional) is called with the new id once both files are written (the caller's ledger write). When the PYF
+    write or after raises, the PYR and PYF are put back as they were (a PYF the add created is removed) and the error
+    is raised, so a failed add never leaves a record the pool does not list. Returns (new id, plain record bytes)."""
     stem = spec['assn']
     assn_dir = os.path.join(game_dir, 'Assn')
     asn = _locate(assn_dir, stem + '.ASN')
@@ -637,6 +639,26 @@ def add_player(game_dir, spec, donor_path, backup_dir, now, proc='/proc'):
     for f in (pyr, pyf):
         if f:
             shutil.copy2(f, folder)
+    old_pyr = _read(pyr)
+    old_pyf = _read(pyf) if pyf else None
     _write_atomic(pyr, new_pyr)
-    _write_atomic(target_pyf, new_pyf)
+    try:
+        _write_atomic(target_pyf, new_pyf)
+        if after is not None:
+            after(pid)
+    except BaseException:
+        _undo_add(pyr, old_pyr, target_pyf, old_pyf)
+        raise
     return pid, bytes(rec)
+
+
+def _undo_add(pyr, old_pyr, pyf, old_pyf):
+    """Put the PYR and PYF back as they were before an add (the backup folder still holds both if this fails too)."""
+    _write_atomic(pyr, old_pyr)
+    if old_pyf is not None:
+        _write_atomic(pyf, old_pyf)
+    else:
+        try:
+            os.remove(pyf)
+        except FileNotFoundError:
+            pass

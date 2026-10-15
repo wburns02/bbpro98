@@ -428,18 +428,22 @@ def _file_lock(data):
 
 def commit(game, data, donor, backup, proc, spec, now):
     """Sign a valid spec's player into his association's free agent pool and add him to the ledger: the lock, the cap,
-    the write, then the ledger entry. Returns his id. Raises CapReached at CAP created players, create.AssociationOpen
-    while the game holds the association's files, and whatever add_player raises otherwise."""
+    the write, then the ledger entry (a failed ledger write undoes the add). Returns his id. Raises CapReached at CAP
+    created players, create.AssociationOpen while the game holds the association's files, and whatever add_player
+    raises otherwise."""
     stem = spec['assn']
     with _LOCK, _file_lock(data):
         entries = _read_ledger(data, stem)
         if len(entries) >= CAP:
             raise CapReached(stem)
-        pid, _ = create.add_player(game, spec, donor, backup, now, proc)
-        entries.append({'pid': pid, 'name': '%s %s' % (spec['first'], spec['last']), 'pos': spec['pos'],
-                        'assn': stem, 'created': now.isoformat(timespec='seconds'),
-                        'archetype': spec['archetype'], 'mode': spec['mode']})
-        _write_ledger(data, stem, entries)
+
+        def ledger(pid):
+            entries.append({'pid': pid, 'name': '%s %s' % (spec['first'], spec['last']), 'pos': spec['pos'],
+                            'assn': stem, 'created': now.isoformat(timespec='seconds'),
+                            'archetype': spec['archetype'], 'mode': spec['mode']})
+            _write_ledger(data, stem, entries)
+
+        pid, _ = create.add_player(game, spec, donor, backup, now, proc, after=ledger)
     return pid
 
 
@@ -554,7 +558,7 @@ class Handler(BaseHTTPRequestHandler):
         length = self.headers.get('Content-Length')
         if length is None or not re.fullmatch(r'[0-9]+', length):
             return _notice(411, 'Length required', 'The form must send a Content-Length.')
-        if not 0 < int(length) <= MAX_BODY:
+        if len(length) > len(str(MAX_BODY)) or not 0 < int(length) <= MAX_BODY:     # int() refuses 4300+ digits
             return _notice(413, 'Too large', 'The form must be 1 to %d bytes.' % MAX_BODY)
         if not self.headers.get('Content-Type', '').startswith(FORM_TYPE):
             return _notice(415, 'Unsupported type', 'Send the form as an HTML form.')

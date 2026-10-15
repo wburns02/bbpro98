@@ -418,3 +418,24 @@ def test_read_grade_takes_only_plain_digits():
     for v in ('²', '٣', '1²', '', '-5', '61', '0600', 'abc'):
         assert createweb._read_grade(v) is None, v           # '²' passed isdigit and raised in int() before
     assert createweb._budget_text({'pos': 'C', 'now_contact': '²'})
+
+
+def test_a_failed_ledger_write_undoes_the_add_so_a_retry_makes_one_player(web, site, monkeypatch):
+    game, data, _, _, _ = site
+    before = {f: (game / 'Assn' / f).read_bytes() for f in ('TEST77.PYR', 'TEST77.PYF')}
+    real = createweb._write_ledger
+    monkeypatch.setattr(createweb, '_write_ledger', lambda *a: (_ for _ in ()).throw(OSError(28, 'full')))
+    assert post(web, GOOD)[0] == 500
+    assert {f: (game / 'Assn' / f).read_bytes() for f in before} == before
+    assert not (data / 'created' / 'TEST77.json').exists()
+    monkeypatch.setattr(createweb, '_write_ledger', real)
+    assert post(web, GOOD)[0] == 303
+    _, recs = create.decipher((game / 'Assn' / 'TEST77.PYR').read_bytes())
+    assert [r[0] | r[1] << 8 for r in recs] == [100, 205, 206]
+    assert [e['pid'] for e in json.loads((data / 'created' / 'TEST77.json').read_text())] == [206]
+
+
+def test_a_content_length_too_long_for_int_is_413_not_500(web):
+    base = {'Origin': ORIGIN, 'Content-Type': FORM}
+    assert raw(web, dict(base, **{'Content-Length': '1' * 5000}))[0] == 413
+    assert raw(web, dict(base, **{'Content-Length': '00004097'}))[0] == 413

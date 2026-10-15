@@ -215,3 +215,8 @@ def test_cli_json_and_missing(tmp_path, capsys):
 def test_render_no_champion_lines_says_none():
     r = runreport.render(runreport.summary(runreport.parse('{"demographics": 0, "year": 2028, "t": "00:00:01"}')))
     assert r.split('Champions\n', 1)[1].startswith('none\n')
+
+
+def test_parse_skips_a_line_nested_too_deep_for_json():
+    deep = '{"a":' + '[' * 100000 + ']' * 100000 + '}'
+    assert runreport.parse(deep + '\n{"ok": 1}\n') == [{'ok': 1}]
