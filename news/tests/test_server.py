@@ -1487,3 +1487,199 @@ def test_coverage_line_sits_after_the_column_and_before_the_stories(site):
     write(site.root / '30L1998' / 'recaps' / (KEY + '.json'), story(KEY))
     html = site.get('/news/30L1998/')[2].decode()
     assert html.index('class="feed"') < html.index('class="coverage"') < html.index('class="story"')
+
+
+def day_feed(month, day, headline, results=None):
+    col = feed(month, day, headline)
+    col['facts'] = {'association': '1998 Major Leagues', 'date': col['date'], 'results': results or []}
+    return col
+
+
+def game(away, home, away_runs, home_runs, innings=9):
+    return {'away': away, 'home': home, 'away_runs': away_runs, 'home_runs': home_runs, 'innings': innings}
+
+
+@pytest.fixture
+def days(site):
+    """30L1998 with columns for April 2, 15 and 20; April 15 has three results and one story (plus one on April 14)."""
+    root = site.root / '30L1998'
+    write(root / 'meta.json', meta())
+    write(root / 'feed' / '04-02.json', day_feed(4, 2, 'Opening week'))
+    write(root / 'feed' / '04-15.json', day_feed(4, 15, 'Yankees hold the East', [
+        game('Seattle Mariners', 'Oakland Athletics', 5, 3),
+        game('Boston Red Sox', 'New York Yankees', 2, 7, 10),
+        game('Texas Rangers', 'Anaheim Angels', 1, 0)]))
+    write(root / 'feed' / '04-20.json', day_feed(4, 20, 'Late April'))
+    write(root / 'recaps' / (KEY + '.json'), story(KEY, headline='Seattle beats Oakland'))
+    write(root / 'recaps' / (KEY2 + '.json'), story(KEY2, day=14, headline='Oakland edges Seattle'))
+    return site
+
+
+def test_day_page_has_the_column_every_result_and_only_that_dates_stories(days):
+    status, headers, body = days.get('/news/30L1998/day/04-15')
+    html = body.decode()
+    assert status == 200 and headers['content-type'] == HTML
+    assert_secure(headers, body)
+    assert '<title>1998 Major Leagues · April 15 · League News</title>' in html
+    assert '<a href="/news/30L1998/">&larr; Front page</a> &middot; <a href="/news/">All leagues</a>' in html
+    assert '<h2>Yankees hold the East</h2>' in html and '<p>Columns body.</p><p>Second line.</p>' in html
+    assert '<caption>Results</caption>' in html
+    assert re.findall(r'<tr>(.*?)</tr>', html.split('<tbody>')[1].split('</tbody>')[0]) == [
+        '<td class="t">Seattle Mariners</td><td>5</td><td class="t">Oakland Athletics</td><td>3</td><td>9</td>',
+        '<td class="t">Boston Red Sox</td><td>2</td><td class="t">New York Yankees</td><td>7</td><td>10</td>',
+        '<td class="t">Texas Rangers</td><td>1</td><td class="t">Anaheim Angels</td><td>0</td><td>9</td>']
+    assert days.keys('/news/30L1998/day/04-15') == [KEY]
+    assert 'Oakland edges Seattle' not in html and 'No stories for this date' not in html
+    assert html.index('class="feed"') < html.index('<caption>Results') < html.index('<h2>Stories</h2>') \
+        < html.index('class="story"') < html.index('class="pager"')
+
+
+def test_day_page_links_to_the_previous_and_next_columns(days):
+    html = days.get('/news/30L1998/day/04-15')[2].decode()
+    assert '<nav class="pager"><a href="/news/30L1998/day/04-02">&larr; April 2</a>' \
+           '<a href="/news/30L1998/day/04-20">April 20 &rarr;</a></nav>' in html
+
+
+def test_first_and_last_dates_have_only_one_pager_link(days):
+    first = days.get('/news/30L1998/day/04-02')[2].decode()
+    last = days.get('/news/30L1998/day/04-20')[2].decode()
+    assert '<nav class="pager"><a href="/news/30L1998/day/04-15">April 15 &rarr;</a></nav>' in first
+    assert '<nav class="pager"><a href="/news/30L1998/day/04-15">&larr; April 15</a></nav>' in last
+    assert '&larr; April' not in first and 'April 20' not in first.split('<h2>Stories</h2>')[1]
+    assert 'April 2 &rarr;' not in last and last.count('class="pager"') == 1
+
+
+def test_a_lone_column_has_no_pager(days):
+    for name in ('04-02', '04-20'):
+        os.remove(days.root / '30L1998' / 'feed' / (name + '.json'))
+    assert 'class="pager"' not in days.get('/news/30L1998/day/04-15')[2].decode()
+
+
+def test_day_with_no_results_or_stories_says_so(days):
+    html = days.get('/news/30L1998/day/04-02')[2].decode()
+    assert '<p class="empty">No games on this date.</p>' in html and '<caption>Results' not in html
+    assert '<p class="empty">No stories for this date.</p>' in html and 'class="story"' not in html
+
+
+def test_day_stories_are_newest_slot_first(days):
+    root = days.root / '30L1998' / 'recaps'
+    write(root / ('bbbbbbbbbbbbbbbb.json'), story('bbbbbbbbbbbbbbbb', slot=20, headline='Late game'))
+    write(root / ('cccccccccccccccc.json'), story('cccccccccccccccc', slot=2, headline='Early game'))
+    assert days.keys('/news/30L1998/day/04-15') == ['bbbbbbbbbbbbbbbb', KEY, 'cccccccccccccccc']
+
+
+def test_day_results_skip_non_objects_and_blank_missing_values(days):
+    col = day_feed(4, 15, 'Yankees hold the East', ['Seattle 5, Oakland 3', None, {'away': 'Cubs', 'home_runs': True}])
+    write(days.root / '30L1998' / 'feed' / '04-15.json', col)
+    html = days.get('/news/30L1998/day/04-15')[2].decode()
+    rows = re.findall(r'<tr>(.*?)</tr>', html.split('<tbody>')[1].split('</tbody>')[0])
+    assert rows == ['<td class="t">Cubs</td><td></td><td class="t"></td><td></td><td></td>']
+    assert 'None' not in html and 'True' not in html
+
+
+def test_day_page_falls_back_to_the_association_stem_and_the_file_date(days):
+    os.remove(days.root / '30L1998' / 'meta.json')
+    col = day_feed(4, 15, 'Yankees hold the East')
+    del col['date']
+    write(days.root / '30L1998' / 'feed' / '04-15.json', col)
+    status, _, body = days.get('/news/30L1998/day/04-15')
+    assert status == 200
+    assert '<title>30L1998 · April 15 · League News</title>' in body.decode()
+
+
+@pytest.mark.parametrize('tail', [
+    'day/4-15', 'day/13-01', 'day/00-10', 'day/04-32', 'day/04-00', 'day/04-16', 'day/04-15/', 'day/04-15/x', 'day/',
+    'day', 'day/04-15.json', 'day/04-015', 'day/04_15', 'day/04-15%0a', 'day/%30%34-15/x', 'day/04-15%2Fx',
+    'day/../meta.json', 'day/%2e%2e', 'day/04-3x', 'day/%D9%A0%D9%A4-%D9%A1%D9%A5'])
+def test_malformed_missing_or_extra_day_paths_are_404(days, tail):
+    status, headers, body = days.get('/news/30L1998/' + tail)
+    assert status == 404 and headers['content-type'] == HTML
+    assert 'No such page in the league news.' in body.decode()
+
+
+@pytest.mark.parametrize('content', ['{"headline": ', '[1, 2]', '"column"', 'null', ''])
+def test_corrupt_or_non_object_day_file_is_404(days, content):
+    write(days.root / '30L1998' / 'feed' / '04-16.json', content)
+    assert days.get('/news/30L1998/day/04-16')[0] == 404
+    assert days.get('/news/30L1998/day/04-15')[0] == 200
+
+
+def test_unlisted_feed_names_are_neither_pages_nor_pager_links(days):
+    for name in ('13-01.json', '04-32.json', '4-17.json', '04-17.txt'):
+        write(days.root / '30L1998' / 'feed' / name, day_feed(4, 17, 'Not a column'))
+    assert days.get('/news/30L1998/day/13-01')[0] == 404
+    assert days.get('/news/30L1998/day/04-32')[0] == 404
+    assert 'Not a column' not in days.get('/news/30L1998/day/04-20')[2].decode()
+    assert hrefs(days.get('/news/30L1998/day/04-20')[2].decode()).count('/news/30L1998/day/04-15') == 1
+    assert server._feed_days(days.root / '30L1998') == [(4, 2), (4, 15), (4, 20)]
+
+
+def test_feed_days_is_sorted_and_empty_without_a_feed_folder(site, tmp_path):
+    write(site.root / 'X' / 'feed' / '12-01.json', 'not json')
+    write(site.root / 'X' / 'feed' / '03-09.json', {})
+    write(site.root / 'X' / 'feed' / '03-10.json', {})
+    assert server._feed_days(site.root / 'X') == [(3, 9), (3, 10), (12, 1)]
+    assert server._feed_days(site.root / 'nope') == []
+
+
+def test_day_page_of_an_archived_season_links_under_the_season(archived):
+    root = archived.root / '30L1998' / 'past' / '1997'
+    write(root / 'feed' / '09-27.json', day_feed(9, 27, 'Past eve'))
+    write(root / 'feed' / '09-28.json', day_feed(9, 28, 'Past column', [game('Cubs', 'Reds', 4, 2)]))
+    write(root / 'recaps' / (PK1 + '.json'), story(PK1, month=9, day=28, headline='Past story one'))
+    status, _, body = archived.get(PAST + '1997/day/09-28')
+    html = body.decode()
+    assert status == 200
+    assert '<a href="/news/30L1998/past/1997/">&larr; Front page</a> &middot; ' in html
+    assert re.findall(r'href="(/news/30L1998/past/1997/[0-9a-f]{16})"', html) == [PAST + '1997/' + PK1]
+    assert 'Past column' in html and '<td class="t">Cubs</td>' in html
+    assert 'href="/news/30L1998/past/1997/day/09-27"' in html
+    assert 'Past story two' not in html
+    assert archived.get(PAST + '1997/day/09-29')[0] == 404
+    assert archived.get(PAST + '1997/day/09-28/')[0] == 404
+    assert archived.get(PAST + '1998/day/09-28')[0] == 404          # that archived season has no column
+    assert archived.get('/news/30L1998/day/09-28')[0] == 404        # the current season does not borrow it
+
+
+def test_front_page_kicker_links_to_its_day_page(days):
+    html = days.get('/news/30L1998/')[2].decode()
+    assert ('<p class="kicker">Around the league · <a href="/news/30L1998/day/04-20">April 20</a></p>'
+            '<h2>Late April</h2>') in html
+    os.remove(days.root / '30L1998' / 'feed' / '04-20.json')
+    assert '<a href="/news/30L1998/day/04-15">April 15</a>' in days.get('/news/30L1998/')[2].decode()
+
+
+def test_archived_front_page_kicker_links_under_the_season(archived):
+    html = archived.get(PAST + '1997/')[2].decode()
+    assert ('<p class="kicker">Around the league · <a href="/news/30L1998/past/1997/day/09-28">April 28</a></p>'
+            '<h2>Past column</h2>') in html
+
+
+@pytest.mark.parametrize('over', [{'month': 13}, {'month': None}, {'day': 0}, {'day': '15'}, {'day': True},
+                                  {'month': 4.0}])
+def test_front_page_kicker_has_no_link_without_an_in_range_int_date(days, over):
+    col = day_feed(4, 20, 'Late April')
+    col.update(over)
+    write(days.root / '30L1998' / 'feed' / '04-20.json', col)
+    html = days.get('/news/30L1998/')[2].decode()
+    assert '<p class="kicker">Around the league · April 20</p>' in html and '/day/' not in html
+
+
+def test_day_page_escapes_values_from_the_files(days):
+    col = day_feed(4, 15, '<script>alert(1)</script>', [game('<b>Away</b>', 'Home "H"', '<i>1</i>', 'x&y', '<u>')])
+    col['date'] = '<em>April</em>'
+    col['body'] = '<img src=x onerror=alert(1)>'
+    write(days.root / '30L1998' / 'feed' / '04-15.json', col)
+    write(days.root / '30L1998' / 'meta.json', meta(name='<s>League</s>'))
+    write(days.root / '30L1998' / 'feed' / '04-20.json', {**day_feed(4, 20, 'Late'), 'date': '<blink>x</blink>'})
+    write(days.root / '30L1998' / 'recaps' / (KEY + '.json'), story(KEY, headline='<script>story</script>'))
+    html = days.get('/news/30L1998/day/04-15')[2].decode()
+    for raw in ('<script', '<b>', '<i>', '<u>', '<em>', '<img', '<s>', '<blink>'):
+        assert raw not in html
+    for safe in ('&lt;script&gt;alert(1)&lt;/script&gt;', '&lt;b&gt;Away&lt;/b&gt;', 'Home &quot;H&quot;', 'x&amp;y',
+                 '&lt;em&gt;April&lt;/em&gt;', '&lt;s&gt;League&lt;/s&gt;', '&lt;script&gt;story&lt;/script&gt;',
+                 '&lt;img src=x onerror=alert(1)&gt;'):
+        assert safe in html
+    assert '<title>&lt;s&gt;League&lt;/s&gt; · &lt;em&gt;April&lt;/em&gt; · League News</title>' in html
+    front = days.get('/news/30L1998/')[2].decode()
+    assert '<script' not in front
