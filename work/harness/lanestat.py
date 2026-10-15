@@ -68,14 +68,17 @@ def last_trace(path, skip=('HANDLES', 'CRTFDS'), tail=2_000_000):
 
 
 def trace_age(line, now=None):
-    """Seconds since the line's HH:MM:SS stamp (today); None when the line has no stamp."""
+    """Seconds since the line's HH:MM:SS stamp (today); None when the line has no stamp. A stamp up to 300 s ahead of
+    now (the game's clock a little ahead of ours) is age 0, not a day old; further ahead, it is yesterday's."""
     m = re.match(r'(\d{2}):(\d{2}):(\d{2})\.', line or '')
     if not m:
         return None
     now = datetime.datetime.now() if now is None else now
     stamp = now.replace(hour=int(m[1]), minute=int(m[2]), second=int(m[3]), microsecond=0)
     age = (now - stamp).total_seconds()
-    return age + 86400.0 if age < 0 else age
+    if age < 0:
+        return 0.0 if age > -300 else age + 86400.0
+    return age
 
 
 def screen(png):

@@ -538,3 +538,11 @@ def test_champion_never_raises_on_an_odd_bracket(monkeypatch):
     _book(monkeypatch, b, FIXTURE_ASSN)
     got = seasonloop.champion('X.ASN')
     assert got['champion'] is None and got['error']
+
+
+def test_demographics_never_raises_on_a_torn_file(tmp_path, monkeypatch):
+    def torn(*a):
+        raise struct.error('unpack requires a buffer of 192 bytes')
+    monkeypatch.setattr(seasonloop.gamedata, 'demographics', torn)
+    got = seasonloop.demographics(str(tmp_path), 'TEST', 2007)
+    assert got == {'year': 2007, 'error': 'unpack requires a buffer of 192 bytes'}

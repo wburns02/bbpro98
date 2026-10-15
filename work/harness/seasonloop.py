@@ -462,9 +462,13 @@ def _find(d, name):
 def demographics(assn_dir, stem, year):
     """The league's age make-up from the files on disk, ages as of July 1 of `year`: rostered players (in any
     team's r record), free agents (the .pyf list) and retired players (in the PYR but on neither), plus the smallest
-    roster and the fewest pitchers (PYR position P) on any team."""
-    pyf = _find(assn_dir, stem + '.PYF')
-    return gamedata.demographics(_find(assn_dir, stem + '.ASN'), _find(assn_dir, stem + '.PYR'), pyf, year)
+    roster and the fewest pitchers (PYR position P) on any team. Never raises: like champion(), a torn or missing file
+    gives {'year', 'error'} so the run.log line is written and the run goes on."""
+    try:
+        pyf = _find(assn_dir, stem + '.PYF')
+        return gamedata.demographics(_find(assn_dir, stem + '.ASN'), _find(assn_dir, stem + '.PYR'), pyf, year)
+    except (OSError, ValueError, KeyError, IndexError, TypeError, AttributeError, struct.error) as e:
+        return {'year': year, 'error': str(e) or type(e).__name__}
 
 
 def champion(asn_path):

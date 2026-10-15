@@ -340,3 +340,11 @@ def test_heartbeat_negative_exits_2():
     with pytest.raises(SystemExit) as e:
         lanestat.main(['--watch', '5', '--heartbeat', '-1'])
     assert e.value.code == 2
+
+
+def test_trace_age_a_stamp_just_ahead_of_now_is_fresh():
+    import datetime
+    now = datetime.datetime(2026, 10, 15, 12, 0, 0)
+    assert lanestat.trace_age('12:00:01.250 HANDLES', now=now) == 0.0
+    assert lanestat.trace_age('11:59:50.000 x', now=now) == 10.0
+    assert lanestat.trace_age('12:10:00.000 x', now=now) == 86400.0 - 600.0
