@@ -12,10 +12,15 @@ pitcher throws, arm, the 25 single attributes) come from the nearest MLBPA96E pl
 pitch ratings are the donor's shifted so their mean matches his fitted stuff (cvR2 .46): copied verbatim, a 1998
 control pitcher matched to Greg Maddux got Maddux's whole arsenal and a 0.59 sim ERA.
 
+Era knobs (load_era, Model.set_era, work/lahman/era.json): alpha blends each z-score toward the same stats z-scored
+against the ref_year season's whole-year norm (0 = own league-year, today's ratings; 1 = the ref_year's scale), and an
+offset adds rating points to one fitted target before it is clamped. Both default to 0 and then change nothing.
+
 PYR record layout used here: work/spec/PGEN_FORMAT.md and /mnt/nvme/bbpro98/loop/lahman/contract.md (C4).
 The game files are read at run time and never copied into the repo.
 """
 import datetime
+import json
 import struct
 import sys
 import os
@@ -54,6 +59,80 @@ TARGETS = {
     'K': ('p', K_ATTR, ('K9',), False, False),              # .98
 }
 STUFF = ('GSr', 'BB9', 'K9', 'H9')                       # features of the mean pitch rating, cvR2 .46
+ERA_NAMES = ('CH', 'PH', 'SP', 'GF', 'EN', 'CO', 'K', 'ST')  # fitted targets an era offset can shift
+ERA_ALPHA = ('bat', 'pit')                               # z-score blends: hitters, pitchers
+ALPHA_RANGE, OFFSET_RANGE = (0.0, 1.0), (-30.0, 30.0)
+ERA_REF_YEAR = 1996                                      # the season the game's own ratings come from
+
+
+# ---------------------------------------------------------------- era config
+
+def _era_num(v, rng, key):
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or not rng[0] <= v <= rng[1]:
+        raise ValueError('era %s: %r is not a number in %g..%g' % (key, v, rng[0], rng[1]))
+    return float(v)
+
+
+def _era_part(src, where):
+    """(alpha, offset) dicts of the keys `src` (the file's top level or one by_year entry) names, validated; `where`
+    prefixes the key in an error."""
+    out = []
+    for part, names, rng in (('alpha', ERA_ALPHA, ALPHA_RANGE), ('offset', ERA_NAMES, OFFSET_RANGE)):
+        got = src.get(part, {})
+        if not isinstance(got, dict):
+            raise ValueError('era %s%s: not an object' % (where, part))
+        out.append({})
+        for k, v in got.items():
+            if k not in names:
+                raise ValueError('era %s%s.%s: unknown name (use %s)' % (where, part, k, ','.join(names)))
+            out[-1][k] = _era_num(v, rng, '%s%s.%s' % (where, part, k))
+    return out
+
+
+def load_era(path, year):
+    """The era run config for a build of `year`: {'ref_year': int, 'alpha': {'bat', 'pit'}, 'offset': {name: float}}
+    with all 8 ERA_NAMES present. The file (see work/lahman/era.json) holds a base alpha/offset plus by_year entries
+    {'from', 'to', 'alpha', 'offset'}; every entry whose from..to (inclusive) holds `year` overrides the keys it names,
+    later entries winning; a missing key is 0. A missing or None path gives the all-zero config (ref_year 1996).
+    ValueError naming the key for an alpha outside 0..1, an offset outside -30..30, an unknown alpha or offset name, a
+    non-number, or a malformed by_year entry (every entry is checked, whether or not it holds `year`)."""
+    cfg = {}
+    if path is not None and os.path.exists(path):
+        with open(path, encoding='utf-8') as fh:
+            cfg = json.load(fh)
+        if not isinstance(cfg, dict):
+            raise ValueError('era %s: not a JSON object' % path)
+    ref = cfg.get('ref_year', ERA_REF_YEAR)
+    if isinstance(ref, bool) or not isinstance(ref, int):
+        raise ValueError('era ref_year: %r is not an integer' % (ref,))
+    alpha, offset = ({k: 0.0 for k in ERA_ALPHA}, {k: 0.0 for k in ERA_NAMES})
+    layers = [_era_part(cfg, '')]
+    entries = cfg.get('by_year', [])
+    if not isinstance(entries, list):
+        raise ValueError('era by_year: not a list')
+    for i, e in enumerate(entries):
+        where = 'by_year[%d]' % i
+        if not isinstance(e, dict):
+            raise ValueError('era %s: not an object' % where)
+        lo, hi = e.get('from'), e.get('to')
+        if any(isinstance(x, bool) or not isinstance(x, int) for x in (lo, hi)):
+            raise ValueError('era %s.from/to: integers required' % where)
+        if lo > hi:
+            raise ValueError('era %s: from %d is after to %d' % (where, lo, hi))
+        part = _era_part(e, where + '.')
+        if lo <= year <= hi:
+            layers.append(part)
+    for a, o in layers:
+        alpha.update(a)
+        offset.update(o)
+    return {'ref_year': ref, 'alpha': alpha, 'offset': offset}
+
+
+def blend_z(own, ref, a):
+    """{feature: (1 - a) * own + a * ref}. a 0 returns `own` itself, a 1 gives exactly `ref`'s values."""
+    if not a:
+        return own
+    return {x: (1 - a) * own[x] + a * ref[x] for x in own}
 
 
 # ---------------------------------------------------------------- PYR io
@@ -187,6 +266,7 @@ class Season:
 
     def __init__(self, con, year, leagues=lahdb.MLB_LEAGUES):
         self.year = year
+        self.leagues = tuple(leagues)
         self.bat = lahdb.batting(con, year=year)
         self.pit = lahdb.pitching(con, year=year)
         self.fld = lahdb.fielding(con, year=year)
@@ -232,6 +312,11 @@ class Season:
     def norm(self, table, pid):
         return table.get(self.lg_of.get(pid, ''), table[''])
 
+    def ref_norms(self):
+        """{'h': whole-year hitter Norm, 'p': whole-year pitcher Norm}: what an era blend z-scores against when this
+        season is the ref_year, so Model.set_era needs no second pass over the database."""
+        return {'h': self.nh[''], 'p': self.np_['']}
+
     def games_at(self, pid):
         g = {}
         for row in self.app.get(pid, {}).values():
@@ -275,6 +360,10 @@ class Model:
         self.raw_mu = {}       # raw pitcher rate-stat means, 1996 IP >= 30 (shrinkage target)
         self.donors_h = []     # (pos code, age, (ch, ph, sp), record)
         self.donors_p = []     # (age, (en, co, k, stuff), record)
+        self.era = None        # load_era's dict, or None for today's ratings
+        self.ref_h = None      # ref_year whole-year hitter Norm, set only when alpha.bat > 0
+        self.ref_p = None      # same for pitchers (alpha.pit)
+        self._refs = {}        # ref_year -> Season.ref_norms(), built once per Model
 
     # -------------------------------------------------- fit on MLBPA96E vs 1996
     @classmethod
@@ -331,16 +420,46 @@ class Model:
                                   [p[CUR + FLD0 + POS_CODE[pos] - 1] for _, p in rows])
         return m
 
+    def set_era(self, era, season=None, con=None):
+        """Use an era config (load_era's dict; None clears it) in later rate() calls. A blend needs the ref_year's
+        whole-year norms: taken from `season` when it is the ref_year over the default leagues (no second database
+        pass), else from a Season built once on `con`; ValueError when neither can supply them. Alpha 0 on both sides
+        builds nothing."""
+        self.era, self.ref_h, self.ref_p = era, None, None
+        if not era or not any(era['alpha'].values()):
+            return
+        ry = era['ref_year']
+        if ry not in self._refs:
+            if season is not None and season.year == ry and getattr(season, 'leagues', None) == tuple(lahdb.MLB_LEAGUES):
+                ref = season
+            elif con is not None:
+                ref = Season(con, ry)
+            else:
+                raise ValueError('era alpha needs the %d season: pass its Season or a database connection' % ry)
+            self._refs[ry] = ref.ref_norms()
+        self.ref_h, self.ref_p = self._refs[ry]['h'], self._refs[ry]['p']
+
+    def _off(self, name):
+        return self.era['offset'].get(name, 0.0) if self.era else 0.0
+
+    def _era_z(self, z, ref, f, names, n, k, which):
+        """z blended toward the same features z-scored against the ref_year norm `ref`; z itself when the alpha is 0,
+        there is no ref, or the player has no sample (f None)."""
+        a = self.era['alpha'].get(which, 0.0) if self.era else 0.0
+        if not a or ref is None or not f:
+            return z
+        return blend_z(z, ref.z(f, names, n, k), a)
+
     def predict(self, name, z, raw, n, k):
-        """One fitted rating (unclamped) from a player's z-scores and raw rate stats; n/k shrink raw features toward
-        the 1996 mean the same way Norm.z shrinks z-scores toward 0."""
+        """One fitted rating (unclamped, plus the era offset for `name`) from a player's z-scores and raw rate stats;
+        n/k shrink raw features toward the 1996 mean the same way Norm.z shrinks z-scores toward 0."""
         _, _, feats, quad, is_raw = TARGETS[name]
         if is_raw:
             sh = self._shrunk(raw, n, k)
             vals = [sh[x] for x in feats]
         else:
             vals = [z.get(x, 0.0) for x in feats]
-        return float(np.dot(self.w[name], _row(vals, quad)))
+        return float(np.dot(self.w[name], _row(vals, quad))) + self._off(name)
 
     def _shrunk(self, raw, n, k):
         """Raw pitcher rate stats pulled toward the 1996 mean (IP >= 30) by n/(n+k)."""
@@ -376,9 +495,10 @@ class Model:
         if code == 1:
             f, ip = pit_feats(q)
             z = s.norm(s.np_, lid).z(f, FEAT_P, ip, SHRINK_P) if f else {}
+            z = self._era_z(z, self.ref_p, f, FEAT_P, ip, SHRINK_P, 'pit')
             fitted = {TARGETS[t][1]: self.predict(t, z, f, ip, SHRINK_P) for t in ('EN', 'CO')}
             k = _clamp(self.predict('K', z, f, ip, SHRINK_P))
-            st = float(np.dot(self.w['ST'], [1.0] + [z.get(x, 0.0) for x in STUFF]))
+            st = float(np.dot(self.w['ST'], [1.0] + [z.get(x, 0.0) for x in STUFF])) + self._off('ST')
             base = bytearray(self._donor_p(age, (_clamp(fitted[CUR + EN]), _clamp(fitted[CUR + CO]), k, st)))
             base[K_ATTR] = k
             shift = st - (stuff(base) or st)
@@ -388,6 +508,7 @@ class Model:
         else:
             f, pa = hit_feats(b)
             z = s.norm(s.nh, lid).z(f, FEAT_H, pa, SHRINK_H) if f else {}
+            z = self._era_z(z, self.ref_h, f, FEAT_H, pa, SHRINK_H, 'bat')
             fitted = {TARGETS[t][1]: self.predict(t, z, f, pa, SHRINK_H) for t in ('CH', 'PH', 'SP')}
             base = bytearray(self._donor_h(code, age, tuple(_clamp(fitted[CUR + i]) for i in (CH, PH, SP))))
             base[GF_ATTR] = _clamp(self.predict('GF', z, f, pa, SHRINK_H))
