@@ -255,3 +255,14 @@ def test_postseason_busy_box_with_the_asn_still_written_is_left_alone(tmp_path, 
     assert seasonloop.postseason(h, str(tmp_path), ENDLESS, asn=str(asn)) is True
     assert h.keys == [] and h.clicks == []
     assert 'stale_update_box' not in capsys.readouterr().out
+
+
+def test_postseason_after_the_champion_a_still_screen_stops_without_a_sim(tmp_path, monkeypatch, capsys):
+    # the champion, then a still screen with no notice: no sim may fire (it opened another association in 2025)
+    mock = _stub_screen(monkeypatch, _Poster(['sched', 'champ'] + ['assn'] * (seasonloop.POST_HELD + 3)))
+    h = _H(tmp_path)
+    assert seasonloop.postseason(h, str(tmp_path), ENDLESS) is False
+    assert h.keys == [('key', 'Return')] and h.clicks == []
+    out = capsys.readouterr().out
+    assert '"postseason": "champion_idle"' in out and '"postseason": "sim"' not in out
+    assert (tmp_path / 'post_champ_idle.png').exists()

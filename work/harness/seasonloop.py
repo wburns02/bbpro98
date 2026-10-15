@@ -246,7 +246,8 @@ def postseason(h, shots, t_end, max_sims=8, asn=None):
     """After the last regular-season game: wait for the season-complete notice while the playoffs play, reopening the
     sim only after POST_HELD unchanged looks. A busy look ('Updating association data') is progress and never sims,
     unless it holds still BUSY_STILL looks (a stale paint over the idle game: one Return);
-    a champion look ('Led by Coach ..., the ... capture the World Series') is answered with Return and never sims;
+    a champion look ('Led by Coach ..., the ... capture the World Series') is answered with Return, and after it the
+    sim never reopens (a still screen with no notice stops with champion_idle);
     a refused sim counts as one of max_sims. When asn is given, any other association file changing stops it with
     wrong_association and no more input."""
     a, b = f'{shots}/_post_a.png', f'{shots}/_post_b.png'
@@ -293,6 +294,12 @@ def postseason(h, shots, t_end, max_sims=8, asn=None):
             continue
         if held < POST_HELD or notice(a) == 'complete':
             continue
+        if champ:
+            # After the World Series the sim must never reopen: 2025 run, 20:56, a ctrl+k from the screen left after
+            # the champion's Return opened another association's schedule and simmed its games. Stop with no input.
+            shutil.copyfile(a, f'{shots}/post_champ_idle.png')
+            print(json.dumps({'postseason': 'champion_idle', 'sims': sims}), flush=True)
+            return False
         if sims >= max_sims:
             break
         sims += 1

@@ -283,7 +283,8 @@ def main():
                 os.remove(EXE_DRIVE)
             for dst, (bk, h) in saved.items():
                 if bk is None:
-                    os.remove(dst)
+                    if os.path.exists(dst):     # the game may have deleted it (Stats MS* files): already restored
+                        os.remove(dst)
                 else:
                     shutil.copyfile(bk, dst)
                     if sha(dst) != h:
