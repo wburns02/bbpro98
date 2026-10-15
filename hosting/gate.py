@@ -8,17 +8,21 @@ Listens on 127.0.0.1:6154 (behind hosting/nginx.conf, which is the only thing th
     GET  /gate/auth     204 with a valid sign-in cookie, else 401 (nginx auth_request)
     GET  /gate/login    the PIN form
     POST /gate/login    checks the PIN; sets the cookie and redirects to `next`
-    GET  /gate/logout   clears the cookie
+    GET  /gate/logout   revokes the sign-in cookie it was sent (a copy of it stops working too) and clears it
 
-The PIN and the cookie-signing secret live in files outside the repo (the secret is made on first run, mode 600).
+The PIN and the cookie-signing secret live in files outside the repo (the secret is made on first run, mode 600);
+revoked sign-ins are kept beside the secret in <secret-file>.revoked until they would have expired.
 A PIN is short, so wrong guesses are rate limited per visitor (X-Real-IP, which nginx sets from Cloudflare's
-CF-Connecting-IP) and in total: past GLOBAL_FAILS wrong PINs in an hour, every login waits out the hour.
+CF-Connecting-IP) and in total: past GLOBAL_FAILS wrong PINs in an hour, a login waits out the hour. A browser that
+signed in before carries a signed device cookie (bbdev, Path=/gate, a year) and is exempt from that total, so strangers
+guessing from many addresses cannot lock the owner out; its own per-visitor limit still applies.
 """
 import argparse
 import hashlib
 import hmac
 import html
 import http.server
+import json
 import os
 import secrets
 import threading
@@ -27,6 +31,8 @@ import urllib.parse
 
 COOKIE = 'bbgate'
 MAX_AGE = 30 * 86400                 # seconds a sign-in lasts
+DEVICE_COOKIE = 'bbdev'
+DEVICE_AGE = 365 * 86400             # seconds a browser that signed in stays exempt from the global limit
 IP_FAILS, IP_WINDOW = 5, 900         # wrong PINs per visitor per window (seconds)
 GLOBAL_FAILS, GLOBAL_WINDOW = 30, 3600
 MAX_BODY = 1024
@@ -67,48 +73,99 @@ def safe_next(v):
 
 
 class Gate:
-    def __init__(self, pin, secret, now=time.time):
+    def __init__(self, pin, secret, now=time.time, revoked_path=None):
         self.pin = pin.encode()
         self.secret = secret
         self.now = now
         self.fails = {}              # ip -> [times]
         self.all_fails = []
         self.lock = threading.Lock()
+        self.revoked_path = revoked_path
+        self.revoked = self._load_revoked()      # sig -> exp of signed-out sign-ins
+
+    def _sign(self, kind, exp):
+        return hmac.new(self.secret, (kind + exp).encode(), hashlib.sha256).hexdigest()
+
+    def _check(self, kind, tok):
+        exp, _, sig = (tok or '').partition('.')
+        if not exp.isdigit() or len(exp) > 12 or not sig:
+            return None
+        return sig if hmac.compare_digest(sig, self._sign(kind, exp)) and int(exp) > self.now() else None
 
     def token(self):
         exp = str(int(self.now()) + MAX_AGE)
-        return exp + '.' + hmac.new(self.secret, exp.encode(), hashlib.sha256).hexdigest()
+        return exp + '.' + self._sign('', exp)
+
+    def device_token(self):
+        exp = str(int(self.now()) + DEVICE_AGE)
+        return exp + '.' + self._sign('dev:', exp)
 
     def valid(self, tok):
-        exp, _, sig = (tok or '').partition('.')
-        if not exp.isdigit() or not sig:
+        sig = self._check('', tok)
+        if sig is None:
             return False
-        good = hmac.new(self.secret, exp.encode(), hashlib.sha256).hexdigest()
-        return hmac.compare_digest(sig, good) and int(exp) > self.now()
+        with self.lock:
+            return sig not in self.revoked
+
+    def known(self, tok):
+        """True for a device cookie this gate signed and that has not expired: the browser signed in before."""
+        return self._check('dev:', tok) is not None
+
+    def _load_revoked(self):
+        try:
+            with open(self.revoked_path, encoding='utf-8') as f:
+                obj = json.load(f)
+        except (TypeError, OSError, ValueError):
+            return {}
+        now = self.now()
+        return {k: v for k, v in obj.items() if isinstance(k, str) and type(v) is int and v > now} \
+            if isinstance(obj, dict) else {}
+
+    def revoke(self, tok):
+        """Signs out one sign-in cookie for good: True when tok was valid. Only a valid cookie can be revoked, so the
+        list is bounded by real sign-ins; entries drop once they would have expired anyway."""
+        sig = self._check('', tok)
+        if sig is None:
+            return False
+        with self.lock:
+            now = self.now()
+            self.revoked = {k: v for k, v in self.revoked.items() if v > now}
+            self.revoked[sig] = int(tok.partition('.')[0])
+            if self.revoked_path:
+                tmp = self.revoked_path + '.tmp'
+                try:
+                    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                    with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                        json.dump(self.revoked, f)
+                    os.replace(tmp, self.revoked_path)
+                except OSError as e:     # still revoked until a restart; signing out must not fail on a full disk
+                    print('gate: cannot save %s: %s' % (self.revoked_path, e), flush=True)
+        return True
 
     def _recent(self, times, window):
         t = self.now() - window
         return [x for x in times if x > t]
 
-    def _blocked(self, ip):
+    def _blocked(self, ip, known=False):
         self.all_fails = self._recent(self.all_fails, GLOBAL_WINDOW)
         mine = self._recent(self.fails.get(ip, []), IP_WINDOW)
         if mine:
             self.fails[ip] = mine
         else:
             self.fails.pop(ip, None)
-        return len(mine) >= IP_FAILS or len(self.all_fails) >= GLOBAL_FAILS
+        return len(mine) >= IP_FAILS or (not known and len(self.all_fails) >= GLOBAL_FAILS)
 
-    def blocked(self, ip):
+    def blocked(self, ip, known=False):
         with self.lock:
-            return self._blocked(ip)
+            return self._blocked(ip, known)
 
-    def attempt(self, ip, pin):
+    def attempt(self, ip, pin, known=False):
         """'ok', 'wrong' or 'blocked'. The limit check, the comparison and the count of a wrong PIN happen under one
         lock, so parallel guesses cannot all pass the check before any of them is counted. Wrong PINs are capped at
-        GLOBAL_FAILS an hour, which also bounds the per-visitor table."""
+        GLOBAL_FAILS an hour, which also bounds the per-visitor table; a known browser (known=True, from its device
+        cookie) is held to its per-visitor limit only."""
         with self.lock:
-            if self._blocked(ip):
+            if self._blocked(ip, known):
                 return 'blocked'
             if hmac.compare_digest(pin.encode(), self.pin):
                 return 'ok'
@@ -118,10 +175,10 @@ class Gate:
             return 'wrong'
 
 
-def cookie_of(header):
+def cookie_of(header, name=COOKIE):
     for part in (header or '').split(';'):
         k, _, v = part.strip().partition('=')
-        if k == COOKIE:
+        if k == name:
             return v
     return None
 
@@ -162,6 +219,7 @@ def handler(gate):
             elif u.path == '/gate/login':
                 self._form(200, urllib.parse.parse_qs(u.query).get('next', ['/'])[0])
             elif u.path == '/gate/logout':
+                gate.revoke(cookie_of(self.headers.get('Cookie')))
                 self._send(303, headers=[('Location', '/gate/login'), ('Set-Cookie', '%s=; Path=/; Max-Age=0; '
                                           'HttpOnly; Secure; SameSite=Lax' % COOKIE)])
             else:
@@ -178,12 +236,16 @@ def handler(gate):
                 return self._send(413)
             f = urllib.parse.parse_qs(self.rfile.read(n).decode('utf-8', 'replace'))
             nxt = f.get('next', ['/'])[0]
-            got = gate.attempt(self._ip(), f.get('pin', [''])[0].strip())
+            known = gate.known(cookie_of(self.headers.get('Cookie'), DEVICE_COOKIE))
+            got = gate.attempt(self._ip(), f.get('pin', [''])[0].strip(), known)
             if got == 'blocked':
                 return self._form(429, nxt, 'Too many wrong PINs. Try again later.')
             if got != 'ok':
                 return self._form(401, nxt, 'Wrong PIN.')
-            self._send(303, headers=[('Location', safe_next(nxt)), ('Set-Cookie', '%s=%s; Path=/; Max-Age=%d; '
+            self._send(303, headers=[('Location', safe_next(nxt)),
+                                     ('Set-Cookie', '%s=%s; Path=/gate; Max-Age=%d; HttpOnly; Secure; '
+                                      'SameSite=Strict' % (DEVICE_COOKIE, gate.device_token(), DEVICE_AGE)),
+                                     ('Set-Cookie', '%s=%s; Path=/; Max-Age=%d; '
                                       'HttpOnly; Secure; SameSite=Lax' % (COOKIE, gate.token(), MAX_AGE))])
 
     return H
@@ -214,7 +276,8 @@ def main(argv=None):
         pin = f.read().strip()
     if len(pin) < 4:
         raise SystemExit('PIN file must hold a PIN of at least 4 characters')
-    srv = http.server.ThreadingHTTPServer(('127.0.0.1', a.port), handler(Gate(pin, load_secret(a.secret_file))))
+    g = Gate(pin, load_secret(a.secret_file), revoked_path=a.secret_file + '.revoked')
+    srv = http.server.ThreadingHTTPServer(('127.0.0.1', a.port), handler(g))
     srv.serve_forever()
 
 

@@ -134,3 +134,88 @@ def test_http_lockout(server):
     code, _, page = req(server, 'POST', '/gate/login', {'pin': '4321'}, {'X-Real-IP': '6.6.6.6'})
     assert code == 429 and 'Too many' in page
     assert req(server, 'POST', '/gate/login', {'pin': '4321'}, {'X-Real-IP': '7.7.7.7'})[0] == 303
+
+
+def test_known_browser_skips_the_global_limit_only():
+    c = Clock()
+    g = gate.Gate('4321', SECRET, now=c)
+    dev = g.device_token()
+    for i in range(gate.GLOBAL_FAILS):
+        g.attempt('10.0.%d.%d' % (i // 250, i % 250), '9999')
+    assert g.attempt('9.9.9.9', '4321') == 'blocked'
+    assert g.known(dev) and g.attempt('9.9.9.9', '4321', known=True) == 'ok'
+    for _ in range(gate.IP_FAILS):
+        g.attempt('8.8.8.8', '0000', known=True)
+    assert g.attempt('8.8.8.8', '4321', known=True) == 'blocked'   # its own per-visitor limit still holds
+
+
+def test_device_token_is_not_a_session_and_vice_versa():
+    c = Clock()
+    g = gate.Gate('4321', SECRET, now=c)
+    dev, tok = g.device_token(), g.token()
+    assert not g.valid(dev) and not g.known(tok)
+    assert not gate.Gate('4321', b'x' * 32, now=c).known(dev)
+    assert not g.known('') and not g.known(None) and not g.known('9' * 40 + '.ab')
+    c.t += gate.DEVICE_AGE + 1
+    assert not g.known(dev)
+
+
+def test_revoke_survives_a_restart_and_expires(tmp_path):
+    c = Clock()
+    path = str(tmp_path / 'secret.revoked')
+    g = gate.Gate('4321', SECRET, now=c, revoked_path=path)
+    tok = g.token()
+    c.t += 1
+    other = g.token()
+    assert g.revoke(tok) and not g.valid(tok) and g.valid(other)
+    assert not g.revoke('123.abc') and not g.revoke(None)
+    assert oct(os.stat(path).st_mode & 0o777) == '0o600'
+    g2 = gate.Gate('4321', SECRET, now=c, revoked_path=path)
+    assert not g2.valid(tok) and g2.valid(other)
+    c.t += gate.MAX_AGE + 5
+    g3 = gate.Gate('4321', SECRET, now=c, revoked_path=path)
+    assert g3.revoked == {}
+
+
+def test_revoked_file_damaged_or_missing(tmp_path):
+    path = tmp_path / 'r'
+    assert gate.Gate('4321', SECRET, now=Clock(), revoked_path=str(path)).revoked == {}
+    for junk in ('not json', '[1, 2]', '{"a": "x", "b": 1.5}'):
+        path.write_text(junk)
+        assert gate.Gate('4321', SECRET, now=Clock(), revoked_path=str(path)).revoked == {}
+
+
+def test_http_logout_revokes_and_device_cookie(server):
+    code, h, _ = req(server, 'POST', '/gate/login', {'pin': '4321', 'next': '/news'}, {'X-Real-IP': '5.5.5.6'})
+    assert code == 303
+    tok = h['Set-Cookie'].split(';')[0]
+    assert req(server, 'GET', '/gate/auth', headers={'Cookie': tok})[0] == 204
+    code, h, _ = req(server, 'GET', '/gate/logout', headers={'Cookie': tok})
+    assert code == 303 and 'Max-Age=0' in h['Set-Cookie']
+    assert req(server, 'GET', '/gate/auth', headers={'Cookie': tok})[0] == 401      # a saved copy is dead too
+
+
+def test_http_device_cookie_flags_and_global_bypass(server):
+    c = http.client.HTTPConnection('127.0.0.1', server, timeout=5)
+    c.request('POST', '/gate/login', body='pin=4321', headers={'Content-Type': 'application/x-www-form-urlencoded',
+                                                               'X-Real-IP': '5.5.5.7'})
+    r = c.getresponse()
+    r.read()
+    cookies = r.msg.get_all('Set-Cookie')
+    dev = [v for v in cookies if v.startswith(gate.DEVICE_COOKIE + '=')]
+    assert len(cookies) == 2 and len(dev) == 1
+    for flag in ('HttpOnly', 'Secure', 'SameSite=Strict', 'Path=/gate', 'Max-Age=%d' % gate.DEVICE_AGE):
+        assert flag in dev[0]
+    devc = dev[0].split(';')[0]
+    for i in range(gate.GLOBAL_FAILS):
+        req(server, 'POST', '/gate/login', {'pin': '9999'}, {'X-Real-IP': '10.1.%d.%d' % (i // 250, i % 250)})
+    assert req(server, 'POST', '/gate/login', {'pin': '4321'}, {'X-Real-IP': '5.5.5.8'})[0] == 429
+    assert req(server, 'POST', '/gate/login', {'pin': '4321'}, {'X-Real-IP': '5.5.5.8', 'Cookie': devc})[0] == 303
+    forged = devc[:-1] + ('0' if devc[-1] != '0' else '1')
+    assert req(server, 'POST', '/gate/login', {'pin': '4321'}, {'X-Real-IP': '5.5.5.9', 'Cookie': forged})[0] == 429
+
+
+def test_revoke_with_unwritable_file_still_signs_out(tmp_path):
+    g = gate.Gate('4321', SECRET, now=Clock(), revoked_path=str(tmp_path / 'no' / 'such' / 'dir'))
+    tok = g.token()
+    assert g.revoke(tok) and not g.valid(tok)
