@@ -183,13 +183,13 @@ def main(argv=None):
                     help='with --watch, print a line after this many unchanged seconds')
     a = ap.parse_args(argv)
 
+    if a.heartbeat <= 0:
+        ap.error('--heartbeat needs a positive interval of seconds')
     if a.watch is not None:
         if a.watch <= 0:
             ap.error('--watch needs a positive interval of seconds')
         if a.shot is not None:
             ap.error('--watch writes many shots: only the default scratch file or --no-shot')
-        if a.heartbeat <= 0:
-            ap.error('--heartbeat needs a positive interval of seconds')
         return watch(a.lane, a.watch, a.secs, a.no_shot, a.heartbeat)
 
     print(json.dumps(status(a.lane, a.secs, a.shot, a.no_shot)))
