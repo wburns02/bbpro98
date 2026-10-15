@@ -37,6 +37,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import bracket    # noqa: E402
 import contracts  # noqa: E402
 import feed      # noqa: E402
 import gamedata  # noqa: E402
@@ -94,7 +95,8 @@ def story_count(out):
 
 # What a season leaves in <data>/<ASSN>/ that the next season starts without; the rest (history/, moves/,
 # contracts.json, notes/) spans seasons.
-SEASON_ENTRIES = ('recaps', 'pending', 'feed', 'scout', 'preview.json', 'awards.json', 'replay.json')
+SEASON_ENTRIES = ('recaps', 'pending', 'feed', 'scout', 'preview.json', 'awards.json', 'replay.json',
+                  'postseason.json')
 
 
 def associations(game_dir):
@@ -204,6 +206,7 @@ class Watcher:
             'played': sum(1 for g in assoc['games'] if g['played']), 'stories': story_count(out),
             'league': self.league(stem, asn_path, pyr, year_of(assoc.get('season_year')))})
         self.season_pieces(out, assoc, names, dat, pyr)
+        self.postseason_piece(out, assoc, asn_path)
         self.history_piece(assoc, stem, dat)
         self.moves(out, assoc, pyr, dat)
         self.contracts_piece(out, assoc, pyr, dat)
@@ -416,6 +419,29 @@ class Watcher:
             write_json(os.path.join(out, 'awards.json'), dict(piece, kind='awards', facts=facts, created=now_iso()))
             self.log('%s awards (%s)' % (stem, piece['source']))
         self.scouting(out, assoc, pyr, dat)
+
+    def postseason_piece(self, out, assoc, asn_path):
+        """The postseason page's file (bracket.py), template only. The ASN's bracket is this season's while its games
+        are on the schedule (written to <out>), else it is last season's, still there after a rollover (written to
+        past/<year - 1>/, and only when that folder exists). Nothing is written before a game is played or when the
+        file already holds the same facts, so a new game rewrites it and a quiet pass does not."""
+        try:
+            b = gamedata.postseason(asn_path)
+        except Exception:   # OSError, ValueError, or a file it cannot index (torn): the other pieces still run
+            return
+        year = year_of(assoc.get('season_year'))
+        if b is None or year is None:
+            return
+        target, dest = (year, out) if b['current'] else (year - 1, os.path.join(out, 'past', str(year - 1)))
+        if not b['current'] and not os.path.isdir(dest):
+            return
+        f = json.loads(json.dumps(bracket.facts(assoc, b, target)))
+        path = os.path.join(dest, 'postseason.json')
+        if not bracket.played(f) or (read_json(path) or {}).get('facts') == f:
+            return
+        write_json(path, dict(bracket.template(f), kind='postseason', source='template', facts=f, created=now_iso()))
+        self.log('%s postseason %d (%d games)' % (os.path.basename(out), target,
+                                                   sum(len(s['games']) for r in f['rounds'] for s in r['series'])))
 
     def scouting(self, out, assoc, pyr, dat):
         """One scouting report per team, written once: the team's best hitters and pitchers graded from the PYR ratings,
