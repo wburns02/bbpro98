@@ -15,7 +15,7 @@ def parse(text):
             continue
         try:
             obj = json.loads(line)
-        except (json.JSONDecodeError, ValueError):
+        except (ValueError, RecursionError):     # JSONDecodeError is a ValueError
             continue
         if isinstance(obj, dict):
             out.append(obj)

@@ -137,7 +137,8 @@ def _keep(line, keys):
 def archive_season(data_dir, stem, year, lines, teams=None):
     """Write season year of association stem, once. lines is {'bat': {pid: line}, 'pit': {pid: line}} and teams
     (optional) is {pid: team label}. A season already on disk is left alone and False is returned; otherwise the file
-    is written through <file>.tmp and os.replace, and True is returned. A stem that is not 1 to 8 letters or digits, or
+    is written through <file>.tmp (flushed to disk) and os.replace, and True is returned. A file on disk that is not a
+    JSON object (torn by a crash) is moved aside to <file>.bad and the season is written again. A stem that is not 1 to 8 letters or digits, or
     a year outside 1800..3000, is a ValueError."""
     if not isinstance(stem, str) or STEM_RE.fullmatch(stem) is None:
         raise ValueError('stem must be 1 to 8 letters or digits, not %r' % (stem,))
@@ -145,23 +146,50 @@ def archive_season(data_dir, stem, year, lines, teams=None):
         raise ValueError('year must be 1800 to 3000, not %r' % (year,))
     path = archive_path(data_dir, stem, year)
     if os.path.exists(path):
-        return False
+        if _readable(path):
+            return False
+        _set_aside(path)     # torn by a crash: kept for a look by hand, then written again
     doc = {'year': year,
            'bat': {str(pid): _keep(line, BAT_KEYS) for pid, line in lines.get('bat', {}).items()},
            'pit': {str(pid): _keep(line, PIT_KEYS) for pid, line in lines.get('pit', {}).items()},
            'team': {str(pid): label for pid, label in (teams or {}).items()}}
     text = json.dumps(doc)
+    _write_text(path, text)
+    return True
+
+
+def _write_text(path, text):
+    """Writes text to path through <path>.tmp, flushed to disk before the os.replace, creating the folder."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + '.tmp'
     try:
         with open(tmp, 'w', encoding='utf-8') as f:
             f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
         os.replace(tmp, path)
     except OSError:
         if os.path.exists(tmp):
             os.remove(tmp)
         raise
-    return True
+
+
+def _readable(path):
+    """True when path holds a JSON object (an archive written whole)."""
+    try:
+        with open(path, encoding='utf-8') as f:
+            return isinstance(json.load(f), dict)
+    except (OSError, ValueError, RecursionError):
+        return False
+
+
+def _set_aside(path):
+    """Moves path to the first free <path>.bad, <path>.bad.2, ... so no earlier damaged copy is overwritten."""
+    dest, n = path + '.bad', 1
+    while os.path.exists(dest):
+        n += 1
+        dest = '%s.bad.%d' % (path, n)
+    os.replace(path, dest)
 
 
 def seen_path(data_dir, stem):
@@ -191,7 +219,7 @@ def _damaged(path):
             obj = json.load(f)
     except FileNotFoundError:
         return False
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         return True
     return not (isinstance(obj, dict) and isinstance(obj.get('years'), list))
 
@@ -200,7 +228,7 @@ def mark_seen(data_dir, stem, year):
     """Records that a watcher pass saw season year of stem being played, once: True when written, False when year was
     already there and nothing is written. The list stays sorted, the folder is created as needed, and the file is
     written through seen.json.tmp and os.replace. A seen.json that exists but does not parse is moved aside to
-    seen.json.bad first rather than silently replaced. A stem that is not 1 to 8 letters or digits, or a year outside
+    seen.json.bad (or .bad.2, ... when that exists) first rather than silently replaced. A stem that is not 1 to 8 letters or digits, or a year outside
     1800..3000, is a ValueError."""
     if not isinstance(stem, str) or STEM_RE.fullmatch(stem) is None:
         raise ValueError('stem must be 1 to 8 letters or digits, not %r' % (stem,))
@@ -211,17 +239,8 @@ def mark_seen(data_dir, stem, year):
         return False
     path = seen_path(data_dir, stem)
     if not years and _damaged(path):
-        os.replace(path, path + '.bad')     # kept for a look by hand, never overwritten by a one-year list
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = path + '.tmp'
-    try:
-        with open(tmp, 'w', encoding='utf-8') as f:
-            f.write(json.dumps({'years': sorted(years | {year})}))
-        os.replace(tmp, path)
-    except OSError:
-        if os.path.exists(tmp):
-            os.remove(tmp)
-        raise
+        _set_aside(path)     # kept for a look by hand, never overwritten by a one-year list
+    _write_text(path, json.dumps({'years': sorted(years | {year})}))
     return True
 
 

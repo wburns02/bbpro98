@@ -613,3 +613,63 @@ def test_donor_year_comes_from_the_donor_asn(game, monkeypatch, tmp_path):
     assert create._donor_year(str(donor)) == 1977          # the stub names 1977 for every ASN
     monkeypatch.setattr(create.gamedata, 'association', lambda path: 1 / 0)
     assert create._donor_year(str(donor)) == 1996          # an ASN that does not parse
+
+
+def test_add_player_puts_the_pyr_back_when_the_pool_write_fails(game, tmp_path, monkeypatch):
+    root, donor, proc = game
+    before = {f: (root / 'Assn' / f).read_bytes() for f in ('TEST77.PYR', 'TEST77.PYF')}
+    real, calls = create._write_atomic, []
+
+    def flaky(path, data):
+        calls.append(os.path.basename(path))
+        if len(calls) == 2:
+            raise OSError(28, 'No space left on device')
+        real(path, data)
+
+    monkeypatch.setattr(create, '_write_atomic', flaky)
+    with pytest.raises(OSError):
+        create.add_player(str(root), SPEC_SS, str(donor), str(tmp_path / 'backup'), NOW, str(proc))
+    assert calls[:2] == ['TEST77.PYR', 'TEST77.PYF']
+    assert {f: (root / 'Assn' / f).read_bytes() for f in before} == before
+    assert list(root.rglob('*create-tmp')) == []
+
+
+def test_add_player_undoes_both_files_when_after_raises(game, tmp_path):
+    root, donor, proc = game
+    before = {f: (root / 'Assn' / f).read_bytes() for f in ('TEST77.PYR', 'TEST77.PYF')}
+    seen = []
+
+    def after(pid):
+        seen.append(pid)
+        raise OSError('ledger')
+
+    with pytest.raises(OSError):
+        create.add_player(str(root), SPEC_SS, str(donor), str(tmp_path / 'backup'), NOW, str(proc), after=after)
+    assert seen == [206]
+    assert {f: (root / 'Assn' / f).read_bytes() for f in before} == before
+
+
+def test_add_player_removes_a_pool_file_it_made_when_after_raises(game, tmp_path):
+    root, donor, proc = game
+    (root / 'Assn' / 'TEST77.PYF').unlink()
+    pyr = (root / 'Assn' / 'TEST77.PYR').read_bytes()
+
+    def after(pid):
+        raise OSError('ledger')
+
+    with pytest.raises(OSError):
+        create.add_player(str(root), SPEC_P, str(donor), str(tmp_path / 'backup'), NOW, str(proc), after=after)
+    assert not (root / 'Assn' / 'TEST77.PYF').exists()
+    assert (root / 'Assn' / 'TEST77.PYR').read_bytes() == pyr
+
+
+def test_add_player_calls_after_with_the_new_id_once_both_files_are_written(game, tmp_path):
+    root, donor, proc = game
+    seen = []
+
+    def after(pid):
+        seen.append((pid, create.pyf_ids((root / 'Assn' / 'TEST77.PYF').read_bytes())))
+
+    assert create.add_player(str(root), SPEC_SS, str(donor), str(tmp_path / 'backup'), NOW, str(proc),
+                             after=after)[0] == 206
+    assert seen == [(206, [100, 205, 206])]

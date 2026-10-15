@@ -376,3 +376,50 @@ def test_mark_seen_leaves_a_good_but_empty_list_in_place(tmp_path):
     assert history.mark_seen(str(tmp_path), '30L1998', 1999)
     assert not (path.parent / 'seen.json.bad').exists()
     assert history.seen_years(str(tmp_path), '30L1998') == {1999}
+
+
+def test_archive_season_rewrites_a_torn_archive_and_keeps_the_torn_copy(tmp_path):
+    data = str(tmp_path)
+    path = history.archive_path(data, 'abc1', 1998)
+    os.makedirs(os.path.dirname(path))
+    write_text(path, '')
+    assert history.sim_seasons(data, 'abc1', 205, 'bat') == []
+    assert history.archive_season(data, 'abc1', 1998, {'bat': {205: {'g': 3}}}, {205: 'LAN'}) is True
+    assert [s['year'] for s in history.sim_seasons(data, 'abc1', 205, 'bat')] == [1998]
+    with open(path + '.bad', encoding='utf-8') as f:
+        assert f.read() == ''
+    assert history.archive_season(data, 'abc1', 1998, {'bat': {205: {'g': 99}}}) is False
+
+
+def test_archive_season_leaves_a_json_object_archive_alone(tmp_path):
+    data = str(tmp_path)
+    path = history.archive_path(data, 'abc1', 1998)
+    os.makedirs(os.path.dirname(path))
+    write_text(path, '{"year": 1998}')
+    assert history.archive_season(data, 'abc1', 1998, {'bat': {205: {'g': 3}}}) is False
+    assert not os.path.exists(path + '.bad')
+
+
+def test_archive_season_flushes_the_tmp_before_the_replace(tmp_path, monkeypatch):
+    synced, replaced = [], []
+    real_fsync, real_replace = os.fsync, os.replace
+    monkeypatch.setattr(history.os, 'fsync', lambda fd: (synced.append(fd), real_fsync(fd))[1])
+    monkeypatch.setattr(history.os, 'replace', lambda a, b: (replaced.append(len(synced)), real_replace(a, b))[1])
+    assert history.archive_season(str(tmp_path), 'abc1', 1997, {'bat': {205: {'g': 3}}})
+    assert history.mark_seen(str(tmp_path), 'abc1', 1997)
+    assert replaced == [1, 2]
+
+
+def test_mark_seen_never_overwrites_an_earlier_damaged_copy(tmp_path):
+    path = tmp_path / '30L1998' / 'history' / 'seen.json'
+    path.parent.mkdir(parents=True)
+    path.write_text('first', encoding='utf-8')
+    assert history.mark_seen(str(tmp_path), '30L1998', 1999)
+    path.write_text('second', encoding='utf-8')
+    assert history.mark_seen(str(tmp_path), '30L1998', 2000)
+    path.write_text('third', encoding='utf-8')
+    assert history.mark_seen(str(tmp_path), '30L1998', 2001)
+    assert (path.parent / 'seen.json.bad').read_text(encoding='utf-8') == 'first'
+    assert (path.parent / 'seen.json.bad.2').read_text(encoding='utf-8') == 'second'
+    assert (path.parent / 'seen.json.bad.3').read_text(encoding='utf-8') == 'third'
+    assert json.loads(path.read_text(encoding='utf-8')) == {'years': [2001]}
