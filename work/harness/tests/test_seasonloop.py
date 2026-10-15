@@ -519,3 +519,22 @@ def test_champion_oserror_gives_the_error_dict(monkeypatch):
     monkeypatch.setattr(seasonloop.gamedata, 'association', lambda path: FIXTURE_ASSN)
     got = seasonloop.champion('X.ASN')
     assert got['season'] is None and got['champion'] is None and got['error'] == 'no such file'
+
+
+def test_champion_never_raises_on_a_parser_error_beyond_oserror(monkeypatch):
+    import struct
+    for exc in (struct.error('unpack requires a buffer'), KeyError('po'), IndexError('member')):
+        def boom(path, exc=exc):
+            raise exc
+        monkeypatch.setattr(seasonloop.gamedata, 'postseason', boom)
+        monkeypatch.setattr(seasonloop.gamedata, 'association', lambda path: FIXTURE_ASSN)
+        got = seasonloop.champion('X.ASN')
+        assert got['season'] is None and got['champion'] is None and got['error']
+
+
+def test_champion_never_raises_on_an_odd_bracket(monkeypatch):
+    b = _bracket(7, [2, 7], [3, 4])
+    del b['rounds'][2]['series'][0]['wins']
+    _book(monkeypatch, b, FIXTURE_ASSN)
+    got = seasonloop.champion('X.ASN')
+    assert got['champion'] is None and got['error']
