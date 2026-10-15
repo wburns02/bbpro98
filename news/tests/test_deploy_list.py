@@ -6,6 +6,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parents[2]
 DEPLOY = REPO / 'hosting' / 'deploy.sh'
 
@@ -50,16 +52,6 @@ def missing_work(deploy_text, mods):
     return sorted(m for m in mods if '"$REPO/work/%s.py"' % m not in deploy_text)
 
 
-def includes_for_news(deploy_text):
-    """--include patterns from the first news/ rsync (the one with --include='salary_table.json')."""
-    patterns = []
-    for m in re.finditer(r"--include='([^']+)'", deploy_text):
-        patterns.append(m.group(1))
-    # keep patterns from the news rsync only: lines between the news comment block; the other rsyncs'
-    # patterns are dll/exe/VOL/PB.INI/ASN/PYR/PYF/DAT which the news data files never collide with.
-    return patterns
-
-
 def unmatched_data(deploy_text, names):
     """Tracked non-.py news files no news --include pattern matches."""
     news_block = deploy_text[deploy_text.index('news=$(rsync'):deploy_text.index('news+=')]
@@ -81,8 +73,9 @@ def test_work_imports_shipped():
 
 def test_work_walk_not_vacuous(tmp_path):
     copy = tmp_path / 'repo'
-    shutil.copytree(REPO, copy, symlinks=True,
-                    ignore=shutil.ignore_patterns('.git', '__pycache__', '*.pyc'))
+    for sub in ('hosting', 'news', 'work'):     # only what the walk reads (the main checkout also holds worktrees)
+        shutil.copytree(REPO / sub, copy / sub, symlinks=True,
+                        ignore=shutil.ignore_patterns('__pycache__', '*.pyc', 'tests'))
     text = deploy_text(copy).replace('"$REPO/work/stats.py"', '')
     assert text != deploy_text(REPO), 'deploy.sh copy never contained "$REPO/work/stats.py"'
     mods = work_modules(copy)
