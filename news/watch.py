@@ -327,7 +327,9 @@ class Watcher:
             return
         players = gamedata.players(pyr)
         last = gamedata.season_lines(dat, scope=3) if dat else {'bat': {}, 'pit': {}}
-        year = scout.year_of(assoc['name'])
+        year = assoc.get('season_year')
+        if type(year) is not int:
+            year = scout.year_of(assoc['name'])
         for tid in todo:
             if self.complete is not None and self.scout_left <= 0:
                 self.scouting_open.add(stem)
