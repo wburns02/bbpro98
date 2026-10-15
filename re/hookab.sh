@@ -5,6 +5,8 @@
 # env: MODNAME=steal (mod file mods\$MODNAME.dll and its ini section [$MODNAME] mode=MODE), MODKV="k=v k2=v2" extra keys
 set -u
 ARM=$1 MODE=$2 DAYS=$3
+[[ $ARM =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]*$ ]] || { echo "bad ARM"; exit 8; }
+[[ $DAYS =~ ^[0-9]+$ ]] || { echo "bad DAYS"; exit 8; }
 SP=/tmp/claude-1000/-home-will/8d342f9f-a447-4453-8414-200a2f7813d7/scratchpad
 FIX=${4:-$SP/bbfix_new.dll} MOD=${5:-$SP/steal.dll}
 W=/mnt/nvme/bbpro98/work_install BASE=/mnt/nvme/bbpro98/re/asnseq/day10 OUT=/mnt/nvme/bbpro98/re/hookab/$ARM
