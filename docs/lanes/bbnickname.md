@@ -109,6 +109,12 @@ ruled out from BBShell alone - the champ text path never consults one.
 
 ## 3. Smallest fix for Lahman builds
 
+**Decision (orchestrator, 2026-10-14): not the build.py fix below.** Lahman builds already put the whole name
+("Chicago Cubs") at 0x12, so a nickname at 0x23 would print "the Chicago Cubs Cubs". Stock files print <No Name> too.
+The fix is src-latest/mods/champtext.c: it blanks s_<No_Name>_6808a740 (BBShell .data), so an empty argument prints
+nothing and both stock and Lahman associations read "the Chicago Cubs  capture the World Series". The build.py
+option below stays as the record of the alternative.
+
 build.py (work/lahman/build.py:577) currently writes only
 `put_str(q, 0x12, 32, team_name(t['name']))`. Write the nickname too:
 

@@ -125,3 +125,7 @@ Public repo (MIT) of tools and research for FPS Baseball Pro '98. Python codecs 
   1996's), so never archive it without that mark. Seeded or stale archives already written were moved aside, never
   deleted (host /mnt/data/bbpro98/bogus-history-20261013).
 - Portraits (news/portrait.py) are generated from the player's inputs only. Never add real photos or likenesses.
+- Season-end texts ("the %0 %1 capture the %8") take the team nickname from the t record's 16 characters at 0x23,
+  which no stock or Lahman association fills; an empty argument prints BBShell's "<No Name>" string. Never write a
+  nickname there for Lahman builds (0x12 already holds the whole name, so it would read "Chicago Cubs Cubs");
+  mods\champtext.dll blanks the string instead (docs/lanes/bbnickname.md).

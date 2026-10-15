@@ -13,7 +13,7 @@ rm -rf "$out/stage"; mkdir -p "$out/stage/mods"
 cc() { "$py" -m ziglang cc -target x86-windows-gnu -O2 -Wno-incompatible-pointer-types -I"$repo/src-latest" "$@"; }
 cc -shared -o "$out/stage/bbfix.dll" "$repo/src-latest/bbfix.c" -lpsapi
 cc -o "$out/stage/bblaunch.exe" "$repo/src-latest/bblaunch.c"
-for m in aging rookies playercard modmenu steal; do
+for m in aging rookies playercard modmenu steal champtext; do
     [ -f "$repo/src-latest/mods/$m.c" ] || continue
     cc -shared -o "$out/stage/mods/$m.dll" "$repo/src-latest/mods/$m.c" -lgdi32 -luser32
 done

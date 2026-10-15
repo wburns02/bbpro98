@@ -25,6 +25,8 @@ mods\modmenu.dll   The main menu's WWW SITE button opens a Mods window: the load
                    with a message and the game carries on. League Management's Create New Association opens the
                    Build a Season window as New Association (pick the season year), with a button to the game's
                    own structures dialog; [modmenu] newassn=0 leaves that command to the game.
+mods\champtext.dll The season-end texts no longer print "<No Name>" for the team nickname, which no association
+                   fills ("the Chicago Cubs <No Name> capture the World Series").
 mods\steal.dll     Experimental base-stealing switch (off unless you set [steal] mode).
 bbfix.ini.sample   Copy to bbfix.ini and edit.
 SHA256SUMS.txt     Checksums of every file above.

@@ -269,6 +269,7 @@ def postseason(h, shots, t_end, max_sims=8, asn=None):
         if on_champ(a) and not champ:
             champ = True
             print(json.dumps({'postseason': 'champion'}), flush=True)
+            shutil.copyfile(a, f'{shots}/champion.png')
             h.x('key', 'Return'); time.sleep(4)
             held = 0
             look(h, a)

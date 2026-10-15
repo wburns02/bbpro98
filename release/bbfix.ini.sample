@@ -3,7 +3,7 @@
 [mods]
 ; Mods to load at startup, comma separated, paths relative to the game folder.
 ; modmenu.dll turns the main menu's WWW SITE button into a Mods window; its tools need the bridge (README.txt).
-load=mods\aging.dll,mods\rookies.dll,mods\playercard.dll,mods\modmenu.dll
+load=mods\aging.dll,mods\rookies.dll,mods\playercard.dll,mods\modmenu.dll,mods\champtext.dll
 
 [aging]
 ; decline=on|off: peak ratings fall with age.  retire=curve|pass: retire by age and ability, or the stock rule.
