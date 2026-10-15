@@ -85,7 +85,14 @@ def run(cmds, popen=subprocess.Popen):
         return code
     except KeyboardInterrupt:
         print("play: interrupted", flush=True)
-        _stop(procs)
+        try:
+            _stop(procs)
+        except KeyboardInterrupt:       # a second Ctrl+C during the grace period: kill at once
+            for p in procs:
+                try:
+                    p.kill()
+                except OSError:
+                    pass
         return 0
 
 

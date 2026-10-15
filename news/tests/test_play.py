@@ -98,3 +98,28 @@ def test_run_names_children_by_their_place(capsys):
     out = capsys.readouterr().out
     assert "play: started watch (pid " in out and "play: started bridge (pid " in out
     assert "play: bridge exited with code 0" in out
+
+
+def test_run_second_interrupt_kills_at_once():
+    class Proc:
+        pid, args = 1, ["x"]
+
+        def __init__(self):
+            self.terminated = self.killed = False
+
+        def poll(self):
+            raise KeyboardInterrupt
+
+        def terminate(self):
+            self.terminated = True
+
+        def kill(self):
+            self.killed = True
+
+        def wait(self, timeout=None):
+            return 0
+
+    procs = [Proc(), Proc()]
+    feed = list(procs)
+    assert play.run([["a"], ["b"]], popen=lambda cmd: feed.pop(0)) == 0
+    assert all(p.terminated and p.killed for p in procs)
