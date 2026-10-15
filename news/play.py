@@ -61,10 +61,14 @@ def run(cmds, popen=subprocess.Popen):
     procs = []
     code = 0
     try:
-        for i, cmd in enumerate(cmds):
-            p = popen(cmd)
-            procs.append(p)
-            print("play: started %s (pid %d)" % (_name(i), p.pid), flush=True)
+        try:
+            for i, cmd in enumerate(cmds):
+                p = popen(cmd)
+                procs.append(p)
+                print("play: started %s (pid %d)" % (_name(i), p.pid), flush=True)
+        except Exception:
+            _stop(procs)        # one child failed to start: never leave the others running alone
+            raise
         first = None
         while first is None:
             for p in procs:

@@ -728,7 +728,9 @@ def test_a_new_season_year_moves_the_seasons_news_to_past_and_copies_meta(tmp_pa
         assert not (out / gone).exists() and (past / gone).exists()
     assert (past / 'recaps' / 'aa.json').exists() and (past / 'feed' / '10-01.json').exists()
     assert json.loads((past / 'meta.json').read_text()) == {'season_year': 1997}
-    assert json.loads((out / 'meta.json').read_text()) == {'season_year': 1997}      # copied, not moved
+    meta = json.loads((out / 'meta.json').read_text())      # the copy in past/ is the old one; this is the new season
+    assert (meta['assn'], meta['season_year'], meta['last_day'], meta['played'], meta['stories']) == ('A', 1998, None, 0,
+                                                                                                    0)
     stay = [f for f in files if f.split('/')[0] in ('history', 'moves', 'notes', 'contracts.json')]
     assert len(stay) == 4 and all((out / f).exists() for f in stay)
 
@@ -738,9 +740,12 @@ def test_a_second_rollover_into_a_used_name_does_not_overwrite(tmp_path):
     season_folder(out)
     w, lines = rolling(tmp_path)
     assert w.rollover('A', str(out), {'season_year': 1998}) == '1997'
+    assert w.rollover('A', str(out), {'season_year': 1998}) is None       # meta.json already holds 1998
     (out / 'recaps').mkdir()
     (out / 'recaps' / 'cc.json').write_text('{}')
+    (out / 'meta.json').write_text(json.dumps({'season_year': 1997}))     # a 1997 backup restored and played again
     assert w.rollover('A', str(out), {'season_year': 1998}) == '1997-2'
+    (out / 'meta.json').write_text(json.dumps({'season_year': 1997}))
     assert w.rollover('A', str(out), {'season_year': 1999}) == '1997-3'
     assert (out / 'past' / '1997' / 'recaps' / 'aa.json').exists()
     assert (out / 'past' / '1997-2' / 'recaps' / 'cc.json').exists()

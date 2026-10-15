@@ -25,11 +25,15 @@ class BudgetExceeded(HiveError):
 
 
 def load_key(path=KEY_FILE):
-    with open(path, encoding='utf-8') as fh:
-        for line in fh:
-            name, sep, value = line.strip().partition('=')
-            if sep and name.strip() == 'HIVEMODELS_API_KEY' and value.strip():
-                return value.strip().strip('"\'')
+    """The API key from path. A missing or unreadable file is a HiveError, like a file without the key."""
+    try:
+        with open(path, encoding='utf-8') as fh:
+            for line in fh:
+                name, sep, value = line.strip().partition('=')
+                if sep and name.strip() == 'HIVEMODELS_API_KEY' and value.strip():
+                    return value.strip().strip('"\'')
+    except (OSError, ValueError) as e:     # ValueError: a file that is not UTF-8
+        raise HiveError('cannot read the key file %s: %s' % (path, type(e).__name__)) from None
     raise HiveError('no HIVEMODELS_API_KEY in %s' % path)
 
 
@@ -70,19 +74,26 @@ class Budget:
 
     def record(self, usage):
         st = self._load()
-        st['out_tokens'] += int(usage.get('completion_tokens') or 0)
-        st['in_tokens'] += int(usage.get('prompt_tokens') or 0)
+        st['out_tokens'] += _count(usage.get('completion_tokens'))
+        st['in_tokens'] += _count(usage.get('prompt_tokens'))
         self._save(st)
 
 
+def _count(value):
+    """A token count from a usage block: a non-negative int, 0 for anything else."""
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 0
+
+
 def complete(system, user, budget, max_tokens=16000, temperature=0.7, timeout=180, key=None):
-    """(text, usage). Raises BudgetExceeded before spending, HiveError on any failure or empty answer."""
+    """(text, usage). Raises BudgetExceeded before spending, HiveError on any failure or empty answer. The key is read
+    before a call is reserved, so a missing key file costs nothing."""
+    key = key or load_key()
     budget.reserve()
     payload = {'model': MODEL, 'stream': True, 'max_tokens': max_tokens, 'temperature': temperature,
                'messages': [{'role': 'system', 'content': system}, {'role': 'user', 'content': user}]}
     req = urllib.request.Request(URL, data=json.dumps(payload).encode('utf-8'), method='POST', headers={
         'Content-Type': 'application/json', 'Accept': 'text/event-stream',
-        'Authorization': 'Bearer ' + (key or load_key())})
+        'Authorization': 'Bearer ' + key})
     text, usage, spent = [], {}, [0]
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -94,13 +105,20 @@ def complete(system, user, budget, max_tokens=16000, temperature=0.7, timeout=18
                 if data == '[DONE]':
                     break
                 obj = json.loads(data)
-                if obj.get('usage'):
+                if not isinstance(obj, dict):
+                    continue        # valid JSON that is not an event: skipped, never an AttributeError out of draft()
+                if isinstance(obj.get('usage'), dict) and obj['usage']:
                     usage = obj['usage']
-                for ch in obj.get('choices') or []:
-                    delta = ch.get('delta') or {}
-                    text.append(delta.get('content') or '')
-                    spent[0] += len(delta.get('content') or '') + len(delta.get('reasoning_content') or '')
-    except (OSError, ValueError) as e:      # URLError and HTTPError are OSErrors; ValueError covers bad JSON
+                choices = obj.get('choices')
+                for ch in choices if isinstance(choices, list) else []:
+                    delta = ch.get('delta') if isinstance(ch, dict) else None
+                    if not isinstance(delta, dict):
+                        continue
+                    content, thought = delta.get('content'), delta.get('reasoning_content')
+                    content = content if isinstance(content, str) else ''
+                    text.append(content)
+                    spent[0] += len(content) + (len(thought) if isinstance(thought, str) else 0)
+    except (OSError, ValueError, RecursionError) as e:      # URLError, HTTPError are OSErrors; ValueError: bad JSON
         raise HiveError('%s: %s' % (type(e).__name__, e)) from None
     finally:
         # A stream that ends without a usage block still costs: charge about four characters per token.
