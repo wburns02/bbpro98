@@ -133,8 +133,12 @@ def main(argv=None):
         if not png:     # a fresh mode-600 file, never a guessable name in a shared directory
             fd, png = tempfile.mkstemp(prefix=f'lanestat_lane{a.lane}_', suffix='.png')
             os.close(fd)
-        ingame.shot(png)
-        scr = screen(png)
+        try:
+            ingame.shot(png)
+            scr = screen(png)
+        finally:
+            if not a.shot:
+                os.unlink(png)
 
     print(json.dumps({'lane': a.lane, 'pids': pids, 'dticks': dticks,
                       'newest': {'path': path, 'age_s': write_age},
