@@ -1,144 +1,120 @@
-# bbpro98: agent rules
+# bbpro98: builder card
 
-Public repo (MIT) of tools and research for FPS Baseball Pro '98. Python codecs live in work/, research lanes in re/.
+Full project rules and the long landmine list: CLAUDE.md (read it before touching the game, the harness or the
+hosted bridge). Handoff history: HANDOFF.md. Current state and open items: STATUS.md.
 
-## Never commit
-- Game files or anything the game wrote: *.ASN *.PYR *.PYF *.DAT *.VOL *.dll *.exe, saves, templates, snapshots.
-- Decompile dumps (/mnt/nvme/bbpro98/index), third-party tools, Sierra patch notes.
-- Secrets of any kind. No network calls from repo code, with one exception: news/hive.py (the hosted news
-  sidecar's GLM client), which reads its key at call time from a file outside the repo.
+## 1. What this is
+Public MIT repo (github.com/wburns02/bbpro98) of tools and research for Front Page Sports Baseball Pro '98 (Sierra,
+1997), a 32-bit Windows game run under Wine on Linux. It holds: format codecs (work/, re/formats/), the mod engine
+and mods in C (src-latest/, built with zig cc into bbfix.dll plus mods\*.dll), installers (work/patches/), a Lahman
+season builder (work/lahman/), a Wine test harness (work/harness/), a news sidecar and the in-game Mods menu bridge
+(news/), and the browser hosting kit (hosting/). No game files are in the repo and none may ever be added.
+Live: https://bbpro98.ecbtx.com (PIN gate; an unauthenticated GET answers 302 to /gate/login). It runs on the
+r730 host as systemd user units, deployed by hosting/deploy.sh. Releases: GitHub drafts that Will publishes by hand.
 
-## Paths
-- Work copy of the install: /mnt/nvme/bbpro98/work_install. Never write the live install
-  (~/.bbpro98_prefix/drive_c/Sierra/BBPRO_98) directly; work/patches/install_live.sh does that.
-- Lahman databases: /mnt/nvme/bbpro98/lahman2025/lahman2025.sqlite (2025 release, what build.py uses) and the older
-  /mnt/nvme/tlrb2/lahman/lahmansbaseballdb.sqlite (load_csv's schema reference). Open both read-only
-  (sqlite3.connect('file:...?mode=ro', uri=True)).
-- Large data goes under /mnt/nvme, never /home/will or /tmp.
+## 2. Install
+No package install. Python 3 standard library only (numpy only in work/lahman/ratings.py). For tests you also need
+`pytest` (xdist optional) and `Pillow` (the mods_button test). To build the DLLs: `pip install ziglang==0.16.0`.
+Paths in many scripts are hard coded to the author's machine (/home/will, /mnt/nvme); do not "fix" them in passing.
 
-## Code conventions
-- Python 3, standard library (numpy allowed in work/lahman/ratings.py only). No eval/exec, no shell=True.
-- Codecs round-trip byte for byte: encode(x, decode(x)) == x. Find c-tree members by name (ctree.parse), never by
-  member number; the number differs between files.
-- ASN/PYR cipher: seed is per file (ASN bytes 0x310-0x311, PYR bytes 0-1); never hardcode f5dc.
-- Tests: python3 -m pytest <dir> -q, run through `capped`. Tests that need game files skip when they are absent.
+## 3. Run locally (needs a game folder holding Assn/ and Stats/; never the live install)
+- News watcher plus bridge, one command: `python3 news/play.py --game GAME --data DATA --backup BACKUP --no-llm`
+- Watcher once, no model calls: `python3 news/watch.py --game GAME --data DATA --once --no-llm`
+- News pages (read only): `python3 news/server.py --data DATA --port FREEPORT`
+- Bridge alone: `python3 news/modbridge.py --game GAME --data DATA --backup BACKUP`
+- PIN gate: `python3 hosting/gate.py --pin-file F --secret-file S --port FREEPORT`
+- Build a release zip (OUT must be outside the repo): `tools/build_release.sh OUT PYTHON` where PYTHON has ziglang
+  installed (CI uses `python`; locally /mnt/nvme/bbpro98/zigenv/bin/python3).
+Never bind 8765, 8766, 8794, 8795, 8799 (live services). Check `ss -ltn` and pick a free high port.
+Builders never launch the game, Wine, Xvfb or the harness.
 
-## Landmines
-- Lahman builds: every active roster needs five pitchers. LINEUP.DLL fills a five-man rotation before the batting
-  order and borrows position players for it; fewer than eight fielders left means a 0 in the order and a crash at
-  LINEUP+0x116e0. Decode a game's setup with work/gamebk.py (game.in) to see it.
-- One-league templates (league record byte 2 = 0) show blank league and division fields. Writing text there makes
-  Association Data ask to save on every exit, which blocks a scripted sim.
-- Player card: the id cell is 10 stock and 14 with bbfix [widen]; read the live push at 6805cb0b, never hardcode.
-- Templates for shapes with a 14-team league stop on a Historical/Divisional schedule prompt while minting; copy the
-  files before answering it and the ASN has no s records, so the season never plays a game. build.py refuses such
-  a template. A season test must count games played after the sim, not just the absence of crashes.
-- Hosting: units started from a desktop user session inherit Wayland variables; unset them or x11vnc exits.
-- Scripted sims under Wine: a dialog the game raises mid-sim (the draft notice) is not painted until the window sees
-  pointer input, and at season end the 'Updating association data' box stays on screen even with input. Move the
-  pointer before every screenshot (seasonloop.look) and judge the season by games played, not by the screen.
-  The stale box also sits over the idle postseason schedule; postseason() answers it with Return after BUSY_STILL.
-- Never attach winedbg to a lane's running game to see where it waits: under wow64 the attach thread faults, the
-  crash handler takes the process, and the run is lost. Judge a stall by CPU ticks, Assn mtimes and bbtrace:
-  `python3 work/harness/lanestat.py --lane 2 --no-shot` prints all three and a verdict, read only.
-- bbtrace.log rotates to bbtrace.1.log (one old file kept) once it passes bbfix.ini `[trace] max_mb` (default 64,
-  0 = never). Anything that reads a whole run's trace (MOD counts, CRASH greps, collected logs) reads bbtrace.1.log
-  then bbtrace.log, or sets max_mb=0 for its run (re/hookab.sh does).
-- After the champion screen ('... capture the World Series') the game never offers the sim again and may sit on a
-  still screen with no notice. Reopening the association (ctrl+l, its row, Open) shows the season-complete notice
-  that starts the offseason (seasonloop.reopen); never sim or click around to wake it.
-- An in-game season step (seasonloop.season, a plan step that sims) must open the League Schedule (ctrl+k from
-  Association Data) before Action > Simulate...; from Association Data that click opens Reset Teams instead and the
-  run sims nothing. A full season takes 60 to 90 minutes: never run it through `capped` (its 1800 s timeout kills the sim
-  mid-write), use a plain `timeout 7800` in the background.
-- Lahman pitch ratings: never copy a donor's pitches verbatim; shift them to the fitted stuff (ratings.stuff). Sim ERA
-  moves about 0.1 per point of mean pitch rating, so one cloned ace arsenal gives a sub-1.00 ERA.
-- League Management, Team > Data: one click on Ownership turns a Computer team Human with no prompt (only Human to
-  Computer asks), and the change is written to the ASN. Never click it in a real association (MLBPA97 is Will's).
-  Claim Free Agent is greyed out unless the selected team is Human; claims go through when the league plays a day.
-- Hosted game sandbox: with no audio device the menu music fails at once and the shell retries tracks in a busy loop
-  that ignores clicks. hosting/run-game.sh gives the sandbox ALSA's null device; never drop that line.
-- Lahman builds: template-generated players (roster pads) come out with K 0 and CO near 28 and pitch to a 9+ ERA.
-  build.py rates every pad from a blank season (league-average ratings, donor arsenal) and pads pitchers to MIN_PIT
-  10 with GS 0.5 so real starters lead the rotation. Never copy a template player verbatim onto a roster.
-- League aging: stock rules age a career league (MLBPA97 28.5 in 1997 to 31.1 by 2007). Peak ratings never fall,
-  spring training pulls current back to peak, and retirement is age-only past 35. mods\aging.dll (src-latest/mods)
-  lowers peak with age and retires by age and ability. New players (FUN_68040da0) top the pool up to 55 per team,
-  at least 3 per team, so inflow only grows once retirements pull the pool under 55 per team. Any multi-season check
-  must measure league age and per-team roster and pitcher counts each offseason (seasonloop "seasons" prints
-  demographics per rollover; work/harness/runreport.py LOG tabulates them with the change per rollover), not just one
-  season's stats. The retirement curve (aging.c base, v3 2026-10-15) was fitted to hold the mean flat: from the same
-  30-team 2028 snapshot the old curve went 28.70, 28.80, 28.93 and the new one 28.70, 28.71, 28.65 (33 and over 246
-  vs 210 by 2030). A flat mean needs about 145 roster departures a season; count them before retuning.
-- In-game Mods menu: mods\modmenu.dll takes over the main menu's WWW SITE button (EZShell 0x6a006370) and talks to
-  news/modbridge.py only through files in <game>/Mods/spool (the hosted game's sandbox has no network). Requests are
-  written as .tmp then renamed to .req, claimed by renaming to .work, answered as .rsp; never read a half-written file.
-  Without the bridge running the menu times out with a message; it never blocks the game. work/patches/mods_button.py
-  relabels the button art (WEB*.BMP, originals kept as .orig).
-- Hosted bridge trust boundary: the game sandbox writes the whole Wine prefix, so any directory under it can be
-  swapped for a symlink between a check and a use. modbridge holds the spool by descriptor (open_dir walks from /
-  with O_NOFOLLOW) and does every list, read, rename, write and remove relative to it; never go back to path strings.
-- Windows a mod creates on the game's UI thread get skinned by ODASL.dll's WH_CBT hook, and its subclassed EDIT
-  answers WM_NCHITTEST with HTMENU, so text boxes never take focus. modmenu installs its own thread CBT hook first
-  and skips the chain for its classes. Top-level popups also need ShowWindow; without WS_VISIBLE they never map.
-- Harness lanes: BBLANE=1 (default, ~/.bbpro98_prefix, work_install, :99) and BBLANE=2 (/mnt/nvme/bbpro98/prefix2,
-  work_install2 linked as C:\Sierra\BBPRO_98_wk2, :97) run two plans at once; each lane only kills its own game
-  processes. The association list is sorted by label and its rows sit at y = 479 + 11n, so a plan's row depends on
-  which associations are installed in that lane. A wrong row opens another league; seasonloop.season stops with
-  wrong_association when another ASN's mtime moves and this one's game count does not.
-- Never rsync --delete into a lane's work copy or a game directory: it removes associations the plans rely on.
-  Never pkill by a pattern your own shell's command line contains; pgrep -af "pat[x]" and kill exact PIDs.
-- An association's season is not the year in its name: a career league keeps its name. The ASN 'a' record (key not
-  league.TEMPLATE_KEY) holds the season date as a u32 at payload offset 14, a PYR birth serial
-  (gamedata.association()['season_year']). It moves to the next April at each rollover.
-- Lahman database: build.py reads /mnt/nvme/bbpro98/lahman2025/lahman2025.sqlite (work/lahman/load_csv.py from the
-  SABR 2025 CSV release, Negro Leagues 1920 to 1948 included). The CSV edition broke some unique keys; load_csv keeps
-  those indexes without the constraint. After a new release, rerun work/lahman/teamnames.py.
-- ASN rosters (r.dat, 294 bytes): a 126-u16 id window at payload 42. Index 0..24 is the active roster, 25..54 the
-  reserves as (id, level) pairs, then two batting orders and two defensive alignments (eight ids each, 0xFFFF
-  between) and the pitching staff. Bench hitters appear only in the active slots. league._roster_of flattens the
-  window and the roster codec's write path re-sorts it, which wipes the lineups: change a roster by replacing ids in
-  place (news/aigm.apply_trade). The PYR has no team field; a player's team is the window that holds his id.
-- Ownership is the t record's deciphered byte 0x0c (1 Human, 0 Computer). Computer teams never trade with each other
-  (tr.dat has no team-to-team records); they only release and claim. news/aigm.py makes their preseason trades.
-- The in-game news reader (modmenu) shows a page title only in the window caption, which a Wine desktop with no
-  window manager never draws: bridge pages carry their own heading (modbridge._heading).
-- hosting/deploy.sh copies news/*.py plus an explicit list of data files (salary_table.json). A new runtime data
-  file under news/ must be added to that list, or the hosted feature silently does nothing.
-- Player development focus: news/modbridge.py writes <game>/Mods/focus.txt (pid birth kind assn) and aging.dll
-  re-reads it when it changes; at most 5 per association.
-- League News home (in game and on the web) lists the news watcher's data folders, not Assn/: an association shows
-  there only after a watcher pass. A scratch game needs `news/watch.py --game G --data D --once --no-llm` first, or its
-  association pages (and their Player development and Offseason trades links) cannot be reached from the menu.
-- Generated players: FUN_680719f0 has the generator fill a plaintext 192-byte PYR record at gen+0x10e, writes it with
-  FUN_680537e0 (call at 0x68071a34), then reads it back into the runtime player. A change to the runtime player after
-  the add is never saved; mod a new player's ratings by wrapping that write (mods\rookies.dll). Check a mod like this
-  on disk after a rollover (players not in the start PYR), not from its log.
-- Stats screens are told apart by the callback stored at gadget manager +0xc0, not by numbers: FUN_68038ef0 takes a screen
-  id and a dialog number (League Statistics 7 and 0x0f, Team Statistics 0x14 and 0x14), and the dialog number is the REQ
-  record number in SHELL.VOL. Match a click on the callback. docs/lanes/bbcard.md has the Team Statistics evidence.
-- A mod window opened from a game click (the card, the News reader) runs a modal loop that keeps the game ticking and
-  takes the button release: the gadget manager keeps the button held (BBShell 0x68043d20 sees buttons=1 every tick).
-  Record the press edge before opening, ignore ticks while the window is up, and post the missed WM_LBUTTONUP to the
-  window under the cursor (the screen's child window, not FPS_Desktop) after it closes (playercard.c h_event).
-- Stock lists ignore the mouse wheel. Scroll groups hang off gadget manager +0xbc; never set a group's top directly
-  (FUN_68043ae0) from a mod: the screen has not loaded those rows and the body draw jumps to a garbage address. Scroll
-  by pressing the group's arrow ids through the handler's own path (FUN_68072020 per group, then the mgr+0xc0
-  callback), as playercard.c apply_wheel does. Dialog gadget rects are dialog-relative, the handler's x and y are not.
-- Player card picture pages: a card tab is a 680x450 BMP the bridge draws with the game's own FNX fonts and BB0.PAL
-  (news/cardimg.py), written as r<ID>.bmp before the .rsp (header image=1, hot.N = x,y,w,h then a path). Without the
-  fonts the bridge falls back to the text card. Nothing may draw past x 668 (the body's right edge).
-- Career tab rows: real Lahman seasons before history.start_year(stem), then the seasons news/watch.py archived to
-  <data>/<STEM>/history/<year>.json at season end. A build seeds the real last season into the DAT as 'last season' and
-  the watcher archives it, so history.drop_seeded removes archived rows before the start year the stem names. The
-  DAT career line (scope 2) can count games played before archiving existed: an Other row holds the rest only when no
-  stat comes out negative (stock MLBPA files carry career lines that disagree with Lahman), else a note gives the games.
-- The watcher archives 'last season' (DAT scope 3) only for a year in <data>/<STEM>/history/seen.json, which it marks
-  when it sees a played game that season. Scope 3 can hold stock lines from years earlier (MLBPA97 in 2007 still had
-  1996's), so never archive it without that mark. Seeded or stale archives already written were moved aside, never
-  deleted (host /mnt/data/bbpro98/bogus-history-20261013).
-- Portraits (news/portrait.py) are generated from the player's inputs only. Never add real photos or likenesses.
-- Season-end texts ("the %0 %1 capture the %8") take the team nickname from the t record's 16 characters at 0x23,
-  which no stock or Lahman association fills; an empty argument prints BBShell's "<No Name>" string. Never write a
-  nickname there for Lahman builds (0x12 already holds the whole name, so it would read "Chicago Cubs Cubs");
-  mods\champtext.dll blanks the string instead (docs/lanes/bbnickname.md).
+## 4. Test
+- Everything (the real suites): `capped -t 1500 python3 -m pytest news work hosting re/formats -q -p no:cacheprovider -n 2`
+  It collects 1613 tests. Measured 2026-10-15: `news` plus `hosting` is 1310 passed in 40 s with `-n 2`.
+  Tests that need game files skip when the files are absent. `capped` caps RAM at 4G and kills a runaway.
+  Shared machine: at most `-n 2`. Other lanes may hold a lock; wrap a full run in
+  `flock /home/will/.local/state/burn-week/pytest.lock <cmd>` during burn week.
+- One file: `python3 -m pytest news/tests/test_aigm.py -q -p no:cacheprovider` (swap in any file under news/tests,
+  work/lahman/tests, work/harness/tests, hosting/tests).
+- Holdout suite (15 tests, about 6 s, offline, no game files, no Wine): `python3 -m pytest tests/holdout -q -p no:cacheprovider`
+  Do not edit tests/holdout to make a change pass. One test there is a strict xfail that pins a real bug
+  (SHA256SUMS.txt lists itself); when the bug is fixed the test fails until its marker is removed.
+- Codecs must round trip byte for byte: `encode(x, decode(x)) == x`. A claim about a game file format needs that test.
+
+## 5. Lint and typecheck
+There is no lint or typecheck config in the repo. The check that works: `ruff check --select F,E9 news hosting work/patches work/harness work/lahman`.
+Today it reports 39 errors on main (mostly unused imports; work/patches/bytepatch.py and liveguard.py import for
+side effect on purpose). Do not add more. No typechecker is used. `python3 -m py_compile <file>` is the minimum.
+
+## 6. Deploy and verify
+- Code: commit on a branch, merge to main in the integration checkout, `git push` to GitHub. Pushing does NOT deploy.
+- Hosted game and news: `HOST=user@host hosting/deploy.sh [--dry-run]` (rsync, ships changed code only, restarts a
+  unit only when its files changed; never `--delete`). Run it only when Will's workflow asks; builders use `--dry-run`.
+  A new runtime data file under news/ must be added to deploy.sh's explicit list or the feature silently does nothing.
+- Live local install: `work/patches/install_live.sh` (refuses while a game runs in the live prefix, or when
+  BBShell.dll is not pristine, or when a listed MODS file is missing) and `revert_live.sh`. Builders never run them.
+- Release: `git tag vX.Y.Z && git push --tags` makes CI (windows-release.yml) build the zip and open a DRAFT release.
+  Will publishes. windows-build.yml builds on pushes touching src-latest/, release/ or tools/build_release.sh.
+  Verify with `gh release list` (read only). The version string is only `git describe --tags --always --dirty`.
+- Verify hosted: `curl -s -o /dev/null -w '%{http_code}' https://bbpro98.ecbtx.com/` is 302 (gate). Anything else is news.
+
+## 7. Migrations
+No database. Lahman data is a sqlite file opened read only: `sqlite3.connect('file:...?mode=ro', uri=True)`.
+Game file formats are the schema: change a codec only with a byte for byte round trip test.
+
+## 8. Layout map
+- news/modbridge.py: spool bridge for the in-game Mods menu (trust boundary, descriptor based)
+- news/create.py: Create a Player (adds a record to an association's PYR and PYF; backup first, append only)
+- news/aigm.py: AI trades rewrite two roster windows inside an ASN; validate() checks the result
+- news/focus.py: focus.txt rules (parsed in C by aging.dll)
+- news/watch.py, server.py, gamedata.py, season.py, scout.py, recap.py: the news sidecar and its readers
+- hosting/gate.py: PIN gate (HMAC cookie, lockouts, safe_next); nginx.conf, systemd/, deploy.sh, run-game.sh
+- work/league.py, ctree.py, fpscipher.py: ASN/PYR/c-tree codecs and the per-file cipher (`league._forward(seed)`)
+- work/lahman/: build.py makes a playable association from a Lahman season; expand.py adds teams
+- work/patches/: install_live.sh, revert_live.sh, bytepatch.py (asserts old bytes), liveguard.py, mods_button.py
+- work/harness/: Wine driver (seasonloop.py, ingame.py, lanestat.py). Needs a running game; builders skip it
+- src-latest/: bbfix.c, bblaunch.c, bbmod.h, mods/*.c (aging, rookies, playercard, modmenu, champtext, steal)
+- tools/build_release.sh and release/: the zip recipe, README.txt, bbfix.ini.sample, release notes drafts
+- re/ and work/spec/: reverse engineering, Ghidra scripts, format specs. Read mostly, edit rarely
+- docs/lanes/*.md: per-lane evidence notes (bbcard, bbpost, bbnickname...)
+- tests/holdout/: the independent regression suite described in section 4
+
+## 9. Landmines already paid for (details in CLAUDE.md)
+- Stale update box: at season end and over the idle postseason schedule the "Updating association data" box stays
+  painted. Judge a run by games played and Assn mtimes, never by the screen.
+- Never attach winedbg (or any debugger) to a running game: the attach faults under wow64, the crash handler takes
+  the process and the lane's run is lost. Use `python3 work/harness/lanestat.py --lane 2 --no-shot` (read only).
+- Wine runs leave winedevice.exe on the system D-Bus and fill the quota, which killed the GNOME session twice. Any
+  wine run: `export DBUS_SYSTEM_BUS_ADDRESS=unix:path=/nonexistent` and finish with `wineserver -k`.
+- League aging: judge any aging or retirement change by league mean age and per-team roster and pitcher counts each
+  offseason, never one season's stats; the retirement curve (v3, 2026-10-15) holds the mean flat at about 145
+  departures a season (CLAUDE.md "League aging").
+- Never `pkill -f` a pattern your own command line contains; `pgrep -af "pat[x]"` and kill exact PIDs.
+- Cipher seeds are per file (ASN bytes 0x310-0x311, PYR bytes 0-1); never hardcode f5dc. Find c-tree members by
+  name (ctree.parse), never by member number.
+- Edit ASN rosters in place (news/aigm.apply_trade). The roster codec's write path re-sorts the window and wipes
+  the lineups. A PYR has no team field.
+- Lahman builds: every roster needs five pitchers (fewer leaves a 0 in the order and a crash at LINEUP+0x116e0);
+  never copy a donor's pitches verbatim; never copy a template player verbatim onto a roster.
+- One-league templates show blank league and division fields. Writing text there makes Association Data ask to
+  save on every exit, which blocks a scripted sim. Never write a team nickname at t record 0x23 for Lahman builds.
+- Never click Ownership in League Management on a real association (turns a Computer team Human with no prompt).
+- Bridge spool: hold the directory by descriptor (open_dir with O_NOFOLLOW) and work relative to it; never go
+  back to path strings. Requests go .tmp, .req, claimed as .work, answered .rsp. Never read a half written file.
+- A full harness season takes 60 to 90 minutes: never run it under `capped` (its timeout kills the sim mid write).
+- bbtrace.log rotates to bbtrace.1.log past `[trace] max_mb`; readers of a whole run read both files.
+- Hosted sandbox: hosting/run-game.sh gives ALSA's null device; never drop that line (menu music busy loop).
+- Version strings: never hand edit one; they come from `git describe`. A dirty tree ships as `-dirty`.
+- Build outputs (dll, exe, zip, pdb, lib) never go inside the repo tree. build_release.sh refuses an OUT in the repo.
+
+## 10. Never touch
+- The live install `~/.bbpro98_prefix/drive_c/Sierra/BBPRO_98` and any game file (*.ASN *.PYR *.PYF *.DAT *.VOL
+  *.dll *.exe), saves, templates, snapshots. Work copy: /mnt/nvme/bbpro98/work_install (a lane may be using it).
+- Another lane's worktree or running game. Other worktrees are under .claude/worktrees/; stay in your own.
+- /mnt/nvme/bbpro98/index (decompile dumps), Sierra patch notes, third party tools. None are committed.
+- Secrets: the Hive key file, hosting PIN and secret files (~/.config/bbpro98/), Cloudflare tokens. Never print, copy
+  or commit them. news/hive.py is the only repo code allowed to make a network call.
+- Real photos or likenesses (portraits are generated only). Real prefix of the hosted host. `rsync --delete` into any
+  game directory or lane work copy.
+- Published history: never rewrite tags v1.0.0 to v1.0.2 or force push main.
+- tests/holdout/: do not weaken or delete a test to get green. Fix the product or report the conflict.
