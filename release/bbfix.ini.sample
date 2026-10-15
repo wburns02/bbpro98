@@ -27,3 +27,7 @@ mode=pass
 [widen]
 ; 1 adds four stat columns to League Statistics. Needs the widened SHELL.VOL from work/patches; keep 0 without it.
 enable=0
+
+[trace]
+; max_mb: bbtrace.log rotates to bbtrace.1.log past this size, so two files at most use about twice this much; 0 = no limit.
+max_mb=64
