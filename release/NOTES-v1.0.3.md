@@ -25,6 +25,7 @@ its text; they do not replace it.
   games played."
 - Scouting reports use the season year for ages, not the calendar year.
 - Rookie class pages: at each rollover the watcher writes the new season's rookie class, linked from the Season box.
+  A watcher restarted between the rollover and the class being written still writes it.
 - A page per sim day: that day's Around the league column and its stories, linked from the feed.
 - Re-simming from an earlier day (a restored save) no longer leaves newer news behind: the watcher moves the newer
   stories aside and sets the last day back.
