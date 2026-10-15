@@ -131,3 +131,38 @@ def test_main_expands_a_tilde_in_game(tmp_path, capsys, monkeypatch):
     rc = play.main(["--game", "~/game", "--data", str(tmp_path / "d"), "--backup", str(tmp_path / "b"), "--dry-run"])
     out = capsys.readouterr().out
     assert rc == 0 and shlex.quote(str(tmp_path / "game")) in out and "~/game" not in out
+
+
+class _Child:
+    def __init__(self, pid):
+        self.pid, self.stopped = pid, []
+
+    def poll(self):
+        return 0 if self.stopped else None
+
+    def terminate(self):
+        self.stopped.append('terminate')
+
+    def kill(self):
+        self.stopped.append('kill')
+
+    def wait(self, timeout=None):
+        return 0
+
+
+def test_run_stops_a_started_child_when_the_next_one_cannot_start():
+    started = []
+
+    def popen(cmd):
+        if started:
+            raise OSError('cannot start bridge')
+        started.append(_Child(4242))
+        return started[0]
+
+    try:
+        play.run([['watch'], ['bridge']], popen=popen)
+    except OSError as e:
+        assert str(e) == 'cannot start bridge'
+    else:
+        raise AssertionError('run() swallowed the spawn failure')
+    assert started[0].stopped[:1] == ['terminate']

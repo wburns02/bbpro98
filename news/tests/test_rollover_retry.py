@@ -54,7 +54,7 @@ def test_a_rollover_with_no_failure_leaves_no_stage(tmp_path):
     assert w.rollover('A', str(out), NEW) == '1997'
     assert lines == ['A season 1997 news archived to past/1997']
     assert folders(out) == ['1997'] and holds_everything(out / 'past' / '1997')
-    assert json.loads((out / 'meta.json').read_text()) == {'season_year': 1997}
+    assert json.loads((out / 'meta.json').read_text())['season_year'] == 1998
     assert not any((out / name).exists() for name in ENTRIES if name != 'meta.json')
 
 
@@ -106,3 +106,13 @@ def test_no_rollover_creates_no_past_folder_and_no_stage(tmp_path):
     (out / 'meta.json').unlink()
     assert w.rollover('A', str(out), NEW) is None
     assert not (out / 'past').exists() and lines == []
+
+
+def test_a_pass_that_fails_after_the_rollover_never_archives_the_new_season_again(tmp_path):
+    out = season(tmp_path)
+    w, lines = rolling(tmp_path)
+    assert w.rollover('A', str(out), NEW) == '1997'
+    (out / 'recaps').mkdir()
+    (out / 'recaps' / 'new.json').write_text('{}')      # a 1998 story written before a later step raised
+    assert w.rollover('A', str(out), NEW) is None
+    assert folders(out) == ['1997'] and (out / 'recaps' / 'new.json').exists()

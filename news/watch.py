@@ -252,7 +252,8 @@ class Watcher:
         in the association, or the same year. An OSError part way propagates to scan(), which logs it; what was not
         moved stays, and the next pass tries again. The move is staged in the hidden <out>/past/.rolling-<year>/ and
         renamed to its final name only at the end, so a failed pass leaves no half season under a season name and the
-        next pass reuses the stage and finishes into the same folder."""
+        next pass reuses the stage and finishes into the same folder. Once archived, meta.json is rewritten at once with
+        the new year (no last day yet), so a pass that fails later never archives the new season a second time."""
         meta = read_json(os.path.join(out, 'meta.json'))
         stored, year = year_of(meta.get('season_year')) if meta else None, year_of(assoc.get('season_year'))
         if stored is None or year is None or stored == year:
@@ -268,6 +269,11 @@ class Watcher:
             n += 1
             name = '%d-%d' % (stored, n)
         os.replace(stage, os.path.join(out, 'past', name))
+        # The new season's meta.json now, not at the end of the pass: a later step that raises would otherwise leave
+        # the old year in place, and the next pass would archive again (past/<year>-2, with this season's stories).
+        write_json(os.path.join(out, 'meta.json'), {'assn': stem, 'name': assoc.get('name'), 'season_year': year,
+                                                    'updated': now_iso(), 'last_day': None, 'played': 0,
+                                                    'stories': 0})
         self.log('%s season %d news archived to past/%s' % (stem, stored, name))
         return name
 
