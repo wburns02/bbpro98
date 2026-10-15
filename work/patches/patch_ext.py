@@ -15,7 +15,8 @@ def chk(va,old,new):
     o=fo(va); assert bytes(d[o:o+len(old)])==bytes(old),(hex(va),d[o:o+len(old)].hex()); assert len(old)==len(new); d[o:o+len(new)]=new
 def call(at,tgt): return b'\xe8'+struct.pack('<i',tgt-(at+5))
 CAVE=0x68080480; TAB=0x68080540
-o=fo(CAVE); assert set(d[o:o+0x180])<= {0xcc,0}, 'cave not free'
+o=fo(CAVE); assert len(d)>=o+0x180, 'DLL too short for the cave'   # a short file would pass the free check empty
+assert set(d[o:o+0x180])<= {0xcc,0}, 'cave not free'
 # cave1: slot id lookup for c930
 c1=bytes([0x0f,0xbf,0xcd,                 # movsx ecx,bp
  0x83,0xf9,0x0a,                          # cmp ecx,10

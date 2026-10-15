@@ -95,3 +95,14 @@ def test_mods_button_replaces_the_art_and_keeps_a_whole_original(tmp_path):
 def test_patch_tools_never_open_their_target_for_writing(tool):
     src = (WORK / 'patches' / tool).read_text()
     assert "'wb')" not in src and '"wb")' not in src and '.save(web)' not in src and 'write_atomic' in src
+
+
+def test_patch_ext_refuses_a_dll_too_short_for_the_cave(tmp_path):
+    """An empty slice passes the cave-free check, so a short file must be refused by length first."""
+    dll = tmp_path / 'BBShell.dll'
+    dll.write_bytes(bytes(0x80480 - 0xc00))
+    before = dll.read_bytes()
+    r = subprocess.run([sys.executable, str(WORK / 'patches' / 'patch_ext.py'), str(dll)],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode != 0 and 'too short' in r.stderr, r.stderr
+    assert dll.read_bytes() == before
