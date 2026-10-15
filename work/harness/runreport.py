@@ -28,6 +28,8 @@ def summary(lines):
     seasons = []
     verdicts = {}
     postseason = {}
+    offseason = {}
+    sim = {}
     stops = 0
     first = None
     last = None
@@ -68,11 +70,21 @@ def summary(lines):
         p = obj.get('postseason')
         if isinstance(p, str):
             postseason[p] = postseason.get(p, 0) + 1
+        o = obj.get('offseason')
+        if isinstance(o, str):
+            offseason[o] = offseason.get(o, 0) + 1
+        if obj.get('sim') == 'refused':
+            sim['refused'] = sim.get('refused', 0) + 1
+        if 'draft' in obj:
+            name = 'draft ok' if obj['draft'] is True else 'draft failed'
+            sim[name] = sim.get(name, 0) + 1
+        if obj.get('assn_data') is True:
+            sim['assn_data'] = sim.get('assn_data', 0) + 1
         if 'stop' in obj:
             stops += 1
     return {'demographics': demo, 'champions': champions, 'seasons': seasons,
-            'verdicts': verdicts, 'postseason': postseason, 'stops': stops,
-            'first': first, 'last': last}
+            'verdicts': verdicts, 'postseason': postseason, 'offseason': offseason,
+            'sim': sim, 'stops': stops, 'first': first, 'last': last}
 
 
 ROW = '%9s  %8s  %8s  %5s  %4s  %4s  %4s  %7s  %7s'
@@ -137,6 +149,18 @@ def render(s):
         out.append('none')
     for k in sorted(s.get('postseason', {})):
         out.append('%s: %d' % (k, s['postseason'][k]))
+    out.append('')
+    out.append('Offseason')
+    if not s.get('offseason'):
+        out.append('none')
+    for k in sorted(s.get('offseason', {})):
+        out.append('%s: %d' % (k, s['offseason'][k]))
+    out.append('')
+    out.append('Sim')
+    if not s.get('sim'):
+        out.append('none')
+    for k in sorted(s.get('sim', {})):
+        out.append('%s: %d' % (k, s['sim'][k]))
     out.append('')
     out.append('Stops: %d' % s.get('stops', 0))
     out.append('Span: %s to %s' % (_cell(s.get('first')), _cell(s.get('last'))))

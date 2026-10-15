@@ -83,7 +83,50 @@ def test_summary_fields():
 def test_summary_empty():
     s = runreport.summary([])
     assert s == {'demographics': [], 'champions': [], 'seasons': [], 'verdicts': {},
-                 'postseason': {}, 'stops': 0, 'first': None, 'last': None}
+                 'postseason': {}, 'offseason': {}, 'sim': {}, 'stops': 0,
+                 'first': None, 'last': None}
+
+
+SKIRTS = '\n'.join([
+    '{"offseason": "fa", "t": "00:00:01"}',
+    '{"offseason": "fa", "t": "00:00:02"}',
+    '{"offseason": null, "t": "00:00:03"}',
+    '{"offseason": "waiting", "notice": 1, "sprung": false, "stray": false, "t": "00:00:04"}',
+    '{"sim": "refused", "t": "00:00:05"}',
+    '{"round": 3, "played": 80, "draft": true, "t": "00:00:06"}',
+    '{"round": 4, "played": 90, "draft": false, "t": "00:00:07"}',
+    '{"round": 5, "played": 95, "assn_data": true, "t": "00:00:08"}',
+    '{"sim": "other", "assn_data": false, "t": "00:00:09"}',
+])
+
+
+def test_offseason_counts_string_kinds_only():
+    s = runreport.summary(runreport.parse(SKIRTS))
+    assert s['offseason'] == {'fa': 2, 'waiting': 1}
+
+
+def test_sim_counts():
+    s = runreport.summary(runreport.parse(SKIRTS))
+    assert s['sim'] == {'refused': 1, 'draft ok': 1, 'draft failed': 1, 'assn_data': 1}
+
+
+def test_render_offseason_and_sim_between_postseason_and_stops():
+    r = runreport.render(runreport.summary(runreport.parse(SKIRTS)))
+    lines = r.splitlines()
+    assert lines[lines.index('Offseason') + 1:lines.index('Offseason') + 3] == ['fa: 2', 'waiting: 1']
+    assert lines[lines.index('Sim') + 1:lines.index('Sim') + 5] == [
+        'assn_data: 1', 'draft failed: 1', 'draft ok: 1', 'refused: 1']
+    assert lines.index('Postseason') < lines.index('Offseason') < lines.index('Sim') < lines.index('Stops: 0')
+
+
+def test_offseason_and_sim_empty():
+    s = runreport.summary(runreport.parse('{"t": "00:00:01"}'))
+    assert s['offseason'] == {}
+    assert s['sim'] == {}
+    r = runreport.render(s)
+    for head in ('Offseason', 'Sim'):
+        lines = r.splitlines()
+        assert lines[lines.index(head) + 1] == 'none'
 
 
 def test_render_rows():
@@ -136,7 +179,8 @@ def test_champion_error_row_renders_the_error():
 def test_empty_log_prints_none_under_every_section():
     r = runreport.render(runreport.summary(runreport.parse('== start 01:00:00')))
     lines = r.splitlines()
-    for head in ('Demographics', 'Champions', 'Seasons', 'Verdicts', 'Postseason'):
+    for head in ('Demographics', 'Champions', 'Seasons', 'Verdicts', 'Postseason',
+                 'Offseason', 'Sim'):
         assert lines[lines.index(head) + 1] == 'none'
     assert 'Stops: 0' in r and 'Span: - to -' in r
 
