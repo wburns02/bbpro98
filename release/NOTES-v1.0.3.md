@@ -71,6 +71,9 @@ its text; they do not replace it.
 - A season rollover no longer archives the new season a second time when a later step of the same pass fails, and a
   missing or malformed news-model reply no longer stops a watcher pass. play.py stops the watcher if the bridge
   cannot start.
+- install_live.sh and revert_live.sh check every file first and stage the copies before swapping them in, so a
+  failed copy leaves the old install whole; revert refuses while the live game runs. The Lahman CSV loader keeps text
+  cells as written and stops on a row with the wrong number of fields.
 
 ## Known limits
 
