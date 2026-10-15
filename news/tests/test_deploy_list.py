@@ -52,7 +52,7 @@ def missing_work(deploy_text, mods):
 
 def unmatched_data(deploy_text, names):
     """Tracked non-.py news files no news --include pattern matches."""
-    news_block = deploy_text[deploy_text.index('news=$(rsync'):deploy_text.index('news+=')]
+    news_block = deploy_text[deploy_text.index('news=$('):deploy_text.index('news+=')]
     patterns = re.findall(r"--include='([^']+)'", news_block)
     out = []
     for name in names:

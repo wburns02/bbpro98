@@ -29,11 +29,23 @@ while [ $# -gt 0 ]; do
 done
 [ -d "$SRC" ] || { echo "no install at $SRC" >&2; exit 1; }
 
+# sent <rsync args...>: run rsync and print only the lines for files actually sent ("<f"); timestamp-only and
+# directory lines are not changes. A failed rsync (host down, disk full, a path missing) stops the deploy: callers
+# use it as x=$(sent ...), which set -e turns into an exit, instead of reading "nothing changed".
+sent() {
+  local out rc=0
+  out=$(rsync --itemize-changes "${DRY[@]}" -e ssh "$@") || rc=$?
+  if [ $rc -ne 0 ]; then
+    echo "deploy: rsync failed (exit $rc) for ${*: -2:1} -> ${*: -1}" >&2
+    return $rc
+  fi
+  printf '%s\n' "$out" | grep '^<f' || true
+}
+
 changed=0
 push() {  # push <rsync args...>: run rsync, print what it changed, count code changes
   local out
-  # Only lines for files actually sent ("<f"); timestamp-only and directory lines are not changes.
-  out=$(rsync -rl --checksum --itemize-changes "${DRY[@]}" -e ssh "$@" | grep '^<f' || true)
+  out=$(sent -rl --checksum "$@")
   if [ -n "$out" ]; then
     echo "$out"
     changed=1
@@ -61,28 +73,28 @@ done
 
 # The landing page noVNC's web root serves at /: Play and League news. Static; nothing restarts for it.
 WEB=${WEB:-/mnt/data/bbpro98/web}
-rsync -l --checksum --itemize-changes "${DRY[@]}" -e ssh "$(cd "$(dirname "$0")" && pwd)/index.html" \
-  "$HOST:$WEB/index.html" | grep '^<f' || true
+web=$(sent -l --checksum "$(cd "$(dirname "$0")" && pwd)/index.html" "$HOST:$WEB/index.html")
+[ -n "$web" ] && echo "$web"
 
 # The news sidecar: its own code plus the read-only codecs it imports. Its units restart on a change; the game does not.
 NEWS=${NEWS:-/mnt/data/bbpro98/news}
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 [ ${#DRY[@]} -eq 0 ] && ssh "$HOST" "mkdir -p '$NEWS/news' '$NEWS/work' /mnt/data/bbpro98/news-data"
 # salary_table.json is the contracts pricing table watch.py loads; without it the payroll pages stay empty.
-news=$(rsync -rl --checksum --itemize-changes "${DRY[@]}" -e ssh --include='*.py' --include='salary_table.json' \
-         --exclude='*' "$REPO/news/" "$HOST:$NEWS/news/" | grep '^<f' || true)
-news+=${news:+$'\n'}$(rsync -rl --checksum --itemize-changes "${DRY[@]}" -e ssh \
-          "$REPO/work/ctree.py" "$REPO/work/hdecode.py" "$REPO/work/league.py" "$REPO/work/stats.py" \
-          "$HOST:$NEWS/work/" | grep '^<f' || true)
+news=$(sent -rl --checksum --include='*.py' --include='salary_table.json' --exclude='*' \
+         "$REPO/news/" "$HOST:$NEWS/news/")
+more=$(sent -rl --checksum "$REPO/work/ctree.py" "$REPO/work/hdecode.py" "$REPO/work/league.py" "$REPO/work/stats.py" \
+         "$HOST:$NEWS/work/")
+news+=${news:+${more:+$'\n'}}$more
 # The Lahman season builder, run by the in-game Mods menu's bridge (news/modbridge.py) for Build a Season.
 [ ${#DRY[@]} -eq 0 ] && ssh "$HOST" "mkdir -p '$NEWS/work/lahman'"
-news+=${news:+$'\n'}$(rsync -rl --checksum --itemize-changes "${DRY[@]}" -e ssh --include='*.py' --exclude='*' \
-          "$REPO/work/lahman/" "$HOST:$NEWS/work/lahman/" | grep '^<f' || true)
+more=$(sent -rl --checksum --include='*.py' --exclude='*' "$REPO/work/lahman/" "$HOST:$NEWS/work/lahman/")
+news+=${news:+${more:+$'\n'}}$more
 # Full team names for Lahman-built associations (work/lahman/teamnames.py writes it; it is not in the repo).
 NAMES=${NAMES:-/mnt/nvme/bbpro98/teamnames.json}
 if [ -f "$NAMES" ]; then
-  news+=${news:+$'\n'}$(rsync -l --checksum --itemize-changes "${DRY[@]}" -e ssh "$NAMES" \
-            "$HOST:/mnt/data/bbpro98/news-data/teamnames.json" | grep '^<f' || true)
+  more=$(sent -l --checksum "$NAMES" "$HOST:/mnt/data/bbpro98/news-data/teamnames.json")
+  news+=${news:+${more:+$'\n'}}$more
 fi
 if [ -n "$news" ]; then
   echo "$news"
@@ -98,9 +110,8 @@ fi
 GATE=${GATE:-/mnt/data/bbpro98/gate}
 [ ${#DRY[@]} -eq 0 ] && ssh "$HOST" "mkdir -p '$GATE/tmp'"
 HOSTING=$(cd "$(dirname "$0")" && pwd)
-g=$(rsync -l --checksum --itemize-changes "${DRY[@]}" -e ssh "$HOSTING/gate.py" "$HOST:$GATE/gate.py" | grep '^<f' || true)
-c=$(rsync -l --checksum --itemize-changes "${DRY[@]}" -e ssh "$HOSTING/nginx.conf" "$HOST:$GATE/nginx.conf" \
-      | grep '^<f' || true)
+g=$(sent -l --checksum "$HOSTING/gate.py" "$HOST:$GATE/gate.py")
+c=$(sent -l --checksum "$HOSTING/nginx.conf" "$HOST:$GATE/nginx.conf")
 [ -n "$g$c" ] && echo "$g${g:+${c:+$'\n'}}$c"
 if [ ${#DRY[@]} -eq 0 ]; then
   [ -n "$g" ] && ssh "$HOST" 'systemctl --user restart bbpro98-gate && systemctl --user is-active bbpro98-gate'
