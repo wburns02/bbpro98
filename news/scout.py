@@ -50,16 +50,17 @@ def _position_rank(pos):
     return POSITION_ORDER.index(pos) if pos in POSITION_ORDER else len(POSITION_ORDER)
 
 
-def roster(assoc, tid, players, year, births=None):
+def roster(assoc, tid, players, year, births=None, fog=None):
     """The team's whole roster for its page: {'hitters': [...], 'pitchers': [...]}. Hitters in position order, then name;
     pitchers best first by their control, strikeout and stamina grades, then name. Players not in `players` are
     skipped. births is {pid: birth serial} (focus.births): each row's 'arc' is arc.player_hint for it, or None without
-    births, for a player not in it, or when scouts cannot read the arc yet."""
+    births, for a player not in it, or when scouts cannot read the arc yet. fog is None (the ratings as they are) or a
+    callable fog(player, pid) -> player applied before grading."""
     hitters, pitchers = [], []
     for pid in season._players(assoc).get(tid, []):
         if pid not in players:
             continue
-        p = players[pid]
+        p = players[pid] if fog is None else fog(players[pid], pid)
         age = _age(p['born'], year)
         hint = arc.player_hint(pid, births.get(pid), year) if births is not None else None
         if p['pos'] == 'P':
@@ -92,11 +93,11 @@ def _last_pit(line):
             'sv': line['sv'], 'ip': recap.ip(line['outs'])}
 
 
-def team_facts(assoc, tid, players, last, year):
+def team_facts(assoc, tid, players, last, year, fog=None):
     """What a report may say about one team: its name and setting, the scale, and its best hitters and pitchers (by
-    grades, first HITTERS and PITCHERS), each with last season's line where it qualifies."""
+    grades, first HITTERS and PITCHERS), each with last season's line where it qualifies. fog is roster()'s."""
     t = assoc['teams'][tid]
-    rost = roster(assoc, tid, players, year)
+    rost = roster(assoc, tid, players, year, fog=fog)
     hitters = sorted(rost['hitters'], key=lambda h: (-(h['contact'] + h['power'] + h['speed']), h['name']))
     return {
         'association': assoc['name'], 'team': t['name'], 'manager': t['manager'], 'stadium': t['stadium'],
