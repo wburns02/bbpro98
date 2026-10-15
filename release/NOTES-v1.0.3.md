@@ -12,6 +12,11 @@ its text; they do not replace it.
   much at most. `max_mb=0` keeps the old unlimited behavior. Add the `[trace]` lines from bbfix.ini.sample to an
   existing bbfix.ini to change the limit; without them the default applies.
 
+- **mods\aging.dll**: veterans retire a little sooner (at 33 the yearly chance goes from 12 to 18 percent, at 35 from
+  22 to 35, still scaled by ability), so a career league no longer gets older every season. Over two 30-team
+  seasons the mean roster age went 28.70, 28.71, 28.65 where the old curve went 28.70, 28.80, 28.93. A `base=` line
+  in bbfix.ini's `[aging]` section still overrides the curve.
+
 ## League News (the Python watcher and its pages, from the source)
 
 - `python3 news/play.py` starts the watcher and the Mods menu's bridge with one command. Ctrl+C stops both; a

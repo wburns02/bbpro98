@@ -67,7 +67,9 @@ Public repo (MIT) of tools and research for FPS Baseball Pro '98. Python codecs 
   at least 3 per team, so inflow only grows once retirements pull the pool under 55 per team. Any multi-season check
   must measure league age and per-team roster and pitcher counts each offseason (seasonloop "seasons" prints
   demographics per rollover; work/harness/runreport.py LOG tabulates them with the change per rollover), not just one
-  season's stats.
+  season's stats. The retirement curve (aging.c base, v3 2026-10-15) was fitted to hold the mean flat: from the same
+  30-team 2028 snapshot the old curve went 28.70, 28.80, 28.93 and the new one 28.70, 28.71, 28.65 (33 and over 246
+  vs 210 by 2030). A flat mean needs about 145 roster departures a season; count them before retuning.
 - In-game Mods menu: mods\modmenu.dll takes over the main menu's WWW SITE button (EZShell 0x6a006370) and talks to
   news/modbridge.py only through files in <game>/Mods/spool (the hosted game's sandbox has no network). Requests are
   written as .tmp then renamed to .req, claimed by renaming to .work, answered as .rsp; never read a half-written file.
