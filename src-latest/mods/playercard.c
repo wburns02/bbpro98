@@ -117,7 +117,7 @@ static int load_card(const char *dat, unsigned pid, Card *c) {
     uint8_t *d = slurp(dat, &n);
     memset(c, 0, sizeof *c);
     if (!d) return -1;
-    int mb = data_member(d, n, "bt"), mp = data_member(d, n, "pt"), mf = data_member(d, n, "ft");
+    int mb = data_member(d, n, "bt"), mp = data_member(d, n, "pt"), mf = data_member(d, n, "ft");   /* -1 when absent */
     for (DWORD i = 0; i + 20 < n;) {
         if (d[i] == 0xfa && d[i + 1] == 0xfa) {
             uint32_t tot = rd32(d + i + 2), pl = rd32(d + i + 6);
@@ -127,9 +127,9 @@ static int load_card(const char *dat, unsigned pid, Card *c) {
                 if (p[0] != 0xff && pl >= 6 && pl <= 160 && !(pl & 1) && rd16(p + 2) == 2 && rd16(p + 4) == pid) {
                     unsigned scope = rd16(p);
                     Line *l = 0;
-                    if (scope < 4 && mem == mb) { l = &c->bat[scope]; c->has_bat[scope] = 1; }
-                    else if (scope < 4 && mem == mp) { l = &c->pit[scope]; c->has_pit[scope] = 1; }
-                    else if (scope == 2 && mem == mf) { l = &c->fld; c->has_fld = 1; }
+                    if (mb >= 0 && scope < 4 && mem == mb) { l = &c->bat[scope]; c->has_bat[scope] = 1; }
+                    else if (mp >= 0 && scope < 4 && mem == mp) { l = &c->pit[scope]; c->has_pit[scope] = 1; }
+                    else if (mf >= 0 && scope == 2 && mem == mf) { l = &c->fld; c->has_fld = 1; }
                     if (l) {
                         l->scope = (int)scope;
                         l->n = (int)(pl - 6) / 2;

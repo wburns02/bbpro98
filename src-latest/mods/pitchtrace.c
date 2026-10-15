@@ -102,6 +102,9 @@ static void BB_FASTCALL h_contact(void *view) {
     recs++;
 }
 
+/* a failed detour leaves the earlier ones in place: close the file so their handlers only pass through */
+static int fail(void) { CloseHandle(out); out = INVALID_HANDLE_VALUE; return 2; }
+
 BB_EXPORT int bbmod_init(const BBModAPI *a) {
     api = a;
     if (a->version != BBMOD_API_VERSION) return 1;
@@ -114,12 +117,12 @@ BB_EXPORT int bbmod_init(const BBModAPI *a) {
     if (out == INVALID_HANDLE_VALUE) { a->log("pitchtrace: cannot open %s", f); return 3; }
     static const uint8_t p_swing[6] = {0x55, 0x8b, 0xec, 0x83, 0xec, 0x3c};   /* push ebp / mov ebp,esp / sub esp,3c */
     static const uint8_t p_timing[6] = {0x55, 0x8b, 0xec, 0x83, 0xec, 0x14};  /* push ebp / mov ebp,esp / sub esp,14 */
-    if (a->detour("FastSim.dll", 0x6800e043, p_swing, 6, (void *)h_swing, (void **)&orig_swing) < 0) return 2;
-    if (a->detour("FastSim.dll", 0x6800da34, p_timing, 6, (void *)h_timing, (void **)&orig_timing) < 0) return 2;
+    if (a->detour("FastSim.dll", 0x6800e043, p_swing, 6, (void *)h_swing, (void **)&orig_swing) < 0) return fail();
+    if (a->detour("FastSim.dll", 0x6800da34, p_timing, 6, (void *)h_timing, (void **)&orig_timing) < 0) return fail();
     static const uint8_t p_big[9] = {0x55, 0x8b, 0xec, 0x81, 0xec, 0x88, 0x00, 0x00, 0x00};  /* sub esp,88 */
     static const uint8_t p_launch[9] = {0x55, 0x8b, 0xec, 0x81, 0xec, 0x14, 0x01, 0x00, 0x00};  /* sub esp,114 */
-    if (a->detour("FastSim.dll", 0x68053d2e, p_big, 9, (void *)h_contact, (void **)&orig_contact) < 0) return 2;
-    if (a->detour("FastSim.dll", 0x68054d4a, p_launch, 9, (void *)h_launch, (void **)&orig_launch) < 0) return 2;
+    if (a->detour("FastSim.dll", 0x68053d2e, p_big, 9, (void *)h_contact, (void **)&orig_contact) < 0) return fail();
+    if (a->detour("FastSim.dll", 0x68054d4a, p_launch, 9, (void *)h_launch, (void **)&orig_launch) < 0) return fail();
     a->log("pitchtrace: file=%s max=%ld registered", f, maxrecs);
     return 0;
 }
