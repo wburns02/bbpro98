@@ -470,12 +470,17 @@ def demographics(assn_dir, stem, year):
 def champion(asn_path):
     """The season's champion from the files on disk, for one run.log line. Never raises: a log line must not stop a
     run. No bracket yet ('season', 'champion': None); a bracket gives complete, runner_up and the World Series score
-    with the champion's wins first (the series order follows b['champion'])."""
+    with the champion's wins first (the series order follows b['champion']). A torn or odd file can raise more than
+    OSError and ValueError from the parsers (assn_row catches the same set), so the whole read is guarded."""
     try:
-        b = gamedata.postseason(asn_path)
-        a = gamedata.association(asn_path)
-    except (OSError, ValueError) as e:
-        return {'season': None, 'champion': None, 'error': str(e)}
+        return _champion(asn_path)
+    except (OSError, ValueError, KeyError, IndexError, TypeError, AttributeError, struct.error) as e:
+        return {'season': None, 'champion': None, 'error': str(e) or type(e).__name__}
+
+
+def _champion(asn_path):
+    b = gamedata.postseason(asn_path)
+    a = gamedata.association(asn_path)
     year = a['season_year']
 
     def name(tid):
