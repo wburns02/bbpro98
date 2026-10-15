@@ -32,6 +32,7 @@ import pathlib
 import re
 import shutil
 import sqlite3
+import struct
 import sys
 import time
 
@@ -218,7 +219,7 @@ class Watcher:
         try:
             d = gamedata.demographics(asn_path, pyr_path, pyf, year)
             value = {k: d[k] for k in ('year', 'rostered', 'mean_age', 'le25', 'ge33', 'fa')}
-        except (OSError, ValueError):
+        except (OSError, ValueError, KeyError, IndexError, TypeError, struct.error):  # a torn PYR, not just a missing one
             value = None
         self.league_cache[stem] = (key, value)
         return value
