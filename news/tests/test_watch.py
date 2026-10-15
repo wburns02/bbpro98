@@ -1,7 +1,9 @@
 """watch.Watcher over a fake game directory: gamedata's readers are replaced by dicts, so no game files are needed."""
+import datetime
 import hashlib
 import json
 import os
+import shutil
 import struct
 import sqlite3
 import sys
@@ -10,8 +12,12 @@ import time
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import feed      # noqa: E402
 import gamedata  # noqa: E402
 import hive      # noqa: E402
+import history   # noqa: E402
+import recap     # noqa: E402
+import records   # noqa: E402
 import watch     # noqa: E402
 
 TEAMS = {1: {'tid': 1, 'name': 'Ash', 'abbrev': 'ASH', 'city': 'X', 'stadium': 'Ash Park', 'manager': 'M',
@@ -31,6 +37,13 @@ def side(tid, runs, pid):
                          'sb': 0, 'pid': pid}],
             'pitching': [{'outs': 27, 'h': 1, 'r': 1, 'er': 1, 'bb': 0, 'so': 5, 'hr': 0, 'w': int(pid == 100),
                           'l': int(pid == 200), 'sv': 0, 'pid': pid}]}
+
+
+@pytest.fixture(autouse=True)
+def no_default_lahman(monkeypatch, tmp_path):
+    """No test finds the author's Lahman database through history.find_db: the record book would read it."""
+    monkeypatch.delenv('BBPRO98_LAHMAN', raising=False)
+    monkeypatch.setattr(history, 'DEFAULT_DB', str(tmp_path / 'no-default-lahman.sqlite'))
 
 
 @pytest.fixture
@@ -1283,3 +1296,290 @@ def test_main_once_still_raises_a_failed_pass(tmp_path, monkeypatch):
     monkeypatch.setattr(watch.Watcher, 'scan', lambda self: (_ for _ in ()).throw(FileNotFoundError('x')))
     with pytest.raises(FileNotFoundError):
         watch.main(['--game', str(tmp_path / 'g'), '--data', str(tmp_path / 'd'), '--no-llm', '--once'])
+
+
+# the record book (records.json) and the chase lines in the last day's column
+
+PLAYERS = {100: 'Al Winner', 200: 'Bo Loser'}
+BOOK_ASSOC = {'season_year': 1998, 'teams': TEAMS, 'games': [game(1, 0, 1, 2, 3, 1), game(2, 0, 2, 1, 0, 5),
+                                                             game(3, 0, 1, 2, 0, 0, played=False)]}
+
+
+def archive(data, year, bats=None, pits=None, teams=None):
+    history.archive_season(str(data), '30L1998', year, {'bat': bats or {}, 'pit': pits or {}}, teams)
+
+
+def book(data):
+    return json.loads((data / '30L1998' / 'records.json').read_text())
+
+
+def book_watcher(gd, data, log=None, db=None):
+    return watch.Watcher(str(gd), str(data), None, None, log=log or (lambda s: None), db=db)
+
+
+def piece(w, data, assoc=BOOK_ASSOC, pyr='x.PYR'):
+    w.records_piece(str(data / '30L1998'), assoc, PLAYERS, pyr)
+
+
+def full_lahman(path):
+    """A Lahman database with every column the bar, the career lookup and the real seasons read: Barry Bonds hit 40
+    home runs in 1997 (before the association's 1998 start) and Al Winner, born 1970-03-04, hit 12 in 1996."""
+    con = sqlite3.connect(path)
+    con.execute('CREATE TABLE people (playerID TEXT, nameFirst TEXT, nameLast TEXT, birthYear INT, birthMonth INT, '
+                'birthDay INT)')
+    con.execute('CREATE TABLE teams (yearID INT, teamID TEXT, teamIDBR TEXT)')
+    con.execute('CREATE TABLE batting (playerID, yearID, stint, teamID, G, AB, R, H, "2B", "3B", HR, RBI, SB, CS, BB, '
+                'SO, IBB, HBP, SH, SF, GIDP)')
+    con.execute('CREATE TABLE pitching (playerID, yearID, stint, teamID, W, L, G, GS, CG, SHO, SV, IPouts, H, ER, HR, '
+                'BB, SO, HBP, BFP, R)')
+    con.executemany('INSERT INTO people VALUES (?,?,?,?,?,?)', [('bondsba01', 'Barry', 'Bonds', 1964, 7, 24),
+                                                                 ('winnal01', 'Al', 'Winner', 1970, 3, 4)])
+    con.executemany('INSERT INTO batting (playerID, yearID, stint, teamID, G, AB, H, HR, RBI) VALUES (?,?,?,?,?,?,?,?,?)',
+                    [('bondsba01', 1997, 1, 'SFN', 150, 500, 130, 40, 100), ('winnal01', 1996, 1, 'ASH', 100, 400, 100, 12, 50),
+                     ('bondsba01', 1999, 1, 'SFN', 150, 500, 150, 99, 150)])        # 1999 is after the start year
+    con.commit()
+    con.close()
+    return str(path)
+
+
+def identities_of(monkeypatch):
+    monkeypatch.setattr(watch, 'identities', lambda pyr: {100: ('Al', 'Winner', datetime.date(1970, 3, 4)),
+                                                         200: ('Bo', 'Loser', datetime.date(1975, 5, 6))})
+
+
+def test_the_record_book_holds_the_tables_of_the_archived_seasons_and_a_simulated_bar(world):
+    gd, data, st = world
+    # a schedule of 3 games a team puts the average qualifier at 7 at bats: 10 qualify and 6 do not
+    archive(data, 1998, bats={100: {'g': 3, 'ab': 10, 'h': 5, 'hr': 4}, 1: {'hr': 99}}, teams={100: 'Ash'})
+    archive(data, 1999, bats={100: {'g': 3, 'ab': 6, 'h': 5, 'hr': 9}}, pits={200: {'g': 2, 'w': 3, 'outs': 30, 'er': 3}})
+    piece(book_watcher(gd, data), data)
+    doc = book(data)
+    assert doc['stem'] == '30L1998' and doc['through'] == 1999 and doc['years'] == [1998, 1999] and doc['updated']
+    assert doc['season']['hr'] == [{'pid': 100, 'name': 'Al Winner', 'year': 1999, 'value': 9, 'team': ''},
+                                   {'pid': 100, 'name': 'Al Winner', 'year': 1998, 'value': 4, 'team': 'Ash'}]
+    assert [(r['year'], r['value']) for r in doc['season']['avg']] == [(1998, 0.5)]
+    assert doc['season']['w'][0]['name'] == 'Bo Loser' and doc['season']['era'][0]['value'] == 27 * 3 / 30
+    assert doc['career']['hr'] == [{'pid': 100, 'name': 'Al Winner', 'value': 13, 'seasons': 2}]
+    assert doc['bar']['hr'] == {'value': 9, 'name': 'Al Winner', 'year': 1999, 'source': 'sim'}
+    assert {b['source'] for b in doc['bar'].values()} == {'sim'}
+
+
+def test_the_record_book_is_rebuilt_only_when_the_archived_years_change(world, monkeypatch):
+    gd, data, st = world
+    archive(data, 1998, bats={100: {'g': 3, 'hr': 4}})
+    built, read = [], []
+    document, read_archives = records.document, records.read_archives
+    monkeypatch.setattr(records, 'document', lambda *a, **k: built.append(1) or document(*a, **k))
+    monkeypatch.setattr(records, 'read_archives', lambda *a: read.append(1) or read_archives(*a))
+    w = book_watcher(gd, data)
+    piece(w, data)
+    first = (data / '30L1998' / 'records.json').read_text()
+    piece(w, data)
+    piece(book_watcher(gd, data), data)                                 # a new watcher (a restart) rebuilds nothing
+    assert (built, read) == ([1], [1]) and (data / '30L1998' / 'records.json').read_text() == first
+    archive(data, 2000, bats={100: {'g': 3, 'hr': 7}})
+    piece(w, data)
+    assert len(built) == 2 and book(data)['years'] == [1998, 2000] and book(data)['season']['hr'][0]['value'] == 7
+    (data / '30L1998' / 'records.json').write_text('{torn')              # an unreadable file is rebuilt
+    piece(w, data)
+    assert len(built) == 3 and book(data)['years'] == [1998, 2000]
+    (data / '30L1998' / 'records.json').write_text(json.dumps({'bar': {}}))     # so is one that lists no years
+    piece(w, data)
+    assert len(built) == 4
+
+
+def test_a_season_before_the_start_year_is_a_copy_of_a_real_one_and_counts_for_nothing(world):
+    gd, data, st = world
+    archive(data, 1997, bats={100: {'g': 3, 'hr': 50}})
+    archive(data, 1998, bats={100: {'g': 3, 'hr': 4}})
+    piece(book_watcher(gd, data), data)
+    doc = book(data)
+    assert doc['years'] == [1997, 1998] and doc['through'] == 1998
+    assert [r['year'] for r in doc['season']['hr']] == [1998] and doc['career']['hr'][0]['value'] == 4
+
+
+def test_the_bar_is_the_best_lahman_season_before_the_start_year_unless_a_simulated_one_beats_it(world, tmp_path,
+                                                                                               monkeypatch):
+    gd, data, st = world
+    identities_of(monkeypatch)
+    archive(data, 1998, bats={100: {'g': 3, 'ab': 500, 'h': 100, 'hr': 45}}, teams={100: 'Ash'})
+    piece(book_watcher(gd, data, db=full_lahman(tmp_path / 'lahman.sqlite')), data)
+    doc = book(data)
+    assert doc['bar']['hr'] == {'value': 45, 'name': 'Al Winner', 'year': 1998, 'source': 'sim'}
+    assert doc['bar']['h'] == {'value': 130, 'name': 'Barry Bonds', 'year': 1997, 'source': 'lahman'}
+    assert doc['career']['hr'] == [{'pid': 100, 'name': 'Al Winner', 'value': 57, 'seasons': 2}]     # 12 real + 45 sim
+    assert doc['career']['h'][0]['value'] == 100 + 100
+
+
+def test_without_a_db_argument_the_bar_comes_from_history_find_db(world, tmp_path, monkeypatch):
+    gd, data, st = world
+    identities_of(monkeypatch)
+    archive(data, 1998, bats={100: {'g': 3, 'hr': 4}})
+    monkeypatch.setenv('BBPRO98_LAHMAN', full_lahman(tmp_path / 'env.sqlite'))
+    piece(book_watcher(gd, data), data)
+    assert book(data)['bar']['hr'] == {'value': 40, 'name': 'Barry Bonds', 'year': 1997, 'source': 'lahman'}
+
+
+def test_a_missing_database_gives_a_simulated_bar_only(world, tmp_path):
+    gd, data, st = world
+    archive(data, 1998, bats={100: {'g': 3, 'hr': 4}})
+    piece(book_watcher(gd, data, db=str(tmp_path / 'missing.sqlite')), data)
+    assert {b['source'] for b in book(data)['bar'].values()} == {'sim'}
+
+
+def test_a_database_that_cannot_be_read_is_logged_and_the_book_is_simulated_only(world, tmp_path):
+    gd, data, st = world
+    bad = tmp_path / 'bad.sqlite'
+    bad.write_bytes(b'this is not a database' * 100)
+    archive(data, 1998, bats={100: {'g': 3, 'hr': 4}})
+    logs = []
+    piece(book_watcher(gd, data, logs.append, db=str(bad)), data)
+    assert any(line.startswith('30L1998 records: ') for line in logs)
+    assert book(data)['season']['hr'][0]['value'] == 4 and {b['source'] for b in book(data)['bar'].values()} == {'sim'}
+
+
+def test_before_any_season_is_archived_the_bar_alone_is_written_and_no_career_is_looked_up(world, tmp_path, monkeypatch):
+    gd, data, st = world
+    monkeypatch.setattr(watch, 'identities', lambda pyr: pytest.fail('careers wait for the first archived season'))
+    piece(book_watcher(gd, data, db=full_lahman(tmp_path / 'lahman.sqlite')), data)
+    doc = book(data)
+    assert doc['through'] == 0 and doc['years'] == [] and doc['bar']['hr']['value'] == 40
+    assert all(rows == [] for rows in doc['season'].values()) and all(rows == [] for rows in doc['career'].values())
+    assert {b['source'] for b in doc['bar'].values()} == {'lahman'}
+
+
+def test_nothing_is_written_without_a_pyr_or_with_nothing_to_say(world):
+    gd, data, st = world
+    archive(data, 1998, bats={100: {'g': 3, 'hr': 4}})
+    piece(book_watcher(gd, data), data, pyr=None)
+    assert not (data / '30L1998' / 'records.json').exists()
+    shutil.rmtree(data / '30L1998' / 'history')
+    piece(book_watcher(gd, data), data)                                 # no season archived and no database
+    assert not (data / '30L1998' / 'records.json').exists()
+
+
+def test_a_season_with_no_year_and_a_stem_without_a_start_reads_no_lahman(world, tmp_path):
+    gd, data, st = world
+    history.archive_season(str(data), 'CUSTOM', 2030, {'bat': {100: {'g': 3, 'hr': 4}}, 'pit': {}})
+    w = book_watcher(gd, data, db=full_lahman(tmp_path / 'lahman.sqlite'))
+    w.records_piece(str(data / 'CUSTOM'), {'teams': TEAMS, 'games': []}, PLAYERS, 'x.PYR')
+    assert {b['source'] for b in json.loads((data / 'CUSTOM' / 'records.json').read_text())['bar'].values()} == {'sim'}
+
+
+def test_a_failure_building_the_book_is_logged_and_does_not_stop_the_pass(world, monkeypatch):
+    gd, data, st = world
+    archive(data, 1998, bats={100: {'g': 3, 'hr': 4}})
+    monkeypatch.setattr(records, 'playable', lambda *a: (_ for _ in ()).throw(ValueError('boom')))
+    logs = []
+    piece(book_watcher(gd, data, logs.append), data)
+    assert logs == ['30L1998 records: ValueError: boom'] and not (data / '30L1998' / 'records.json').exists()
+
+
+def test_identities_reads_the_name_fields_and_birth_date_of_each_named_player(tmp_path, monkeypatch):
+    def rec(pid, first, last, serial):
+        b = bytearray(192)
+        b[0], b[1] = pid & 255, pid >> 8
+        b[30:30 + len(first)], b[47:47 + len(last)] = first.encode(), last.encode()
+        struct.pack_into('<I', b, gamedata.P_BORN, serial)
+        return bytes(b)
+    recs = [rec(100, 'Al', 'Winner', datetime.date(1970, 3, 4).toordinal() + 365), rec(50, 'Team', 'Row', 1),
+            rec(101, '', '', 1), rec(102, 'Bo', 'Loser', 0)]
+    monkeypatch.setattr(gamedata, '_records', lambda path: iter(recs))
+    assert watch.identities('x.PYR') == {100: ('Al', 'Winner', datetime.date(1970, 3, 4)), 102: ('Bo', 'Loser', None)}
+
+
+CHASE_BAR = {'hr': {'value': 6, 'name': 'Sam Slugger', 'year': 1999, 'source': 'sim'}}
+CHASE_LINES = {'bat': {100: {'ab': 10, 'h': 4, 'hr': 4, 'rbi': 3, 'sb': 0}}, 'pit': {}}
+CHASE_TEXT = 'Player 100 has 4 home runs, on pace for 6. The record is 6 (Sam Slugger, 1999).'
+
+
+@pytest.fixture
+def chase_world(world, monkeypatch):
+    """world with the stats file, a record book whose home run bar is 6 and 4 home runs for player 100 (no PYR, so no
+    name) after 2 of the 3 games a team plays: a pace of 6."""
+    gd, data, st = world
+    (gd / 'Stats' / '30L1998.DAT').write_bytes(b'dat')
+    monkeypatch.setattr(gamedata, 'season_lines', lambda path, scope=1: CHASE_LINES if scope == 1
+                        else {'bat': {}, 'pit': {}})
+    (data / '30L1998').mkdir(parents=True)
+    (data / '30L1998' / 'records.json').write_text(json.dumps({'bar': CHASE_BAR}))
+    return gd, data, st
+
+
+def feed_file(data, name):
+    return json.loads((data / '30L1998' / 'feed' / name).read_text())
+
+
+def test_only_the_last_days_column_carries_the_chase_lines_and_the_record_watch_paragraph(chase_world):
+    gd, data, st = chase_world
+    w = watch.Watcher(str(gd), str(data), None, None, log=lambda s: None)
+    w.scan()
+    first, last = feed_file(data, '04-01.json'), feed_file(data, '04-02.json')
+    assert 'chase' not in first['facts'] and 'Record watch' not in first['body']
+    assert last['facts']['chase'] == [CHASE_TEXT]
+    assert last['body'].splitlines()[-1] == 'Record watch: ' + CHASE_TEXT
+    assert recap.numbers_ok(last['headline'] + '\n' + last['body'], last['facts'])
+    # a third day is played, and a game of the first day changes so its column is written again: only day 3 chases
+    st['games'][2].update(played=True, away_runs=2, home_runs=1)
+    st['games'][0].update(away_runs=8)
+    w.seen.clear()
+    w.scan()
+    assert 'chase' not in feed_file(data, '04-01.json')['facts'] and feed_file(data, '04-01.json')['facts']['results'][0][
+        'away_runs'] == 8
+    assert feed_file(data, '04-03.json')['facts']['chase'] == []         # 3 of 3 games: pace 4, under 0.9 of the bar
+    assert 'Record watch' not in feed_file(data, '04-03.json')['body']
+
+
+def test_an_empty_chase_leaves_the_column_as_it_was(world, monkeypatch):
+    gd, data, st = world
+    (gd / 'Stats' / '30L1998.DAT').write_bytes(b'dat')
+    watch.Watcher(str(gd), str(data), None, None, log=lambda s: None).scan()
+    last = feed_file(data, '04-02.json')
+    assert last['facts']['chase'] == []                                   # no records.json: nothing to chase
+    plain = {k: v for k, v in last['facts'].items() if k != 'chase'}
+    assert last['body'] == feed.template(plain)['body'] and 'Record watch' not in last['body']
+
+
+def test_a_chase_given_to_columns_is_used_as_it_is(chase_world):
+    gd, data, st = chase_world
+    w = watch.Watcher(str(gd), str(data), None, None, log=lambda s: None)
+    assoc = gamedata.association('x')
+    w.columns(str(data / '30L1998'), assoc, PLAYERS, CHASE_LINES, None, ['Given line.'])
+    assert feed_file(data, '04-02.json')['facts']['chase'] == ['Given line.']
+    assert 'chase' not in feed_file(data, '04-01.json')['facts']
+
+
+def test_the_model_is_told_the_chase_lines_and_its_column_is_checked_against_them(chase_world):
+    gd, data, st = chase_world
+    budget = hive.Budget(str(data / 'budget.json'), 10, 10 ** 6)
+    asked = []
+
+    def complete(system, user, b):
+        b.reserve()
+        asked.append((system, user))
+        if CHASE_TEXT in user:
+            return 'Ash wins\n\nAsh won the game.\nRecord watch: ' + CHASE_TEXT, {'completion_tokens': 10}
+        return 'Ash wins\n\nAsh won the game.', {'completion_tokens': 10}
+
+    watch.Watcher(str(gd), str(data), budget, complete, log=lambda s: None).scan()
+    last = feed_file(data, '04-02.json')
+    assert last['source'] == 'glm' and last['body'].endswith('Record watch: ' + CHASE_TEXT)
+    system, user = [a for a in asked if CHASE_TEXT in a[1]][0]
+    assert system == feed.SYSTEM + feed.CHASE_RULE
+    assert [a[0] for a in asked if a[0].startswith(feed.SYSTEM) and CHASE_TEXT not in a[1]] == [feed.SYSTEM]
+
+
+def test_a_full_pass_builds_the_book_that_the_next_days_column_chases(season, monkeypatch, tmp_path):
+    gd, data, st = season
+    monkeypatch.setattr(watch, 'identities', lambda pyr: {})
+    archive(data, 1998, bats={100: {'g': 3, 'ab': 500, 'h': 100, 'hr': 6}}, teams={100: 'Ash'})
+    w = watch.Watcher(str(gd), str(data), None, None, log=lambda s: None)
+    league_scan(w, gd, st)
+    assert book(data)['bar']['hr'] == {'value': 6, 'name': 'Al Winner', 'year': 1998, 'source': 'sim'}
+    assert not feed_file(data, '04-02.json')['facts']['chase']           # the book did not exist when the column was made
+    shutil.rmtree(data / '30L1998' / 'feed')
+    monkeypatch.setattr(gamedata, 'season_lines', lambda path, scope=1: st['career'] if scope == 2 else
+                        (CHASE_LINES if scope == 1 else {'bat': {}, 'pit': {}}))
+    league_scan(w, gd, st)
+    assert feed_file(data, '04-02.json')['facts']['chase'] == [
+        'Al Winner has 4 home runs, on pace for 6. The record is 6 (Al Winner, 1998).']

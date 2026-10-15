@@ -1875,3 +1875,191 @@ def test_a_replay_file_with_nan_games_played_still_renders(scorecard):
     write(scorecard.root / '30L1998' / 'replay.json', replay_file(played=float('nan'), scheduled=float('inf')))
     status, _, body = scorecard.get('/news/30L1998/replay')
     assert status == 200 and 'After ' not in body.decode()
+
+
+# the record book page
+
+def season_row(name, year, value, team='Seattle Mariners', pid=100):
+    return {'pid': pid, 'name': name, 'year': year, 'value': value, 'team': team}
+
+
+def records_file(**over):
+    doc = {
+        'stem': '30L1998', 'updated': '2031-10-01T12:00:00', 'through': 2031, 'years': [2030, 2031],
+        'season': {'hr': [season_row('Ken Griffey', 2030, 61), season_row('Larry Walker', 2031, 55, 'Colorado Rockies')],
+                   'avg': [season_row('Tony Gwynn', 2031, 0.3948)],
+                   'era': [season_row('Greg Maddux', 2030, 1.0123, 'Atlanta Braves')], 'w': []},
+        'career': {'hr': [{'pid': 100, 'name': 'Ken Griffey', 'value': 612, 'seasons': 22}],
+                   'avg': [{'pid': 101, 'name': 'Tony Gwynn', 'value': 0.338, 'seasons': 20}],
+                   'era': [{'pid': 102, 'name': 'Greg Maddux', 'value': 2.5, 'seasons': 23}]},
+        'bar': {'hr': {'value': 73, 'name': 'Barry Bonds', 'year': 2001, 'source': 'lahman'},
+                'avg': {'value': 0.4397, 'name': 'Hugh Duffy', 'year': 1894, 'source': 'lahman'},
+                'era': {'value': 1.0123, 'name': 'Greg Maddux', 'year': 2030, 'source': 'sim'}},
+    }
+    doc.update(over)
+    return doc
+
+
+@pytest.fixture
+def book(seeded):
+    write(seeded.root / '30L1998' / 'records.json', records_file())
+    return seeded
+
+
+def test_record_book_has_the_two_sections_a_table_per_stat_and_the_bar(book):
+    status, headers, raw = book.get('/news/30L1998/records')
+    html = raw.decode()
+    assert status == 200 and headers['content-type'] == HTML
+    assert_secure(headers, raw)
+    assert '<h1>Record book</h1><p class="through">through 2031</p>' in html
+    assert html.index('<h2>Single season</h2>') < html.index('<h2>Career</h2>') < html.index('<h2>The bar</h2>')
+    assert ('<caption>Home runs</caption><thead><tr><th>Rank</th><th class="t">Player</th><th>Year</th><th>Value</th>'
+            '<th class="t">Team</th></tr></thead><tbody>'
+            '<tr><td>1</td><td class="t">Ken Griffey</td><td>2030</td><td>61</td><td class="t">Seattle Mariners</td></tr>'
+            '<tr><td>2</td><td class="t">Larry Walker</td><td>2031</td><td>55</td>'
+            '<td class="t">Colorado Rockies</td></tr>') in html
+    assert '<td class="t">Tony Gwynn</td><td>2031</td><td>.395</td>' in html
+    assert '<td class="t">Greg Maddux</td><td>2030</td><td>1.01</td>' in html
+    career = html[html.index('<h2>Career</h2>'):html.index('<h2>The bar</h2>')]
+    assert ('<caption>Home runs</caption><thead><tr><th>Rank</th><th class="t">Player</th><th>Seasons</th>'
+            '<th>Value</th></tr></thead><tbody><tr><td>1</td><td class="t">Ken Griffey</td><td>22</td><td>612</td></tr>'
+            ) in career
+    assert '<td>.338</td>' in career and '<td>2.50</td>' in career
+    assert 'Team' not in career and '<caption>Wins</caption>' not in html       # a stat with no rows has no table
+    bar = html[html.index('<h2>The bar</h2>'):]
+    assert ('<th class="t">Stat</th><th>Value</th><th class="t">Holder</th><th>Year</th><th class="t">Source</th>'
+            '</tr></thead><tbody>'
+            '<tr><td class="t">Home runs</td><td>73</td><td class="t">Barry Bonds</td><td>2001</td>'
+            '<td class="t">real</td></tr>'
+            '<tr><td class="t">Batting average</td><td>.440</td><td class="t">Hugh Duffy</td><td>1894</td>'
+            '<td class="t">real</td></tr>'
+            '<tr><td class="t">ERA</td><td>1.01</td><td class="t">Greg Maddux</td><td>2030</td>'
+            '<td class="t">this league</td></tr>') in bar
+    assert 'The record book fills in' not in html
+
+
+def test_record_tables_show_ten_rows_at_most(book):
+    rows = [season_row('Player %02d' % i, 2030, 100 - i) for i in range(14)]
+    write(book.root / '30L1998' / 'records.json', records_file(season={'hr': rows}, career={}))
+    html = book.get('/news/30L1998/records')[2].decode()
+    assert 'Player 09' in html and 'Player 10' not in html
+    assert '<h2>Career</h2><p class="empty">None yet.</p>' in html
+
+
+def test_record_book_without_a_file_or_tables_says_it_fills_in_later(seeded):
+    empty = 'The record book fills in after the first simulated season.'
+    html = seeded.get('/news/30L1998/records')[2].decode()
+    assert seeded.get('/news/30L1998/records')[0] == 200
+    assert '<p class="empty">%s</p>' % empty in html
+    assert '<table' not in html and '<h2>Single season</h2>' not in html and '<h2>The bar</h2>' not in html
+    write(seeded.root / '30L1998' / 'records.json', records_file(
+        through=0, years=[], season={'hr': []}, career={'hr': []},
+        bar={'hr': {'value': 73, 'name': 'Barry Bonds', 'year': 2001, 'source': 'lahman'}}))
+    html = seeded.get('/news/30L1998/records')[2].decode()
+    assert empty in html and 'through' not in html.split('<h1>')[1].split('</header>')[0]
+    assert '<h2>Single season</h2>' not in html and '<td class="t">Barry Bonds</td>' in html
+
+
+def test_the_chase_box_lists_the_newest_columns_lines(book):
+    lines = ['Ken Griffey has 40 home runs, on pace for 80. The record is 73 (Barry Bonds, 2001).',
+             'Larry Walker has 100 RBI, on pace for 200. The record is 191 (Hack Wilson, 1930).']
+    write(book.root / '30L1998' / 'feed' / '04-15.json', dict(feed(4, 15, 'Yankees hold the East'),
+                                                              facts={'chase': lines}))
+    write(book.root / '30L1998' / 'feed' / '04-02.json', dict(feed(4, 2, 'Old column'),
+                                                              facts={'chase': ['Old line 1.']}))
+    html = book.get('/news/30L1998/records')[2].decode()
+    box = '<section><h2>Chase</h2><ul class="moves"><li>%s</li><li>%s</li></ul></section>' % tuple(lines)
+    assert box in html and 'Old line' not in html
+    assert html.index('<h2>Chase</h2>') < html.index('<h2>Single season</h2>')
+    write(book.root / '30L1998' / 'feed' / '10-02.json', dict(feed(10, 2, 'Postseason'), facts={'results': []}))
+    assert '<h2>Chase</h2>' not in book.get('/news/30L1998/records')[2].decode()       # the newest column has none
+
+
+@pytest.mark.parametrize('facts', [{}, {'chase': []}, {'chase': 'text'}, {'chase': [1, None, {}]}, {'chase': None}])
+def test_no_chase_box_without_chase_lines(book, facts):
+    write(book.root / '30L1998' / 'feed' / '04-15.json', dict(feed(4, 15, 'Yankees hold the East'), facts=facts))
+    assert '<h2>Chase</h2>' not in book.get('/news/30L1998/records')[2].decode()
+
+
+def test_the_chase_box_shows_in_the_empty_state_too(seeded):
+    write(seeded.root / '30L1998' / 'feed' / '04-15.json', dict(feed(4, 15, 'x'), facts={'chase': ['Line one.']}))
+    html = seeded.get('/news/30L1998/records')[2].decode()
+    assert '<li>Line one.</li>' in html and 'The record book fills in' in html
+
+
+def test_record_book_values_are_escaped(book):
+    evil = '<script>alert(1)</script>'
+    write(book.root / '30L1998' / 'records.json', records_file(
+        season={'hr': [season_row(evil, 2030, 61, team='<b>Team</b> & "Co"')]},
+        career={'hr': [{'name': evil, 'value': 1, 'seasons': '<i>9</i>'}]},
+        bar={'hr': {'value': 73, 'name': evil, 'year': '<u>2001</u>', 'source': '<s>x</s>'}}))
+    write(book.root / '30L1998' / 'feed' / '04-15.json', dict(feed(4, 15, 'x'), facts={'chase': [evil]}))
+    write(book.root / '30L1998' / 'meta.json', meta(name='<em>League</em>'))
+    html = book.get('/news/30L1998/records')[2].decode()
+    for raw in ('<script', '<b>', '<i>', '<u>', '<s>', '<em>'):
+        assert raw not in html
+    assert html.count('&lt;script&gt;alert(1)&lt;/script&gt;') == 4
+    assert '&lt;b&gt;Team&lt;/b&gt; &amp; &quot;Co&quot;' in html and '&lt;em&gt;League&lt;/em&gt;' in html
+
+
+@pytest.mark.parametrize('doc', ['{torn', '[]', '"text"', '{"season": 5, "career": [], "bar": "x", "through": "9"}',
+                                 '{"season": {"hr": [1, null, "x", {"value": null}]}, "career": {"hr": 7}}'])
+def test_a_damaged_records_file_still_renders_a_page(book, doc):
+    write(book.root / '30L1998' / 'records.json', doc)
+    status, _, body = book.get('/news/30L1998/records')
+    assert status == 200 and b'Record book' in body
+
+
+def test_record_book_numbers_a_page_cannot_print_are_left_blank(book):
+    write(book.root / '30L1998' / 'records.json', records_file(
+        season={'avg': [season_row('A', 2030, float('nan')), season_row('B', 2030, 10 ** 400)]}, career={}, bar={}))
+    status, _, body = book.get('/news/30L1998/records')
+    assert status == 200 and b'<td class="t">A</td><td>2030</td><td></td>' in body
+
+
+@pytest.mark.parametrize('path', [
+    '/news/30L1998/records/', '/news/30L1998/records/x', '/news/30L1998/Records', '/news/30L1998/record',
+    '/news/30L1998/past/1997/records', '/news/NOPE/records', '/news/30L1998%0A/records', '/news/../records',
+])
+def test_other_record_book_shapes_are_404(book, path):
+    write(book.root / '30L1998' / 'past' / '1997' / 'meta.json', meta())
+    write(book.root / '30L1998' / 'past' / '1997' / 'records.json', records_file())
+    assert book.get(path)[0] == 404
+
+
+def test_record_book_of_an_association_without_meta_is_404_even_with_the_file(site):
+    write(site.root / 'GHOST' / 'records.json', records_file())
+    assert site.get('/news/GHOST/records')[0] == 404
+    seed(site.root)
+    (site.root / '30L1998' / 'meta.json').write_text('{torn', encoding='utf-8')
+    assert site.get('/news/30L1998/records')[0] == 404
+
+
+def test_head_on_the_record_book_has_the_get_length(book):
+    status, headers, body = book.get('/news/30L1998/records', method='HEAD')
+    got = book.get('/news/30L1998/records')[1]['content-length']
+    assert status == 200 and body == b'' and headers['content-length'] == got
+
+
+def test_the_season_box_links_the_record_book_when_the_file_exists(season):
+    html = season.get('/news/30L1998/')[2].decode()
+    assert 'Record book' not in html
+    write(season.root / '30L1998' / 'records.json', records_file())
+    html = season.get('/news/30L1998/')[2].decode()
+    assert ('<section class="season"><h2>Season</h2><ul>'
+            '<li><a href="/news/30L1998/awards">Season awards</a></li>'
+            '<li><a href="/news/30L1998/preview">Season preview</a></li>'
+            '<li><a href="/news/30L1998/records">Record book</a></li></ul></section>') in html
+
+
+def test_the_record_book_link_alone_makes_the_season_box(seeded):
+    write(seeded.root / '30L1998' / 'records.json', records_file())
+    html = seeded.get('/news/30L1998/')[2].decode()
+    assert '<section class="season"><h2>Season</h2><ul><li><a href="/news/30L1998/records">Record book</a></li></ul>' in html
+    assert 'Record book' not in seeded.get('/news/MLBPA97/')[2].decode()
+
+
+def test_a_past_seasons_front_page_has_no_record_book_link(book):
+    write(book.root / '30L1998' / 'past' / '1997' / 'meta.json', meta())
+    write(book.root / '30L1998' / 'past' / '1997' / 'records.json', records_file())
+    assert 'Record book' not in book.get('/news/30L1998/past/1997/')[2].decode()

@@ -306,3 +306,51 @@ def test_write_retries_a_hive_error_then_takes_the_story():
     c = Scripted(hive.HiveError('timeout'), GOOD)
     assert feed.write(f, BUDGET, c)['source'] == 'glm'
     assert len(c.calls) == 2
+
+
+CHASE = ['Bo Lee has 40 home runs, on pace for 80. The record is 73 (Barry Bonds, 2001).',
+         'Ann Hart has 130 hits, on pace for 260. The record is 262 (Ichiro Suzuki, 2004).']
+
+
+def test_day_facts_carries_the_chase_lines_only_when_given_some_list():
+    plain = feed.day_facts(day_assoc(), DAY_SEASON, DAY_NAMES, 4, 9)
+    assert 'chase' not in plain
+    assert feed.day_facts(day_assoc(), DAY_SEASON, DAY_NAMES, 4, 9, chase=[]) == dict(plain, chase=[])
+    got = feed.day_facts(day_assoc(), DAY_SEASON, DAY_NAMES, 4, 9, CHASE)
+    assert got == dict(plain, chase=CHASE) and got['chase'] is not CHASE
+
+
+def test_template_adds_a_final_record_watch_paragraph_and_passes_numbers_ok():
+    f = feed.day_facts(day_assoc(), DAY_SEASON, DAY_NAMES, 4, 9, CHASE)
+    t = feed.template(f)
+    assert t['body'] == (feed.template(feed.day_facts(day_assoc(), DAY_SEASON, DAY_NAMES, 4, 9))['body'] + '\n'
+                         'Record watch: ' + ' '.join(CHASE))
+    assert t['body'].splitlines()[-1].startswith('Record watch: Bo Lee has 40 home runs')
+    assert recap.numbers_ok(t['headline'] + '\n' + t['body'], f)
+    off = feed.template(feed.day_facts(day_assoc(), DAY_SEASON, DAY_NAMES, 4, 3, CHASE))
+    assert off['body'].startswith('No games were played on April 3.') and 'Record watch: ' in off['body']
+
+
+def test_an_empty_chase_leaves_the_template_and_the_prompt_unchanged():
+    plain = feed.day_facts(day_assoc(), DAY_SEASON, DAY_NAMES, 4, 9)
+    empty = feed.day_facts(day_assoc(), DAY_SEASON, DAY_NAMES, 4, 9, chase=[])
+    assert feed.template(empty) == feed.template(plain)
+    assert 'Record watch' not in feed.template(empty)['body']
+    assert feed.prompt(empty)[0] == feed.prompt(plain)[0] == feed.SYSTEM
+
+
+def test_prompt_with_chase_lines_asks_for_the_record_watch_paragraph_and_shows_them():
+    f = feed.day_facts(day_assoc(), DAY_SEASON, DAY_NAMES, 4, 9, CHASE)
+    system, user = feed.prompt(f)
+    assert system == feed.SYSTEM + feed.CHASE_RULE and 'Record watch: ' in system
+    assert user == 'Facts:\n' + json.dumps(f, indent=1, sort_keys=True) and CHASE[0] in user
+
+
+def test_write_checks_the_whole_column_against_the_chase_facts():
+    f = feed.day_facts(day_assoc(), DAY_SEASON, DAY_NAMES, 4, 9, CHASE)
+    good = GOOD + '\nRecord watch: ' + CHASE[0]
+    out = feed.write(f, BUDGET, Scripted(good))
+    assert out['source'] == 'glm' and out['body'].endswith('The record is 73 (Barry Bonds, 2001).')
+    bad = GOOD + '\nRecord watch: ' + CHASE[0].replace('80', '81')         # 81 is in no fact
+    fallback = dict(feed.template(f), source='template')
+    assert feed.write(f, BUDGET, Scripted(bad, bad)) == dict(fallback, reason='numbers')
