@@ -96,14 +96,12 @@ while day < N:
         shot('stuck_draft'); break
     print(f'day {day+1}: done={ok}', flush=True)
     if ok and os.environ.get('SNAP_DAYS') == '1':   # per-day game.bki/bko + the box-score files written that day
-        subprocess.run(['bash', '-c', 'W=/mnt/nvme/bbpro98/work_install; D="$O/day$N"; mkdir -p "$D"; '
-                        'cp -a "$W/game.bki" "$W/game.bko" "$D/"; find "$W/Stats" -maxdepth 1 -newer "$O/.mark" '
-                        '-iname "MLBPA97.[HN]*" -exec cp -a {} "$D/" \\;; touch "$O/.mark"'],
-                       env={**os.environ, 'O': OUT, 'N': str(day + 1)})   # OUT goes in as data, never as shell source
+        subprocess.run(['bash', '-c', f'W=/mnt/nvme/bbpro98/work_install; D="{OUT}/day{day+1}"; mkdir -p "$D"; '
+                        f'cp -a "$W/game.bki" "$W/game.bko" "$D/"; find "$W/Stats" -maxdepth 1 -newer "{OUT}/.mark" '
+                        f'-iname "MLBPA97.[HN]*" -exec cp -a {{}} "$D/" \\;; touch "{OUT}/.mark"'])
     if not ok:
         shot(f'stuck_day{day+1}'); break
     day += 1
 # collect
-subprocess.run(['bash', '-c', 'W=/mnt/nvme/bbpro98/work_install; cp -a "$W/Assn" "$W/Stats" "$W"/bbtrace*.log "$O/" 2>/dev/null; true'],
-               env={**os.environ, 'O': OUT})
+subprocess.run(['bash', '-c', f'W=/mnt/nvme/bbpro98/work_install; cp -a "$W/Assn" "$W/Stats" "$W"/bbtrace.log "{OUT}/" 2>/dev/null; true'])
 print('collected to', OUT)

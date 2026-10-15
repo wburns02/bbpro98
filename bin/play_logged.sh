@@ -19,10 +19,9 @@ ls -t /mnt/nvme/bbpro98/logs | tail -n +31 | while read o; do rm -rf "/mnt/nvme/
       echo "$(date +%T.%N) $w $(xdotool getwindowgeometry $w 2>&1 | tr '\n' ' ') $(xprop -id $w _NET_WM_STATE 2>&1 | cut -c1-120) focus=$(xdotool getwindowfocus 2>/dev/null)"
     done; sleep 0.5; done ) > "$D/windows.log" 2>&1 &
 MON=$!
-trap 'kill $MON 2>/dev/null' EXIT INT TERM
 cd "$G"; wine bblaunch.exe > "$D/wine.log" 2>&1; RC=$?
 kill $MON 2>/dev/null
 wineserver -k 2>/dev/null
 { echo "exit rc=$RC at $(date +%T.%N)"; journalctl --since "-3min" --no-pager 2>/dev/null | grep -iE "wine|Baseball|segfault|mutter|xwayland" | tail -20; } > "$D/exit.txt" 2>&1
-cp "$G"/bbtrace.log "$G"/bbtrace.1.log "$D/" 2>/dev/null   # bbtrace.1.log: the lines before the last rotation
+cp "$G/bbtrace.log" "$D/bbtrace.log" 2>/dev/null
 echo "$D"

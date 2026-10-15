@@ -21,15 +21,19 @@ rm -rf "$OUT"; mkdir -p "$OUT"
 for d in Assn Stats; do find "$W/$d" -mindepth 1 -delete; cp -a "$BASE/$d/." "$W/$d/"; done
 MODNAME=${MODNAME:-steal}; [[ $MODNAME =~ ^[a-z0-9_]+$ ]] || { echo "bad MODNAME"; exit 8; }
 mkdir -p $W/mods; cp "$MOD" $W/mods/$MODNAME.dll; cp "$FIX" $W/bbfix.dll
-python3 - "$W/bbfix.ini" "$MODE" "$MODNAME" "${MODKV:-}" <<'P'
-import sys, configparser
+python3 - "$W/bbfix.ini" "$MODE" "$MODNAME" "${MODKV:-}" <<'P' || exit 8
+import re, sys, configparser
 p, mode, name, kv = sys.argv[1:5]
+pairs = [x.split('=', 1) for x in kv.split()]
+if not re.fullmatch(r'[a-z]+', mode) or any(len(x) != 2 or not re.fullmatch(r'[A-Za-z0-9_]+', x[0])
+                                            or not re.fullmatch(r'[A-Za-z0-9_.,:-]*', x[1]) for x in pairs):
+    sys.exit('bad MODE or MODKV (k=v pairs, k [A-Za-z0-9_], v [A-Za-z0-9_.,:-])')
 c = configparser.ConfigParser(); c.optionxform = str; c.read(p)
 for s in ('mods', 'steal', 'seed', name):
     if c.has_section(s): c.remove_section(s)
 if mode != 'off':
     c['mods'] = {'load': 'mods\\%s.dll' % name}
-    c[name] = {'mode': mode, **({'pct': '100'} if name == 'steal' else {}), **dict(x.split('=', 1) for x in kv.split())}
+    c[name] = {'mode': mode, **({'pct': '100'} if name == 'steal' else {}), **dict(pairs)}
 c['trace'] = {'max_mb': '0'}     # the MOD counts need the whole trace; no rotation
 with open(p, 'w') as fh: c.write(fh)
 P
