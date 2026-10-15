@@ -37,6 +37,9 @@ Public repo (MIT) of tools and research for FPS Baseball Pro '98. Python codecs 
 - Scripted sims under Wine: a dialog the game raises mid-sim (the draft notice) is not painted until the window sees
   pointer input, and at season end the 'Updating association data' box stays on screen even with input. Move the
   pointer before every screenshot (seasonloop.look) and judge the season by games played, not by the screen.
+  The stale box also sits over the idle postseason schedule; postseason() answers it with Return after BUSY_STILL.
+- Never attach winedbg to a lane's running game to see where it waits: under wow64 the attach thread faults, the
+  crash handler takes the process, and the run is lost. Judge a stall by CPU ticks, Assn mtimes and bbtrace.
 - An in-game season step (seasonloop.season, a plan step that sims) must open the League Schedule (ctrl+k from
   Association Data) before Action > Simulate...; from Association Data that click opens Reset Teams instead and the
   run sims nothing. A full season takes 60 to 90 minutes: never run it through `capped` (its 1800 s timeout kills the sim
