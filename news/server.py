@@ -677,16 +677,34 @@ def _awards_page(assn, rec, home=None):
     return _story_layout(assn, rec, 'Season awards', sections, home)
 
 
-def _postseason_page(assn, rec, home=None):
-    """The bracket round by round: a table of games per series, a line for a series not started."""
+def _game_story(rec, rnd, g, n):
+    """True when a recap is the table's game's story: its post names the same round and 0-based game and its facts
+    name the same sides and score. Never raises: a thin recap matches nothing."""
+    post = rec.get('post')
+    if not isinstance(post, dict) or post.get('round') != rnd or post.get('game') != n:
+        return False
+    away, home = _d(_d(rec.get('facts')).get('away')), _d(_d(rec.get('facts')).get('home'))
+    return (away.get('name') == g.get('away') and home.get('name') == g.get('home')
+            and away.get('runs') == g.get('away_runs') and home.get('runs') == g.get('home_runs'))
+
+
+def _postseason_page(assn, rec, home=None, stories=()):
+    """The bracket round by round: a table of games per series, a line for a series not started. With stories, the
+    (key, recap) pairs a season's game stories are, each Game number links to its own story, the first row only."""
     facts = _d(rec.get('facts'))
-    sections = []
+    sections, used = [], set()
     for rnd in _dicts(facts.get('rounds')):
         series = []
         for s in _dicts(rnd.get('series')):
             caption = '%s vs %s' % tuple((_strings(s.get('teams')) + ['', ''])[:2])
-            rows = [[n, g.get('away'), g.get('away_runs'), g.get('home'), g.get('home_runs')]
-                    for n, g in enumerate(_dicts(s.get('games')), 1)]
+            rows = []
+            for n, g in enumerate(_dicts(s.get('games')), 1):
+                key = next((k for k, r in stories if k not in used
+                            and _game_story(r, rnd.get('round'), g, n - 1)), None) if home else None
+                if key is not None:
+                    used.add(key)
+                cell = _Markup('<a href="%s%s">%d</a>' % (esc(home), esc(key), n)) if key else n
+                rows.append([cell, g.get('away'), g.get('away_runs'), g.get('home'), g.get('home_runs')])
             series.append(_table(caption, ('Game', 'Away', 'R', 'Home', 'R'), rows, text=(1, 3)) if rows
                           else '<p>%s</p>' % esc(caption))
         sections.append('<section><h2>%s</h2>%s</section>' % (esc(rnd.get('name')), ''.join(series)))
@@ -697,7 +715,7 @@ def _postseason_page(assn, rec, home=None):
 def _postseason(folder, assn, home):
     """The postseason page; 404 when its file is missing, unreadable or of another kind."""
     rec = _season_file(folder, 'postseason')
-    return _postseason_page(assn, rec, home) if rec is not None else _not_found()
+    return _postseason_page(assn, rec, home, _stories(folder)) if rec is not None else _not_found()
 
 
 def _is_num(value):
