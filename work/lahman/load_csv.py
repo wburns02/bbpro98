@@ -13,6 +13,7 @@ from the reference schema and the CSV header, and a header name that is not a re
 import argparse
 import csv
 import os
+import re
 import sqlite3
 import sys
 from pathlib import Path
@@ -55,25 +56,41 @@ def csv_files(csv_dir):
     return {p.stem.lower(): p for p in Path(csv_dir).iterdir() if p.suffix.lower() == '.csv'}
 
 
-def _value(s):
+_INT = re.compile(r'[+-]?[0-9]+')
+_REAL = re.compile(r'[+-]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][+-]?[0-9]+)?')
+
+
+def _text_affinity(decl):
+    """SQLite's affinity rule 2: a declared type containing CHAR, CLOB or TEXT (and not INT) stores text."""
+    d = (decl or '').upper()
+    return 'INT' not in d and any(k in d for k in ('CHAR', 'CLOB', 'TEXT'))
+
+
+def _value(s, text=False):
+    """One CSV cell: None when blank, the stripped string for a text column, else int, then a finite float.
+
+    Only plain decimal digits count as numbers ('1_000', 'nan' and 'inf' stay strings), and a text column never
+    loses leading zeros or a trailing '.0' to a number round trip."""
     s = s.strip()
     if s == '':
         return None
-    try:
-        return int(s)
-    except ValueError:
-        pass
-    try:
-        return float(s)
-    except ValueError:
+    if text:
         return s
+    if _INT.fullmatch(s):
+        return int(s)
+    if _REAL.fullmatch(s):
+        return float(s)
+    return s
 
 
 def load_table(con, table, cols, path):
     lower = {c.lower(): c for c in cols}
+    types = dict(con.execute('SELECT name, type FROM pragma_table_info(?)', (table,)))
     with open(path, newline='', encoding='utf-8-sig') as fh:
         rd = csv.reader(fh)
-        header = next(rd)
+        header = next(rd, None)
+        if not header:
+            raise SystemExit('%s: empty file, no header row' % path.name)
         mapped, keep = [], []
         for i, h in enumerate(header):
             key = RENAMES.get(h.lower(), h).lower()
@@ -83,13 +100,18 @@ def load_table(con, table, cols, path):
             if key not in lower:
                 raise SystemExit('%s: column %r is not in the reference table %s' % (path.name, h, table))
             mapped.append(lower[key])
+        text = [_text_affinity(types.get(c)) for c in mapped]
         quoted = ', '.join('"%s"' % c for c in mapped)
         marks = ', '.join('?' * len(mapped))
         n = 0
         for row in rd:
             if not any(x.strip() for x in row):
                 continue
-            con.execute('INSERT INTO "%s" (%s) VALUES (%s)' % (table, quoted, marks), [_value(row[i]) for i in keep])
+            if len(row) != len(header):
+                raise SystemExit('%s line %d: %d fields, header has %d' % (path.name, rd.line_num, len(row),
+                                                                         len(header)))
+            con.execute('INSERT INTO "%s" (%s) VALUES (%s)' % (table, quoted, marks),
+                        [_value(row[i], t) for i, t in zip(keep, text)])
             n += 1
     return n
 
