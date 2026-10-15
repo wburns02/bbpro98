@@ -65,6 +65,12 @@ its text; they do not replace it.
   build-backup/) and never write over MLBPA97 or the donor files. The four files are written atomically with the ASN
   last, and Build a Season treats a season as built only when all four are there. The bridge refuses a GM run whose
   trade ledger is unreadable instead of planning the trades again.
+- Create a Player never leaves a half-added player: if the pool file or the ledger cannot be written, the player file
+  is put back as it was. Season archives are flushed to disk, and one torn by a crash is rewritten instead of hiding
+  that season from the Career tab.
+- A season rollover no longer archives the new season a second time when a later step of the same pass fails, and a
+  missing or malformed news-model reply no longer stops a watcher pass. play.py stops the watcher if the bridge
+  cannot start.
 
 ## Known limits
 
