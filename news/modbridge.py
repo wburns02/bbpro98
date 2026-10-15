@@ -769,6 +769,7 @@ CARD_TABS = (('', 'Overview'), ('batting', 'Batting'), ('pitching', 'Pitching'),
 CAREER_ROWS = 20                # career table rows a page shows (the totals rows go on the last page)
 CARD_NEWS = 10                  # news items a card lists, newest first
 CARD_SCAN = 2000                # story files searched for a name: the newest by modification time
+PAST_RE = re.compile(r'[0-9]{4}(?:-[0-9]{1,2})?')   # a past/<D> archived season folder (year, or year-2, -3)
 CARD_PERIODS = ((0, 'Last 7 days'), (1, 'This season'), (3, 'Last season'), (2, 'Career'))     # (stats scope, label)
 BAT_COLS = ('G', 'AB', 'R', 'H', '2B', '3B', 'HR', 'RBI', 'BB', 'SO', 'SB', 'AVG', 'OBP', 'SLG')
 PIT_COLS = ('G', 'W', 'L', 'SV', 'IP', 'H', 'ER', 'BB', 'SO', 'HR', 'ERA', 'WHIP')
@@ -893,9 +894,10 @@ def _move_key(ev):
     return (year, 0, 0, 0)
 
 
-def _recent_stories(folder):
-    """(key, story) for the CARD_SCAN newest story files of a watcher folder, by modification time."""
-    rdir = os.path.join(folder, 'recaps')
+def _recent_stories(folder, sub='recaps', limit=None):
+    """(key, story) for the newest story files of a watcher folder's sub (a folder relative path), by modification
+    time: at most limit of them read (CARD_SCAN when limit is None)."""
+    rdir = os.path.join(folder, sub)
     try:
         names = [n for n in os.listdir(rdir) if n.endswith('.json') and server.KEY_RE.fullmatch(n[:-len('.json')])]
     except OSError:
@@ -907,11 +909,30 @@ def _recent_stories(folder):
         except OSError:
             return 0.0
     out = []
-    for name in sorted(names, key=mtime, reverse=True)[:CARD_SCAN]:
+    for name in sorted(names, key=mtime, reverse=True)[:CARD_SCAN if limit is None else limit]:
         rec = server._read_obj(os.path.join(rdir, name))
         if rec is not None:
             out.append((name[:-len('.json')], rec))
     return out
+
+
+def _past_dirs(folder):
+    """The past/<D> folder names of a watcher folder that match PAST_RE, newest season first (the year, then the
+    archive number, both descending)."""
+    try:
+        names = os.listdir(os.path.join(folder, 'past'))
+    except OSError:
+        return []
+    return sorted((n for n in names if PAST_RE.fullmatch(n)), key=lambda n: (int(n[:4]), int(n[5:] or 0)),
+                  reverse=True)
+
+
+def _past_year(folder, d):
+    """A past folder's season: past/<D>/meta.json's season_year when it is an int (bool excluded), else the folder
+    name's year."""
+    meta = server._read_obj(os.path.join(folder, 'past', d, 'meta.json'))
+    year = meta.get('season_year') if isinstance(meta, dict) else None
+    return year if type(year) is int else int(d[:4])
 
 
 def _watch_folder(ctx, stem):
@@ -923,20 +944,27 @@ def _watch_folder(ctx, stem):
 
 
 def _card_news(folder, lg, pid):
-    """The news that names a player, newest first, as (label, path): the game stories from the watcher's folder whose
-    text has his name (a story's place in time is its season, which is the association's, then month, day and slot),
-    and the transaction log's events for his id (_move_key). [] with no folder."""
+    """The news that names a player, newest first, as (label, path): the game stories from the watcher's folder and
+    its past/<D> seasons whose text has his name (a story's place in time is its season, which is the association's
+    for the current stories and the past folder's season_year for an archived one, then month, day and slot), and
+    the transaction log's events for his id (_move_key). [] with no folder."""
     if folder is None:
         return []
     stem, year = os.path.basename(folder), lg.year or 0
     pattern = re.compile(r'(?<!\w)%s(?!\w)' % re.escape(lg.players[pid]['name']))
+
+    def story(key, rec, season, path):
+        if not pattern.search(' '.join(_strings_of(rec))):
+            return
+        head = rec.get('headline')
+        label = head if isinstance(head, str) and head else '(untitled)'
+        items.append(((season, _int_of(rec.get('month')), _int_of(rec.get('day')), _int_of(rec.get('slot'))), label,
+                      path))
     items = []
-    for key, rec in _recent_stories(folder):
-        if pattern.search(' '.join(_strings_of(rec))):
-            head = rec.get('headline')
-            label = head if isinstance(head, str) and head else '(untitled)'
-            items.append(((year, _int_of(rec.get('month')), _int_of(rec.get('day')), _int_of(rec.get('slot'))), label,
-                          '/news/%s/%s' % (stem, key)))
+    current = _recent_stories(folder)
+    left = CARD_SCAN - len(current)                         # the cap is spent on the current season's stories first
+    for key, rec in current:
+        story(key, rec, year, '/news/%s/%s' % (stem, key))
     log = server._read_obj(os.path.join(folder, 'moves', 'log.json'))
     events = log.get('events') if isinstance(log, dict) else None
     for ev in events if isinstance(events, list) else []:
@@ -947,6 +975,13 @@ def _card_news(folder, lg, pid):
                     os.path.isfile(os.path.join(folder, 'moves', 'notes', '%d.json' % note)):
                 path = '/news/%s/moves/%d' % (stem, note)
             items.append((_move_key(ev), label, path))
+    for d in _past_dirs(folder):                            # then past seasons, newest first
+        if left <= 0:
+            break
+        found = _recent_stories(folder, os.path.join('past', d, 'recaps'), limit=left)
+        left -= len(found)
+        for key, rec in found:
+            story(key, rec, _past_year(folder, d), '/news/%s/past/%s/%s' % (stem, d, key))
     items.sort(key=lambda item: item[0], reverse=True)
     return [(label, path) for _, label, path in items[:CARD_NEWS]]
 
