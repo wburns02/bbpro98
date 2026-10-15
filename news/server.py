@@ -23,6 +23,7 @@ SEP = ' · '
 # fullmatch, never $: a '$' also matches before a trailing newline, so '30L1998%0A' would get through.
 ASSN_RE = re.compile(r'[A-Za-z0-9_]{1,8}')
 KEY_RE = re.compile(r'[0-9a-f]{16}')
+PAST_RE = re.compile(r'[0-9]{4}(?:-[0-9]{1,2})?')
 FEED_RE = re.compile(r'([0-9]{2})-([0-9]{2})\.json')
 PAGE_RE = re.compile(r'[0-9]{1,5}')
 TID_RE = re.compile(r'[0-9]{1,2}')
@@ -158,9 +159,9 @@ def _stories(assn_dir):
     return out
 
 
-def _scout_files(data_dir, assn):
-    """[(tid, report)] for every readable scouting report of the association, by team name then tid."""
-    scout_dir = data_dir / assn / 'scout'
+def _scout_files(folder):
+    """[(tid, report)] for every readable scouting report in a season folder, by team name then tid."""
+    scout_dir = folder / 'scout'
     try:
         names = os.listdir(scout_dir)
     except OSError:
@@ -262,8 +263,9 @@ def _masthead(name, through=''):
             '<h1>%s</h1>%s</header>' % (esc(name), '<p class="through">%s</p>' % esc(through) if through else ''))
 
 
-def _nav():
-    return '<p class="nav"><a href="/news/">All leagues</a> &middot; <a href="/">Back to the game</a></p>'
+def _nav(back=''):
+    """The league nav line; back is markup for a link that leads it."""
+    return '<p class="nav">%s<a href="/news/">All leagues</a> &middot; <a href="/">Back to the game</a></p>' % back
 
 
 def _notice(status, title, message, extra=()):
@@ -305,10 +307,10 @@ def _feed_html(feed):
             % (esc(kicker), esc(feed.get('headline')), _paras_html(_paragraphs(feed.get('body')))))
 
 
-def _story_row(assn, key, rec):
+def _story_row(home, key, rec):
     meta = SEP.join(x for x in (_when(rec), _score(_d(rec.get('facts')))) if x)
-    return ('<article class="story"><h2><a href="/news/%s/%s">%s</a></h2><p class="meta">%s</p>%s</article>'
-            % (esc(assn), esc(key), esc(rec.get('headline')) or '(untitled)', esc(meta),
+    return ('<article class="story"><h2><a href="%s%s">%s</a></h2><p class="meta">%s</p>%s</article>'
+            % (esc(home), esc(key), esc(rec.get('headline')) or '(untitled)', esc(meta),
                _paras_html(_paragraphs(rec.get('body'))[:1])))
 
 
@@ -350,16 +352,13 @@ def _index(data_dir):
     return _page_reply(200, 'League News', body)
 
 
-def _association(data_dir, assn, qs):
-    meta = _read_obj(data_dir / assn / 'meta.json')
-    if meta is None:
-        return _not_found()
-    page = _page_no(qs)
-    name = _text(meta.get('name')) or assn
-    stories = _stories(data_dir / assn)
+def _lead_html(folder, home, page):
+    """The front page's main column for a season folder: on page 1 the newest 'Around the league' column, then the
+    page's stories (linked under home) and the pager."""
+    stories = _stories(folder)
     lead = []
     if page == 1:
-        feed = _latest_feed(data_dir / assn)
+        feed = _latest_feed(folder)
         if feed:
             lead.append(_feed_html(feed))
     shown = stories[(page - 1) * PER_PAGE:page * PER_PAGE]
@@ -367,19 +366,85 @@ def _association(data_dir, assn, qs):
         lead.append('<p class="empty">No game stories yet.</p>')
     elif not shown:
         lead.append('<p class="empty">No stories on this page.</p>')
-    lead.extend(_story_row(assn, key, rec) for key, rec in shown)
-    lead.append(_pager('/news/%s/' % assn, page, len(stories)))
+    lead.extend(_story_row(home, key, rec) for key, rec in shown)
+    lead.append(_pager(home, page, len(stories)))
+    return ''.join(lead)
+
+
+def _front_page(title, masthead, nav, lead, side):
+    body = (masthead + nav + '<div class="grid"><section class="lead">%s</section><aside class="side">%s</aside></div>'
+            % (lead, side))
+    return _page_reply(200, title, body)
+
+
+def _association(data_dir, assn, qs):
+    meta = _read_obj(data_dir / assn / 'meta.json')
+    if meta is None:
+        return _not_found()
+    page = _page_no(qs)
+    name = _text(meta.get('name')) or assn
+    folder, home = data_dir / assn, '/news/%s/' % assn
     moves = _moves_box(data_dir, assn) if page == 1 else ''
-    season = _season_links(data_dir, assn) if page == 1 else ''
-    replay = _replay_link(data_dir, assn) if page == 1 else ''
+    season = _season_links(folder, home) if page == 1 else ''
+    past = _past_box(data_dir, assn) if page == 1 else ''
+    replay = _replay_link(folder, home) if page == 1 else ''
     payroll = _payroll_box(data_dir, assn) if page == 1 else ''
-    scouting = _scouting_links(data_dir, assn) if page == 1 else ''
-    side = (moves + season + replay + payroll + scouting + _standings_html(meta.get('standings'))
+    scouting = _scouting_links(folder, home) if page == 1 else ''
+    side = (moves + season + past + replay + payroll + scouting + _standings_html(meta.get('standings'))
             + _leaders_html(meta.get('leaders')))
-    body = (_masthead(name, _through(meta)) + _nav()
-            + '<div class="grid"><section class="lead">%s</section><aside class="side">%s</aside></div>'
-            % (''.join(lead), side))
-    return _page_reply(200, '%s · League News' % name, body)
+    return _front_page('%s · League News' % name, _masthead(name, _through(meta)), _nav(),
+                       _lead_html(folder, home, page), side)
+
+
+def _past_label(d):
+    """'1997 season'; '1998-2' reads '1998 season (2)'."""
+    year, _, again = d.partition('-')
+    return '%s season (%s)' % (year, again) if again else '%s season' % year
+
+
+def _past_key(d):
+    year, _, again = d.partition('-')
+    return int(year), int(again or 0), d
+
+
+def _past_seasons(data_dir, assn):
+    """[(D, meta or None)] for every archived season of the association, newest first: by year, then repeat number
+    ('1998-2' before '1998'). meta is the season's last meta.json, None when it is missing or unreadable."""
+    past_dir = data_dir / assn / 'past'
+    if not ASSN_RE.fullmatch(assn):
+        return []
+    try:
+        names = os.listdir(past_dir)
+    except OSError:
+        return []
+    found = sorted((n for n in names if PAST_RE.fullmatch(n) and (past_dir / n).is_dir()), key=_past_key, reverse=True)
+    return [(d, _read_obj(past_dir / d / 'meta.json')) for d in found]
+
+
+def _past_box(data_dir, assn):
+    """The Past seasons box for the side column: one link per archived season. '' for none."""
+    links = ['<li><a href="/news/%s/past/%s/">%s</a></li>' % (esc(assn), esc(d), esc(_past_label(d)))
+             for d, _ in _past_seasons(data_dir, assn)]
+    if not links:
+        return ''
+    return '<section class="past"><h2>Past seasons</h2><ul>%s</ul></section>' % ''.join(links)
+
+
+def _past_front(folder, assn, d, qs):
+    """A past season's front page: the current front page's layout from the archived files, without the moves, payroll
+    and replay boxes, and a link back to the current season. 404 when the archived meta.json is unreadable."""
+    meta = _read_obj(folder / 'meta.json')
+    if meta is None:
+        return _not_found()
+    page = _page_no(qs)
+    name = _text(meta.get('name')) or assn
+    home = '/news/%s/past/%s/' % (assn, d)
+    season = _season_links(folder, home) if page == 1 else ''
+    scouting = _scouting_links(folder, home) if page == 1 else ''
+    side = season + scouting + _standings_html(meta.get('standings')) + _leaders_html(meta.get('leaders'))
+    back = '<a href="/news/%s/">&larr; Current season</a> &middot; ' % esc(assn)
+    return _front_page('%s · %s · League News' % (name, _past_label(d)), _masthead(name, _through(meta)), _nav(back),
+                       _lead_html(folder, home, page), side)
 
 
 def _decision(label, p):
@@ -397,25 +462,26 @@ def _byline_html(rec):
     return '<p class="byline">%s</p>' % esc(byline) if byline else ''
 
 
-def _league_nav(assn, facts):
+def _league_nav(assn, facts, home=None):
+    """The back link to the season's front page (home, default the association's) and the league list."""
     league = _text(facts.get('association')) or assn
-    return ('<p class="nav"><a href="/news/%s/">&larr; %s</a> &middot; <a href="/news/">All leagues</a></p>'
-            % (esc(assn), esc(league)))
+    return ('<p class="nav"><a href="%s">&larr; %s</a> &middot; <a href="/news/">All leagues</a></p>'
+            % (esc(home or '/news/%s/' % assn), esc(league)))
 
 
-def _story_page(assn, key, rec):
+def _story_page(assn, key, rec, home=None):
     facts = _d(rec.get('facts'))
     headline = _text(rec.get('headline'))
     stadium = _text(_d(facts.get('home')).get('stadium'))
-    away, home = _d(facts.get('away')), _d(facts.get('home'))
-    box = _table('Box score', ('Team', 'R', 'H'), [[s.get('name'), s.get('runs'), s.get('hits')] for s in (away, home)])
+    sides = (_d(facts.get('away')), _d(facts.get('home')))
+    box = _table('Box score', ('Team', 'R', 'H'), [[s.get('name'), s.get('runs'), s.get('hits')] for s in sides])
     bats = [[b.get('team'), b.get('name'), b.get('ab'), b.get('h'), b.get('hr'), b.get('rbi'), b.get('bb'), b.get('r')]
             for b in _dicts(facts.get('batters'))]
     decisions = _d(facts.get('decisions'))
     lines = ''.join(_decision(label, _d(decisions.get(role)))
                     for label, role in (('W', 'win'), ('L', 'loss'), ('S', 'save')))
     parts = [
-        _league_nav(assn, facts),
+        _league_nav(assn, facts, home),
         '<article class="story-page"><h1>%s</h1>' % esc(headline),
         '<p class="dateline">%s</p>' % esc(SEP.join(x for x in (_when(rec), stadium) if x)),
         _byline_html(rec),
@@ -428,22 +494,22 @@ def _story_page(assn, key, rec):
     return _page_reply(200, headline or 'Game story', ''.join(parts))
 
 
-def _story(data_dir, assn, key):
-    rec = _read_obj(data_dir / assn / 'recaps' / (key + '.json'))
-    return _story_page(assn, key, rec) if rec is not None else _not_found()
+def _story(folder, assn, key, home):
+    rec = _read_obj(folder / 'recaps' / (key + '.json'))
+    return _story_page(assn, key, rec, home) if rec is not None else _not_found()
 
 
-def _season_file(data_dir, assn, which):
+def _season_file(folder, which):
     """The season file of that kind (which: 'preview', 'awards', 'replay' or 'contracts') as an object, else None."""
-    rec = _read_obj(data_dir / assn / (which + '.json'))
+    rec = _read_obj(folder / (which + '.json'))
     return rec if rec is not None and rec.get('kind') == which else None
 
 
-def _story_layout(assn, rec, label, below):
+def _story_layout(assn, rec, label, below, home=None):
     """A page in the game story layout: the body, then the markup in below."""
     headline = _text(rec.get('headline'))
     parts = [
-        _league_nav(assn, _d(rec.get('facts'))),
+        _league_nav(assn, _d(rec.get('facts')), home),
         '<article class="story-page"><h1>%s</h1>' % esc(headline),
         '<p class="dateline">%s</p>' % esc(label),
         _byline_html(rec),
@@ -467,7 +533,7 @@ def _pitcher_text(pitcher):
                                   _text(pitcher.get('era')))
 
 
-def _preview_page(assn, rec):
+def _preview_page(assn, rec, home=None):
     tables = []
     for div in _dicts(_d(rec.get('facts')).get('divisions')):
         league, division = _text(div.get('league')).strip(), _text(div.get('division')).strip()
@@ -475,10 +541,10 @@ def _preview_page(assn, rec):
         rows = [[t.get('name'), t.get('manager'), _hitter_text(t.get('hitter')), _pitcher_text(t.get('pitcher'))]
                 for t in _dicts(div.get('teams'))]
         tables.append(_table(caption, ('Team', 'Manager', 'Top hitter', 'Top pitcher'), rows, text=4))
-    return _story_layout(assn, rec, 'Season preview', tables)
+    return _story_layout(assn, rec, 'Season preview', tables, home)
 
 
-def _awards_page(assn, rec):
+def _awards_page(assn, rec, home=None):
     sections = []
     for lg in _dicts(_d(rec.get('facts')).get('leagues')):
         tables = []
@@ -495,7 +561,7 @@ def _awards_page(assn, rec):
             tables.append(_table('Division champions', ('Division', 'Team', 'Record'), champs, text=2))
         league = _text(lg.get('league')).strip() or 'The league'
         sections.append('<section><h2>%s</h2>%s</section>' % (esc(league), ''.join(tables)))
-    return _story_layout(assn, rec, 'Season awards', sections)
+    return _story_layout(assn, rec, 'Season awards', sections, home)
 
 
 def _is_num(value):
@@ -581,7 +647,7 @@ def _player_table(players):
     return _table('Players', ('Stat', 'Player', 'Real', 'Sim'), rows, text=2) if rows else ''
 
 
-def _replay_page(assn, name, rec):
+def _replay_page(assn, name, rec, home=None):
     """The replay scorecard: the season's status, each league's standings against the real ones with a summary, the
     leaders of each stat in both seasons, then the real leaders the sim has."""
     teams = _dicts(rec.get('teams'))
@@ -592,7 +658,7 @@ def _replay_page(assn, name, rec):
               if _is_num(played) and _is_num(scheduled) else '')
     unmatched = _strings(rec.get('unmatched'))
     leaders = _leader_tables(_d(rec.get('leaders')))
-    parts = [_masthead('Replay vs history', status), _league_nav(assn, {'association': name})]
+    parts = [_masthead('Replay vs history', status), _league_nav(assn, {'association': name}, home)]
     for lg in sorted(leagues):
         parts.append(_league_section(lg, _d(leagues[lg]), [t for t in teams if _text(t.get('lg')) == lg]))
     if unmatched:
@@ -604,51 +670,51 @@ def _replay_page(assn, name, rec):
     return _page_reply(200, '%s · Replay vs history' % name, ''.join(parts))
 
 
-def _replay(data_dir, assn):
+def _replay(folder, assn, home):
     """The replay scorecard page; 404 when its file is missing, unreadable or of another kind."""
-    rec = _season_file(data_dir, assn, 'replay')
+    rec = _season_file(folder, 'replay')
     if rec is None:
         return _not_found()
-    name = _text(_d(_read_obj(data_dir / assn / 'meta.json')).get('name')) or assn
-    return _replay_page(assn, name, rec)
+    name = _text(_d(_read_obj(folder / 'meta.json')).get('name')) or assn
+    return _replay_page(assn, name, rec, home)
 
 
-def _replay_link(data_dir, assn):
+def _replay_link(folder, home):
     """The Replay vs history box for the side column: a link to the scorecard. '' without its file."""
-    if _season_file(data_dir, assn, 'replay') is None:
+    if _season_file(folder, 'replay') is None:
         return ''
-    return ('<section class="replay"><h2>Replay vs history</h2><ul><li><a href="/news/%s/replay">Scorecard</a>'
-            '</li></ul></section>' % esc(assn))
+    return ('<section class="replay"><h2>Replay vs history</h2><ul><li><a href="%sreplay">Scorecard</a>'
+            '</li></ul></section>' % esc(home))
 
 
-def _season(data_dir, assn, which):
+def _season(folder, assn, which, home):
     """The season preview or awards page; 404 when its file is missing, unreadable or of another kind."""
-    rec = _season_file(data_dir, assn, which)
+    rec = _season_file(folder, which)
     if rec is None:
         return _not_found()
-    return _preview_page(assn, rec) if which == 'preview' else _awards_page(assn, rec)
+    return _preview_page(assn, rec, home) if which == 'preview' else _awards_page(assn, rec, home)
 
 
-def _season_links(data_dir, assn):
+def _season_links(folder, home):
     """The Season box for the side column: awards above preview, each only when its file exists. '' for neither."""
-    links = ['<li><a href="/news/%s/%s">%s</a></li>' % (esc(assn), which, label)
+    links = ['<li><a href="%s%s">%s</a></li>' % (esc(home), which, label)
              for which, label in (('awards', 'Season awards'), ('preview', 'Season preview'))
-             if _season_file(data_dir, assn, which) is not None]
+             if _season_file(folder, which) is not None]
     if not links:
         return ''
     return '<section class="season"><h2>Season</h2><ul>%s</ul></section>' % ''.join(links)
 
 
-def _scouting_links(data_dir, assn):
+def _scouting_links(folder, home):
     """The Scouting reports box for the side column: one link per team's report. '' for none."""
-    links = ['<li><a href="/news/%s/team/%d">%s</a></li>' % (esc(assn), tid, esc(rec.get('team')))
-             for tid, rec in _scout_files(data_dir, assn)]
+    links = ['<li><a href="%steam/%d">%s</a></li>' % (esc(home), tid, esc(rec.get('team')))
+             for tid, rec in _scout_files(folder)]
     if not links:
         return ''
     return '<section class="scouting"><h2>Scouting reports</h2><ul>%s</ul></section>' % ''.join(links)
 
 
-def _team_page(assn, tid, rec):
+def _team_page(assn, tid, rec, home=None):
     """A team's scouting report in the story layout, then its roster graded: hitters, then pitchers."""
     roster = _d(rec.get('roster'))
     hitters = [[h.get('name'), h.get('pos'), h.get('hand'), h.get('age'), h.get('contact'), h.get('power'),
@@ -659,15 +725,15 @@ def _team_page(assn, tid, rec):
         _table('Hitters', ('Player', 'Pos', 'B/T', 'Age', 'Contact', 'Power', 'Speed', 'Field'), hitters, text=3),
         _table('Pitchers', ('Player', 'B/T', 'Age', 'Control', 'Strikeout', 'Stamina', 'Field'), pitchers, text=2),
     ]
-    return _story_layout(assn, rec, 'Scouting report', tables)
+    return _story_layout(assn, rec, 'Scouting report', tables, home)
 
 
-def _team(data_dir, assn, tid):
+def _team(folder, assn, tid, home):
     """A team's scouting report page; 404 when its file is missing, unreadable or of another kind."""
-    rec = _read_obj(data_dir / assn / 'scout' / (tid + '.json'))
+    rec = _read_obj(folder / 'scout' / (tid + '.json'))
     if rec is None or rec.get('kind') != 'scout':
         return _not_found()
-    return _team_page(assn, tid, rec)
+    return _team_page(assn, tid, rec, home)
 
 
 def _move_log(data_dir, assn):
@@ -822,7 +888,7 @@ def _signing_line(ev, teams):
 def _payroll_box(data_dir, assn):
     """The Payroll box for the side column: the top TOP teams by payroll with their totals, and a link to the pages.
     '' without a contracts file."""
-    rec = _season_file(data_dir, assn, 'contracts')
+    rec = _season_file(data_dir / assn, 'contracts')
     rows = _dicts(rec.get('payroll'))[:TOP] if rec is not None else []
     if not rows:
         return ''
@@ -834,7 +900,7 @@ def _payroll_box(data_dir, assn):
 def _payroll(data_dir, assn):
     """The payroll page: each team's players, payroll, average and top salary, then the recent signings, newest first.
     404 when the contracts file is missing or of another kind."""
-    rec = _season_file(data_dir, assn, 'contracts')
+    rec = _season_file(data_dir / assn, 'contracts')
     if rec is None:
         return _not_found()
     name = _text(_d(_read_obj(data_dir / assn / 'meta.json')).get('name')) or assn
@@ -855,7 +921,7 @@ def _payroll(data_dir, assn):
 def _payroll_team(data_dir, assn, tid):
     """One team's contracts, by salary then name: player, position, age, salary, years left and status. 404 when the
     contracts file is missing or of another kind, or tid is not one of its teams."""
-    rec = _season_file(data_dir, assn, 'contracts')
+    rec = _season_file(data_dir / assn, 'contracts')
     row = _team_row(rec, tid) if rec is not None else None
     if row is None:
         return _not_found()
@@ -901,6 +967,34 @@ def _segments(path):
     return segs
 
 
+def _season_pages(folder, assn, home, rest):
+    """The story, preview, awards, replay and team pages read from a season folder, linked under home. rest is the
+    path after the season's front page; None when it is none of those pages."""
+    if len(rest) == 1 and KEY_RE.fullmatch(rest[0]):
+        return _story(folder, assn, rest[0], home)
+    if len(rest) == 1 and rest[0] in ('preview', 'awards'):
+        return _season(folder, assn, rest[0], home)
+    if len(rest) == 1 and rest[0] == 'replay':
+        return _replay(folder, assn, home)
+    if len(rest) == 2 and rest[0] == 'team' and TID_RE.fullmatch(rest[1]):
+        return _team(folder, assn, rest[1], home)
+    return None
+
+
+def _past(data_dir, assn, rest, qs):
+    """The pages under /news/<assn>/past/. rest starts at the season, D; 404 for a D that is not an archived season."""
+    d = rest[0]
+    folder = data_dir / assn / 'past' / d if PAST_RE.fullmatch(d) else None
+    if folder is None or not folder.is_dir():
+        return _not_found()
+    home = '/news/%s/past/%s/' % (assn, d)
+    if len(rest) == 1:
+        return _moved(home + ('?' + qs if qs else ''))
+    if rest[1:] == ['']:
+        return _past_front(folder, assn, d, qs)
+    return _season_pages(folder, assn, home, rest[1:]) or _not_found()
+
+
 def route(data_dir, target):
     """(status, content type, body, extra headers) for a GET or HEAD request target."""
     try:
@@ -925,14 +1019,11 @@ def route(data_dir, target):
         return _moved('/news/%s/%s' % (assn, suffix))
     if len(rest) == 2 and rest[1] == '':
         return _association(data_dir, assn, qs)
-    if len(rest) == 2 and KEY_RE.fullmatch(rest[1]):
-        return _story(data_dir, assn, rest[1])
-    if len(rest) == 2 and rest[1] in ('preview', 'awards'):
-        return _season(data_dir, assn, rest[1])
-    if len(rest) == 2 and rest[1] == 'replay':
-        return _replay(data_dir, assn)
-    if len(rest) == 3 and rest[1] == 'team' and TID_RE.fullmatch(rest[2]):
-        return _team(data_dir, assn, rest[2])
+    reply = _season_pages(data_dir / assn, assn, '/news/%s/' % assn, rest[1:])
+    if reply:
+        return reply
+    if len(rest) >= 3 and rest[1] == 'past':
+        return _past(data_dir, assn, rest[2:], qs)
     if len(rest) == 2 and rest[1] == 'moves':
         return _transactions(data_dir, assn, qs)
     if len(rest) == 3 and rest[1] == 'moves' and NOTE_RE.fullmatch(rest[2]):

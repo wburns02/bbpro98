@@ -1196,3 +1196,234 @@ def test_payroll_box_has_the_top_three_teams_and_only_on_the_first_page(payroll)
 
 def test_payroll_box_is_absent_without_the_contracts_file(seeded):
     assert 'class="payroll"' not in seeded.get('/news/30L1998/')[2].decode()
+
+
+PK1, PK2 = '1111111111111111', '2222222222222222'
+PAST = '/news/30L1998/past/'
+
+
+def past_meta(year, **over):
+    fields = dict(name='%d Past League' % year, season_year=year, last_day=[9, 28])
+    fields.update(over)
+    return meta(**fields)
+
+
+@pytest.fixture
+def archived(scouted):
+    """scouted, plus the archived seasons 1997, 1998 and 1998-2 of 30L1998; 1997 has every kind of file."""
+    root = scouted.root / '30L1998' / 'past'
+    for d, year in (('1997', 1997), ('1998', 1998), ('1998-2', 1998)):
+        write(root / d / 'meta.json', past_meta(year))
+    one = root / '1997'
+    write(one / 'recaps' / (PK1 + '.json'), story(PK1, headline='Past story one'))
+    write(one / 'recaps' / (PK2 + '.json'), story(PK2, day=14, headline='Past story two'))
+    write(one / 'feed' / '09-28.json', feed(9, 28, 'Past column'))
+    write(one / 'awards.json', awards_file())
+    write(one / 'preview.json', preview_file())
+    write(one / 'replay.json', replay_file())
+    write(one / 'scout' / '5.json', scout_file(5, 'Past Pines'))
+    return scouted
+
+
+def hrefs(html):
+    return re.findall(r'href="([^"]*)"', html)
+
+
+def test_past_seasons_are_newest_first_with_their_meta(archived):
+    (archived.root / '30L1998' / 'past' / '1999').mkdir()
+    write(archived.root / '30L1998' / 'past' / '2001' / 'meta.json', '{"name": ')
+    for junk in ('97', '1997-123', 'x1997', '1997.bak', '19970'):
+        (archived.root / '30L1998' / 'past' / junk).mkdir()
+    write(archived.root / '30L1998' / 'past' / '1996', 'a file, not a season')
+    found = server._past_seasons(archived.root, '30L1998')
+    assert [d for d, _ in found] == ['2001', '1999', '1998-2', '1998', '1997']
+    assert dict(found)['1997']['season_year'] == 1997
+    assert dict(found)['2001'] is None and dict(found)['1999'] is None
+    assert server._past_seasons(archived.root, 'MLBPA97') == []
+    assert server._past_seasons(archived.root, '../x') == []
+
+
+def test_past_seasons_orders_repeats_by_number_not_text(site):
+    for d in ('1998', '1998-2', '1998-10', '1998-3'):
+        write(site.root / 'X' / 'past' / d / 'meta.json', past_meta(1998))
+    assert [d for d, _ in server._past_seasons(site.root, 'X')] == ['1998-10', '1998-3', '1998-2', '1998']
+
+
+def test_association_page_without_past_is_the_same_page_but_for_the_box(archived):
+    plain = archived.get('/news/30L1998/')[2].decode()
+    assert 'class="past"' in plain
+    root = archived.root / '30L1998' / 'past'
+    for d in os.listdir(root):
+        for dirpath, dirs, files in os.walk(root / d, topdown=False):
+            for f in files:
+                os.remove(os.path.join(dirpath, f))
+            os.rmdir(dirpath)
+    os.rmdir(root)
+    bare = archived.get('/news/30L1998/')[2].decode()
+    assert 'past' not in bare.replace('Past', '')
+    assert re.sub(r'<section class="past">.*?</section>', '', plain) == bare
+
+
+def test_past_box_lists_seasons_newest_first_after_the_season_box(season):
+    for d in ('1997', '1998', '1998-2'):
+        write(season.root / '30L1998' / 'past' / d / 'meta.json', past_meta(1998))
+    html = season.get('/news/30L1998/')[2].decode()
+    box = re.search(r'<section class="past"><h2>Past seasons</h2><ul>(.*?)</ul></section>', html)
+    assert re.findall(r'<li><a href="([^"]*)">([^<]*)</a></li>', box[1]) == [
+        ('/news/30L1998/past/1998-2/', '1998 season (2)'),
+        ('/news/30L1998/past/1998/', '1998 season'),
+        ('/news/30L1998/past/1997/', '1997 season'),
+    ]
+    assert html.index('class="season"') < html.index('class="past"') < html.index('<caption>American League East')
+
+
+def test_past_box_is_on_the_first_page_only_and_absent_without_seasons(seeded):
+    assert 'class="past"' not in seeded.get('/news/30L1998/')[2].decode()
+    write(seeded.root / '30L1998' / 'past' / '1997' / 'meta.json', past_meta(1997))
+    for i in range(31):
+        write(seeded.root / '30L1998' / 'recaps' / ('%016x.json' % i), story('%016x' % i, slot=i))
+    assert 'class="past"' in seeded.get('/news/30L1998/')[2].decode()
+    assert 'class="past"' not in seeded.get('/news/30L1998/?page=2')[2].decode()
+
+
+def test_past_front_page_shows_the_archived_season_under_the_past_prefix(archived):
+    status, headers, body = archived.get(PAST + '1997/')
+    html = body.decode()
+    assert status == 200
+    assert headers['content-type'] == HTML
+    assert_secure(headers, body)
+    assert '<h1>1997 Past League</h1>' in html and 'through September 28' in html
+    assert 'Past column' in html and 'Yankees hold the East' not in html
+    assert re.findall(r'href="(/news/30L1998/past/1997/[0-9a-f]{16})"', html) == [PAST + '1997/' + PK1,
+                                                                                   PAST + '1997/' + PK2]
+    assert 'Past story one' in html and 'Seattle beats Oakland' not in html
+    assert '<caption>American League East</caption>' in html and 'Larry Walker' in html
+    assert 'href="/news/30L1998/"' in html
+    for box in ('transactions', 'payroll', 'replay', 'class="past"'):
+        assert box not in html
+
+
+def test_past_front_page_links_stay_in_the_season(archived):
+    write(archived.root / '30L1998' / 'contracts.json', {'kind': 'contracts', 'payroll': []})
+    prefix = PAST + '1997/'
+    html = archived.get(prefix)[2].decode()
+    links = hrefs(html)
+    assert prefix + 'awards' in links and prefix + 'preview' in links and prefix + 'team/5' in links
+    outside = [h for h in links if not h.startswith(prefix)]
+    assert sorted(outside) == ['/', '/news/', '/news/30L1998/']
+    assert prefix + 'replay' not in links and '/news/30L1998/team/1' not in links
+
+
+def test_past_front_page_falls_back_to_the_association_name(archived):
+    write(archived.root / '30L1998' / 'past' / '1997' / 'meta.json', past_meta(1997, name=''))
+    assert '<h1>30L1998</h1>' in archived.get(PAST + '1997/')[2].decode()
+
+
+def test_past_front_page_without_files_has_empty_states(site):
+    write(site.root / 'X' / 'past' / '1997' / 'meta.json', past_meta(1997, standings=None, leaders=None))
+    status, _, body = site.get('/news/X/past/1997/')
+    html = body.decode()
+    assert status == 200
+    assert 'No game stories yet.' in html and 'class="season"' not in html and 'class="scouting"' not in html
+
+
+def test_past_front_page_pages_like_the_current_one(archived):
+    one = archived.root / '30L1998' / 'past' / '1997' / 'recaps'
+    for i in range(server.PER_PAGE + 1):
+        write(one / ('%016x.json' % i), story('%016x' % i, month=5, slot=i))
+    first = archived.get(PAST + '1997/')[2].decode()
+    second = archived.get(PAST + '1997/?page=2')[2].decode()
+    pattern = r'href="/news/30L1998/past/1997/([0-9a-f]{16})"'
+    on_first, on_second = re.findall(pattern, first), re.findall(pattern, second)
+    assert len(on_first) == server.PER_PAGE and len(on_second) == 3
+    assert not set(on_first) & set(on_second)
+    assert 'Past column' in first and 'Past column' not in second
+    assert 'class="season"' in first and 'class="season"' not in second
+    assert 'class="scouting"' in first and 'class="scouting"' not in second
+    assert '<caption>American League East</caption>' in second
+    assert 'href="/news/30L1998/past/1997/?page=2"' in first
+    assert 'href="/news/30L1998/past/1997/"' in second
+    assert all(h.startswith(PAST + '1997/') or h in ('/', '/news/', '/news/30L1998/') for h in hrefs(second))
+    assert archived.get(PAST + '1997/?page=bad')[2] == archived.get(PAST + '1997/')[2]
+
+
+def test_past_front_page_awards_link_opens_the_past_awards(archived):
+    html = archived.get(PAST + '1997/')[2].decode()
+    assert 'href="/news/30L1998/past/1997/awards"' in html
+    write(archived.root / '30L1998' / 'awards.json', awards_file(headline='Current awards'))
+    write(archived.root / '30L1998' / 'past' / '1997' / 'awards.json', awards_file(headline='Past awards'))
+    status, _, body = archived.get(PAST + '1997/awards')
+    assert status == 200 and 'Past awards' in body.decode() and 'Current awards' not in body.decode()
+    assert 'Current awards' in archived.get('/news/30L1998/awards')[2].decode()
+
+
+def test_past_without_a_slash_redirects_with_the_query(archived):
+    status, headers, body = archived.get(PAST + '1997')
+    assert status == 301 and headers['location'] == PAST + '1997/'
+    assert_secure(headers, body)
+    assert archived.get(PAST + '1998-2?page=2')[1]['location'] == PAST + '1998-2/?page=2'
+
+
+@pytest.mark.parametrize('path', [
+    'past', 'past/', 'past/97', 'past/97/', 'past/1997-123', 'past/1997-123/', 'past/../', 'past/1997/../',
+    'past/%2e%2e/', 'past/1997%2F', 'past/1997%2Fawards', 'past/1999', 'past/1999/', 'past/1999/awards',
+    'past/1997/nope', 'past/1997/awards/', 'past/1997/past/1997/', 'past/1997/moves', 'past/1997/payroll',
+    'past/1997/team/', 'past/1997/team/123', 'past/1997/team/x', 'past/1997/' + PK1 + '0', 'past/1997/meta.json', 'past/1997/recaps/' + PK1 + '.json',
+    'past/%31997/%61wards/x', 'past/1997%0a/', 'past/1996/'])
+def test_bad_or_missing_past_paths_are_404(archived, path):
+    write(archived.root / '30L1998' / 'past' / '1996', 'a file, not a season')
+    status, headers, body = archived.get('/news/30L1998/' + path)
+    assert status == 404
+    assert_secure(headers, body)
+
+
+def test_past_pages_return_200_for_present_files_and_404_for_missing_ones(archived):
+    for tail in (PK1, 'preview', 'awards', 'replay', 'team/5'):
+        status, headers, body = archived.get(PAST + '1997/' + tail)
+        assert status == 200, tail
+        assert_secure(headers, body)
+        assert all(h.startswith(PAST + '1997/') or h in ('/', '/news/') for h in hrefs(body.decode())), tail
+        assert archived.get(PAST + '1998/' + tail)[0] == 404, tail
+    assert archived.get(PAST + '1997/' + 'abcdef0123456789')[0] == 404
+    assert archived.get(PAST + '1997/team/1')[0] == 404
+
+
+def test_past_pages_read_the_past_folder_not_the_current_one(archived):
+    html = archived.get(PAST + '1997/' + PK1)[2].decode()
+    assert 'Past story one' in html
+    assert archived.get('/news/30L1998/' + PK1)[0] == 404
+    assert archived.get(PAST + '1997/' + KEY)[0] == 404
+    assert 'Past Pines' in archived.get(PAST + '1997/team/5')[2].decode()
+    assert 'Ash Gold' not in archived.get(PAST + '1997/team/5')[2].decode()
+
+
+def test_past_story_league_nav_leads_back_to_the_past_front_page(archived):
+    html = archived.get(PAST + '1997/' + PK1)[2].decode()
+    assert 'href="/news/30L1998/past/1997/">&larr;' in html
+    html = archived.get(PAST + '1997/replay')[2].decode()
+    assert 'href="/news/30L1998/past/1997/">&larr;' in html and '1997 Past League' in html
+
+
+def test_past_front_page_with_unreadable_meta_is_404(archived):
+    base = archived.root / '30L1998' / 'past' / '1997'
+    for content in ('{"name": ', '[]', '"x"'):
+        write(base / 'meta.json', content)
+        assert archived.get(PAST + '1997/')[0] == 404
+    (base / 'meta.json').unlink()
+    assert archived.get(PAST + '1997/')[0] == 404
+    assert archived.get(PAST + '1997/' + PK1)[0] == 200      # the other pages do not need the meta
+    assert archived.get(PAST + '1997')[0] == 301
+
+
+def test_past_pages_escape_their_values(archived):
+    base = archived.root / '30L1998' / 'past' / '1997'
+    write(base / 'meta.json', past_meta(1997, name='<b>Bad</b>'))
+    write(base / 'recaps' / (PK1 + '.json'), story(PK1, headline='<script>x</script>'))
+    html = archived.get(PAST + '1997/')[2].decode()
+    assert '<script>' not in html and '<b>Bad</b>' not in html and '&lt;b&gt;Bad&lt;/b&gt;' in html
+    assert '<script>' not in archived.get(PAST + '1997/' + PK1)[2].decode()
+
+
+def test_current_season_without_a_past_folder_has_no_past_routes(seeded):
+    for path in ('past', 'past/', 'past/1997', 'past/1997/'):
+        assert seeded.get('/news/30L1998/' + path)[0] == 404
