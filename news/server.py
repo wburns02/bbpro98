@@ -368,15 +368,16 @@ def _coverage_html(meta):
             % (_comma(stories), _comma(played)))
 
 
-def _lead_html(folder, home, page):
-    """The front page's main column for a season folder: on page 1 the newest 'Around the league' column, then the
-    page's stories (linked under home) and the pager."""
+def _lead_html(folder, home, page, coverage=''):
+    """The front page's main column for a season folder: on page 1 the newest 'Around the league' column and the
+    coverage line, then the page's stories (linked under home) and the pager."""
     stories = _stories(folder)
     lead = []
     if page == 1:
         feed = _latest_feed(folder)
         if feed:
             lead.append(_feed_html(feed))
+        lead.append(coverage)
     shown = stories[(page - 1) * PER_PAGE:page * PER_PAGE]
     if not stories:
         lead.append('<p class="empty">No game stories yet.</p>')
@@ -409,7 +410,7 @@ def _association(data_dir, assn, qs):
     side = (moves + season + past + replay + payroll + scouting + _standings_html(meta.get('standings'))
             + _leaders_html(meta.get('leaders')))
     return _front_page('%s · League News' % name, _masthead(name, _through(meta)), _nav(),
-                       (_coverage_html(meta) if page == 1 else '') + _lead_html(folder, home, page), side)
+                       _lead_html(folder, home, page, _coverage_html(meta)), side)
 
 
 def _past_label(d):

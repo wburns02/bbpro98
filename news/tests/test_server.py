@@ -1479,3 +1479,11 @@ def test_coverage_html_helper_takes_the_meta_object(site):
     assert server._coverage_html({}) == ''
     assert server._coverage_html({'played': 0, 'stories': 0}) == ''
     assert server._coverage_html({'played': None, 'stories': None}) == ''
+
+
+def test_coverage_line_sits_after_the_column_and_before_the_stories(site):
+    write(site.root / '30L1998' / 'meta.json', meta(played=2414, stories=600))
+    write(site.root / '30L1998' / 'feed' / '04-15.json', feed(4, 15, 'Yankees hold the East'))
+    write(site.root / '30L1998' / 'recaps' / (KEY + '.json'), story(KEY))
+    html = site.get('/news/30L1998/')[2].decode()
+    assert html.index('class="feed"') < html.index('class="coverage"') < html.index('class="story"')
