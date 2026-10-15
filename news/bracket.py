@@ -1,8 +1,9 @@
 """The postseason page of a season for the news sidecar: the bracket gamedata.postseason() reads from the ASN, as plain
 facts (team names, series, games) and a template story. No model: the page is the bracket. Pure functions over dicts.
 """
+import recap
 
-ROUND_NAMES = {1: 'Division Series', 2: 'League Championship Series', 3: 'World Series'}
+ROUND_NAMES = recap.ROUND_NAMES      # one table: the postseason recaps and the bracket page name rounds alike
 
 
 def _name(assoc, tid):
