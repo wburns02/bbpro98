@@ -1,7 +1,9 @@
 """Tests for lanestat.py (pure helpers; no game, Wine, xdotool or ImageMagick)."""
+import json
 import os
 import sys
 import time
+from pathlib import Path
 
 import pytest
 
@@ -177,3 +179,164 @@ def test_verdict_idle():
 def test_verdict_none_ages_count_old():
     assert lanestat.verdict(0, None, None, 'busy') == 'stale_paint'
     assert lanestat.verdict(0, None, None, 'assn') == 'idle'
+
+
+# ---- status ----------------------------------------------------------------
+
+class _Ingame:
+    WORK = str(Path('/does/not/exist'))
+
+    @staticmethod
+    def game_pids():
+        return ['77']
+
+    @staticmethod
+    def shot(png):
+        pass
+
+
+def test_status_one_shot_keys(monkeypatch):
+    monkeypatch.setitem(sys.modules, 'ingame', _Ingame)
+    sleeps = []
+    monkeypatch.setattr(time, 'sleep', lambda s: sleeps.append(s))
+    fake = {'n': 0}
+
+    def fake_ticks(pid, proc='/proc'):
+        fake['n'] += 1
+        return 100 if fake['n'] == 1 else 300
+
+    monkeypatch.setattr(lanestat, 'ticks', fake_ticks)
+    s = lanestat.status('2', secs=0.1, no_shot=True)
+    assert sorted(s) == ['dticks', 'lane', 'newest', 'pids', 'screen', 'trace', 'verdict']
+    assert s['lane'] == '2'
+    assert s['pids'] == ['77']
+    assert s['dticks'] == 200 and s['verdict'] == 'working'
+    assert s['newest'] == {'path': None, 'age_s': None}
+    assert s['trace'] == {'line': None, 'age_s': None}
+    assert s['screen'] is None
+    assert os.environ['BBLANE'] == '2' and sleeps == [0.1]
+
+
+def test_main_one_shot_output_unchanged(monkeypatch, capsys):
+    class _None:
+        WORK = str(Path('/does/not/exist'))
+
+        @staticmethod
+        def game_pids():
+            return []
+
+        @staticmethod
+        def shot(png):
+            pass
+
+    monkeypatch.setitem(sys.modules, 'ingame', _None)
+    monkeypatch.setattr(time, 'sleep', lambda s: None)
+    monkeypatch.setattr(lanestat, 'ticks', lambda pid, proc='/proc': 5)
+    assert lanestat.main(['--lane', '2', '--no-shot']) == 0
+    obj = json.loads(capsys.readouterr().out)
+    assert sorted(obj) == sorted(['lane', 'pids', 'dticks', 'newest', 'trace', 'screen', 'verdict'])
+    assert obj['verdict'] == 'no_game'
+
+
+# ---- watch -----------------------------------------------------------------
+
+def fake_clock_log(seq, out_lines, fake_time):
+    def status_fn(lane, secs, shot, no_shot):
+        out_lines.append(('call', seq[0][0] if seq else '?'))
+        s = {'verdict': seq[0][1], 'newest': {'path': seq[0][2], 'age_s': None}}
+        del seq[0]
+        return s
+
+    def slp(_):
+        pass
+
+    return status_fn, slp
+
+
+def run_watch(seq, heartbeat=100.0, limit=None, start=1000.0):
+    """Drive watch with per-call (verdict, path) steps; each step advances the fake clock 1 s."""
+    lines = []
+    it = list(seq)
+
+    def status_fn(lane, secs, shot, no_shot):
+        v, p = it.pop(0)
+        return {'verdict': v, 'newest': {'path': p, 'age_s': None}}
+
+    fake = {'now': start}
+
+    def clock():
+        return fake['now']
+
+    def slp(_):
+        fake['now'] += 1.0
+
+    rc = lanestat.watch('1', 1, secs=0.1, no_shot=True, heartbeat=heartbeat,
+                        status_fn=status_fn, out=lines.append, clock=clock, sleep=slp, limit=len(seq))
+    return rc, [json.loads(x) for x in lines]
+
+
+def test_watch_first_change_path_heartbeat_unchanged():
+    # 202 calls, 1 s apart: heartbeats at 1100 and 1200, nothing beyond.
+    rc, lines = run_watch([('working', '/a')] * 202, heartbeat=100.0)
+    assert rc == 0
+    assert [x['why'] for x in lines] == ['first'] + ['heartbeat'] * 2
+    assert 't' in lines[0] and lines[0]['verdict'] == 'working'
+
+
+def test_watch_change_on_verdict_and_on_path():
+    rc, lines = run_watch([('working', '/a'), ('idle', '/a'), ('idle', '/b')])
+    assert rc == 0
+    assert [x['why'] for x in lines] == ['first', 'change', 'change']
+    assert lines[1]['verdict'] == 'idle' and lines[2]['newest']['path'] == '/b'
+
+
+def test_watch_no_emit_for_unchanged_inside_heartbeat():
+    rc, lines = run_watch([('working', '/a')] * 10, heartbeat=100.0)
+    assert rc == 0
+    assert [x['why'] for x in lines] == ['first']
+
+
+def test_watch_limit_stops_after_n_calls():
+    calls = []
+
+    def status_fn(lane, secs, shot, no_shot):
+        calls.append(1)
+        return {'verdict': 'working', 'newest': {'path': '/a', 'age_s': None}}
+
+    rc = lanestat.watch('1', 1, status_fn=status_fn, out=lambda s: None, clock=time.time,
+                        sleep=lambda _: None, limit=3)
+    assert rc == 0 and len(calls) == 3
+
+
+def test_watch_keyboard_interrupt_returns_0_quietly():
+    calls = []
+
+    def status_fn(lane, secs, shot, no_shot):
+        calls.append(1)
+        return {'verdict': 'working', 'newest': {'path': '/a', 'age_s': None}}
+
+    def slp(_):
+        raise KeyboardInterrupt
+
+    rc = lanestat.watch('1', 1, status_fn=status_fn, out=lambda s: None, clock=time.time, sleep=slp)
+    assert rc == 0 and len(calls) == 1
+
+
+# ---- flag parsing ----------------------------------------------------------
+
+def test_watch_flag_with_shot_exits_2():
+    with pytest.raises(SystemExit) as e:
+        lanestat.main(['--watch', '5', '--shot', '/tmp/x.png'])
+    assert e.value.code == 2
+
+
+def test_watch_zero_exits_2():
+    with pytest.raises(SystemExit) as e:
+        lanestat.main(['--watch', '0'])
+    assert e.value.code == 2
+
+
+def test_heartbeat_negative_exits_2():
+    with pytest.raises(SystemExit) as e:
+        lanestat.main(['--watch', '5', '--heartbeat', '-1'])
+    assert e.value.code == 2
