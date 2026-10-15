@@ -19,8 +19,6 @@ files to SHOTDIR/roll_<n>/ and prints a JSON line of the league's demographics (
 histogram, free agents, retired players), so a change to aging or retirement is measured each offseason rather than
 only at the end. A loaded association that is mid-season plays out its season first.
 """
-import collections
-import datetime
 import glob
 import json
 import os
@@ -439,39 +437,8 @@ def demographics(assn_dir, stem, year):
     """The league's age make-up from the files on disk, ages as of July 1 of `year`: rostered players (in any
     team's r record), free agents (the .pyf list) and retired players (in the PYR but on neither), plus the smallest
     roster and the fewest pitchers (PYR position P) on any team."""
-    recs = {}
-    for p in gamedata._records(_find(assn_dir, stem + '.PYR')):
-        pid = p[0] | p[1] << 8
-        if pid >= 100 and gamedata._pname(p):
-            recs[pid] = p
-    roster, sizes = set(), []
-    for t in gamedata.association(_find(assn_dir, stem + '.ASN'))['teams'].values():
-        roster |= set(t['roster'])
-        mine = [recs[i] for i in t['roster'] if i in recs]
-        sizes.append((len(mine), sum(p[gamedata.P_POS] == 1 for p in mine)))
-    fa = set()
     pyf = _find(assn_dir, stem + '.PYF')
-    if pyf:
-        with open(pyf, 'rb') as fh:
-            b = fh.read()
-        n = struct.unpack_from('<h', b, 8)[0]
-        fa = set(struct.unpack_from('<%dH' % n, b, 10))
-
-    def age(pid):
-        try:
-            born = datetime.date.fromordinal(struct.unpack_from('<I', recs[pid], 0x1a)[0] - 365)
-        except (ValueError, OverflowError):
-            return None
-        return year - born.year - ((7, 1) < (born.month, born.day))
-
-    ra = [a for a in map(age, roster & set(recs)) if a is not None]
-    fa_a = [a for a in map(age, fa & set(recs)) if a is not None]
-    return {'year': year, 'rostered': len(ra), 'mean_age': round(sum(ra) / max(1, len(ra)), 2),
-            'le25': sum(a <= 25 for a in ra), 'ge33': sum(a >= 33 for a in ra),
-            'hist': dict(sorted(collections.Counter(ra).items())), 'fa': len(fa_a),
-            'fa_mean_age': round(sum(fa_a) / max(1, len(fa_a)), 2), 'retired': len(set(recs) - roster - fa),
-            'players': len(recs), 'roster_min': min((n for n, _ in sizes), default=0),
-            'pitchers_min': min((k for _, k in sizes), default=0)}
+    return gamedata.demographics(_find(assn_dir, stem + '.ASN'), _find(assn_dir, stem + '.PYR'), pyf, year)
 
 
 def seasons(h, shots, stem, n, limit, year):

@@ -1,6 +1,7 @@
 """Read what the game wrote for one association: team and schedule data (ASN), player names (PYR) and the per-game
 box scores (Stats/<ASSN>.Hxx). Read-only; the codecs are work/league.py and work/hdecode.py.
 """
+import collections
 import datetime
 import os
 import re
@@ -358,6 +359,45 @@ def free_agents(pyf_path):
     if b[:4] != b'PPD:' or n < 0 or len(b) < 10 + 2 * n:
         raise ValueError('%s: not a PYF file' % pyf_path)
     return set(struct.unpack_from('<%dH' % n, b, 10))
+
+
+def demographics(asn_path, pyr_path, pyf_path, year):
+    """The league's age make-up from the files on disk, ages as of July 1 of `year`: rostered players (in any
+    team's r record), free agents (the .pyf list) and retired players (in the PYR but on neither), plus the smallest
+    roster and the fewest pitchers (PYR position P) on any team. pyf_path None or not a PYF file means no free
+    agents."""
+    recs = {}
+    for p in _records(pyr_path):
+        pid = p[0] | p[1] << 8
+        if pid >= 100 and _pname(p):
+            recs[pid] = p
+    roster, sizes = set(), []
+    for t in association(asn_path)['teams'].values():
+        roster |= set(t['roster'])
+        mine = [recs[i] for i in t['roster'] if i in recs]
+        sizes.append((len(mine), sum(p[P_POS] == 1 for p in mine)))
+    fa = set()
+    if pyf_path is not None:
+        try:
+            fa = free_agents(pyf_path)
+        except ValueError:
+            fa = set()
+
+    def age(pid):
+        try:
+            born = datetime.date.fromordinal(struct.unpack_from('<I', recs[pid], P_BORN)[0] - 365)
+        except (ValueError, OverflowError):
+            return None
+        return year - born.year - ((7, 1) < (born.month, born.day))
+
+    ra = [a for a in map(age, roster & set(recs)) if a is not None]
+    fa_a = [a for a in map(age, fa & set(recs)) if a is not None]
+    return {'year': year, 'rostered': len(ra), 'mean_age': round(sum(ra) / max(1, len(ra)), 2),
+            'le25': sum(a <= 25 for a in ra), 'ge33': sum(a >= 33 for a in ra),
+            'hist': dict(sorted(collections.Counter(ra).items())), 'fa': len(fa_a),
+            'fa_mean_age': round(sum(fa_a) / max(1, len(fa_a)), 2), 'retired': len(set(recs) - roster - fa),
+            'players': len(recs), 'roster_min': min((n for n, _ in sizes), default=0),
+            'pitchers_min': min((k for _, k in sizes), default=0)}
 
 
 def box_files(stats_dir, assn):
