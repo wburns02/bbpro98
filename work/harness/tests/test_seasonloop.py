@@ -461,3 +461,61 @@ def test_offseason_a_long_wait_prints_a_waiting_line(tmp_path, monkeypatch, caps
     lines = _lines(capsys.readouterr().out)
     waiting = [l for l in lines if l.get('offseason') == 'waiting']
     assert waiting and waiting[-1].get('notice') is None and waiting[-1].get('sprung') is True
+
+
+def _book(monkeypatch, post, assoc):
+    monkeypatch.setattr(seasonloop.gamedata, 'postseason', lambda path: post)
+    monkeypatch.setattr(seasonloop.gamedata, 'association', lambda path: assoc)
+
+
+FIXTURE_ASSN = {'name': '1997 Major League Baseball', 'season_year': 1997,
+                'teams': {2: {'name': 'Cubs'}, 7: {'name': 'Yankees'}}, 'games': []}
+
+
+def _bracket(champion, teams, wins):
+    return {'complete': True, 'current': False, 'best_of': [5, 7, 7], 'champion': champion,
+            'rounds': [{'round': 1, 'series': []}, {'round': 2, 'series': []},
+                       {'round': 3, 'series': [{'best_of': 7, 'teams': teams, 'wins': wins,
+                                                'winner': champion, 'home': 0, 'games': []}]}]}
+
+
+def test_champion_complete_bracket_names_both_teams_with_the_champ_wins_first(monkeypatch):
+    # champion is team 7, second in the series block: the score still reads champion first
+    _book(monkeypatch, _bracket(7, [2, 7], [3, 4]), FIXTURE_ASSN)
+    assert seasonloop.champion('X.ASN') == {'season': 1997, 'complete': True, 'champion': 'Yankees',
+                                            'runner_up': 'Cubs', 'series': '4-3'}
+
+
+def test_champion_when_the_champion_is_first_in_the_series(monkeypatch):
+    _book(monkeypatch, _bracket(2, [2, 7], [4, 3]), FIXTURE_ASSN)
+    got = seasonloop.champion('X.ASN')
+    assert (got['champion'], got['runner_up'], got['series']) == ('Cubs', 'Yankees', '4-3')
+
+
+def test_champion_no_bracket(monkeypatch):
+    _book(monkeypatch, None, FIXTURE_ASSN)
+    assert seasonloop.champion('X.ASN') == {'season': 1997, 'champion': None}
+
+
+def test_champion_incomplete_bracket_has_no_champion(monkeypatch):
+    b = _bracket(None, [2, 7], [3, 3])
+    b['complete'] = False
+    _book(monkeypatch, b, FIXTURE_ASSN)
+    got = seasonloop.champion('X.ASN')
+    assert got['complete'] is False and got['champion'] is None and got['runner_up'] is None
+    assert got['series'] is None and got['season'] == 1997
+
+
+def test_champion_team_id_missing_from_teams(monkeypatch):
+    _book(monkeypatch, _bracket(99, [2, 99], [4, 1]), FIXTURE_ASSN)
+    got = seasonloop.champion('X.ASN')
+    assert (got['champion'], got['runner_up']) == ('team 99', 'Cubs')
+
+
+def test_champion_oserror_gives_the_error_dict(monkeypatch):
+    def boom(path):
+        raise OSError('no such file')
+    monkeypatch.setattr(seasonloop.gamedata, 'postseason', boom)
+    monkeypatch.setattr(seasonloop.gamedata, 'association', lambda path: FIXTURE_ASSN)
+    got = seasonloop.champion('X.ASN')
+    assert got['season'] is None and got['champion'] is None and got['error'] == 'no such file'
