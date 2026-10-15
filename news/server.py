@@ -7,6 +7,7 @@ import argparse
 import html
 import http.client
 import json
+import math
 import os
 import re
 import sys
@@ -372,6 +373,26 @@ def _comma(value):
     return '{:,}'.format(value)
 
 
+def _league_html(league):
+    """The League box (the age make-up) for the side column; '' unless league is a dict with a positive int 'rostered'
+    and a finite number 'mean_age'. Only those checked numbers reach the page; a count that is not an int shows as 0."""
+    if not isinstance(league, dict):
+        return ''
+    rostered, age = league.get('rostered'), league.get('mean_age')
+    if type(rostered) is not int or rostered <= 0 or type(age) not in (int, float):
+        return ''
+    try:
+        age = float(age)
+    except OverflowError:
+        return ''
+    if not math.isfinite(age):
+        return ''
+    young, old, free = (_comma(_int(league, k)) for k in ('le25', 'ge33', 'fa'))
+    return ('<section class="league"><h2>League</h2><p>%s players on rosters, mean age %s.</p>'
+            '<p>%s aged 25 or under, %s aged 33 or over. %s free agents.</p></section>'
+            % (_comma(rostered), '%.1f' % age, young, old, free))
+
+
 def _coverage_html(meta):
     """A line for the lead column when the watcher has stories for only part of the played games: '' when the meta
     does not say so (old meta.json, a full run, no games played)."""
@@ -425,7 +446,8 @@ def _association(data_dir, assn, qs):
     replay = _replay_link(folder, home) if page == 1 else ''
     payroll = _payroll_box(data_dir, assn) if page == 1 else ''
     scouting = _scouting_links(folder, home) if page == 1 else ''
-    side = (moves + season + past + replay + payroll + scouting + _standings_html(meta.get('standings'))
+    league = _league_html(meta.get('league')) if page == 1 else ''
+    side = (moves + season + past + replay + payroll + scouting + league + _standings_html(meta.get('standings'))
             + _leaders_html(meta.get('leaders')))
     return _front_page('%s · League News' % name, _masthead(name, _through(meta)), _nav(),
                        _lead_html(folder, home, page, _coverage_html(meta)), side)
@@ -476,7 +498,8 @@ def _past_front(folder, assn, d, qs):
     home = '/news/%s/past/%s/' % (assn, d)
     season = _season_links(folder, home) if page == 1 else ''
     scouting = _scouting_links(folder, home) if page == 1 else ''
-    side = season + scouting + _standings_html(meta.get('standings')) + _leaders_html(meta.get('leaders'))
+    league = _league_html(meta.get('league')) if page == 1 else ''
+    side = season + scouting + league + _standings_html(meta.get('standings')) + _leaders_html(meta.get('leaders'))
     back = '<a href="/news/%s/">&larr; Current season</a> &middot; ' % esc(assn)
     return _front_page('%s · %s · League News' % (name, _past_label(d)), _masthead(name, _through(meta)), _nav(back),
                        _lead_html(folder, home, page), side)
