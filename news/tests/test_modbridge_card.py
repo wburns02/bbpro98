@@ -247,6 +247,117 @@ def test_card_on_the_real_install(tmp_path, monkeypatch):
     assert 'No news yet.' in lines
 
 
+def past_season(folder, d, year, stories, meta=True):
+    """A past/<D> archived season under the watcher folder: meta.json with season_year year (or no meta.json when meta
+    is False) and stories as {key: record}."""
+    rdir = os.path.join(folder, 'past', d, 'recaps')
+    os.makedirs(rdir)
+    if meta:
+        with open(os.path.join(folder, 'past', d, 'meta.json'), 'w', encoding='utf-8') as fh:
+            json.dump({'season_year': year}, fh)
+    for key, rec in stories.items():
+        with open(os.path.join(rdir, key + '.json'), 'w', encoding='utf-8') as fh:
+            json.dump(rec, fh)
+
+
+def test_past_season_story_lists_below_the_current_one_under_its_own_path(card):
+    """A story in past/1976/recaps shows with the /past/1976 link, sorted below this season's story."""
+    ctx, spool, _ = card
+    folder = os.path.join(ctx.data, 'TEST77')
+    watcher(ctx)
+    past_season(folder, '1976', 1976, {'1234567890abcdef': {'headline': 'Pat Doe wins the pennant',
+                                                            'body': 'Pat Doe carried the Reds to October.',
+                                                            'month': 9, 'day': 28, 'slot': 1}})
+    head, _ = page(ctx, spool, '/news/card/TEST77/p/100')
+    assert ('Pat Doe homers twice', '/news/TEST77/' + STORY) in links_of(head)
+    assert ('Pat Doe wins the pennant', '/news/TEST77/past/1976/1234567890abcdef') in links_of(head)
+    assert links_of(head).index(('Pat Doe homers twice', '/news/TEST77/' + STORY)) < \
+        links_of(head).index(('Pat Doe wins the pennant', '/news/TEST77/past/1976/1234567890abcdef'))
+
+
+def test_past_folders_order_newest_season_first_and_meta_beats_the_folder_name(card):
+    """past/1976-2 (meta season_year 1976) sorts with the 1976 stories and below past/1977's, whose story sorts with
+    the current season's by its month and day (an archived season shares the association's year)."""
+    ctx, spool, _ = card
+    folder = os.path.join(ctx.data, 'TEST77')
+    watcher(ctx)
+    past_season(folder, '1977', 1977, {'aaaaaaaaaaaaaaaa': {'headline': 'Pat Doe wins the MVP',
+                                                            'body': 'Pat Doe led the league.', 'month': 5, 'day': 2,
+                                                            'slot': 0}})
+    past_season(folder, '1976', 1976, {'1234567890abcdef': {'headline': 'Pat Doe wins the pennant',
+                                                            'body': 'Pat Doe carried the Reds.', 'month': 9, 'day': 28,
+                                                            'slot': 1}})
+    past_season(folder, '1976-2', 1976, {'bbbbbbbbbbbbbbbb': {'headline': 'Pat Doe re-signs',
+                                                             'body': 'Pat Doe stays with the Reds.', 'month': 10,
+                                                             'day': 5, 'slot': 0}})
+    head, _ = page(ctx, spool, '/news/card/TEST77/p/100')
+    order = [path for _, path in links_of(head)]
+    assert order.index('/news/TEST77/past/1977/aaaaaaaaaaaaaaaa') < \
+        min(order.index('/news/TEST77/past/1976/1234567890abcdef'),
+            order.index('/news/TEST77/past/1976-2/bbbbbbbbbbbbbbbb'))
+    assert abs(order.index('/news/TEST77/past/1976/1234567890abcdef') -
+               order.index('/news/TEST77/past/1976-2/bbbbbbbbbbbbbbbb')) == 1
+
+
+def test_past_folders_that_do_not_match_the_archive_pattern_are_ignored(card):
+    ctx, spool, _ = card
+    folder = os.path.join(ctx.data, 'TEST77')
+    watcher(ctx)
+    past_season(folder, '97', 1976, {'1234567890abcdef': {'headline': 'Pat Doe wins', 'body': 'Pat Doe.',
+                                                          'month': 4, 'day': 1, 'slot': 0}})
+    past_season(folder, '1976-123', 1976, {'234567890abcdef1': {'headline': 'Pat Doe wins again',
+                                                                'body': 'Pat Doe again.', 'month': 4, 'day': 2,
+                                                                'slot': 0}})
+    os.makedirs(os.path.join(folder, 'past', '../x', 'recaps'), exist_ok=True)
+    with open(os.path.join(folder, 'past', '../x', 'recaps', STORY + '.json'), 'w', encoding='utf-8') as fh:
+        json.dump({'headline': 'Pat Doe escapes', 'body': 'Pat Doe outside past/', 'month': 4, 'day': 3,
+                   'slot': 0}, fh)
+    head, _ = page(ctx, spool, '/news/card/TEST77/p/100')
+    labels = [label for label, _ in links_of(head)]
+    assert 'Pat Doe wins' not in labels and 'Pat Doe wins again' not in labels
+    assert 'Pat Doe escapes' not in labels and 'Pat Doe homers twice' in labels
+
+
+def test_an_unreadable_past_meta_falls_back_to_the_year_in_the_folder_name(card):
+    """The invalid meta.json is skipped silently and past/1976 still sorts by its folder year."""
+    ctx, spool, _ = card
+    folder = os.path.join(ctx.data, 'TEST77')
+    watcher(ctx)
+    past_season(folder, '1976', 1976, {'34567890abcdef12': {'headline': 'Pat Doe wins the award',
+                                                            'body': 'Pat Doe is named best player.', 'month': 8,
+                                                            'day': 20, 'slot': 0}}, meta=False)
+    with open(os.path.join(folder, 'past', '1976', 'meta.json'), 'w', encoding='utf-8') as fh:
+        fh.write('{not json')
+    head, _ = page(ctx, spool, '/news/card/TEST77/p/100')
+    assert ('Pat Doe wins the award', '/news/TEST77/past/1976/34567890abcdef12') in links_of(head)
+    order = [path for _, path in links_of(head)]
+    assert order.index('/news/TEST77/' + STORY) < order.index('/news/TEST77/past/1976/34567890abcdef12')
+
+
+def test_the_scan_cap_spent_on_the_current_season_leaves_nothing_for_the_past(card, monkeypatch):
+    """With a lowered CARD_SCAN, story files read in total never exceed it: the current season's are read first."""
+    ctx, spool, _ = card
+    folder = os.path.join(ctx.data, 'TEST77')
+    watcher(ctx)
+    past_season(folder, '1976', 1976, {'aaaaaaaaaaaaaaaa': {'headline': 'Pat Doe wins the MVP',
+                                                            'body': 'Pat Doe led the league.', 'month': 5, 'day': 2,
+                                                            'slot': 0}})
+    read = []
+    real = modbridge.server._read_obj
+
+    def spy(path):
+        read.append(path)
+        return real(path)
+    monkeypatch.setattr(modbridge.server, '_read_obj', spy)
+    monkeypatch.setattr(modbridge, 'CARD_SCAN', 2)
+    head, _ = page(ctx, spool, '/news/card/TEST77/p/100')
+    story_reads = [p for p in read if '/recaps/' in p]
+    assert len(story_reads) <= 2
+    assert os.path.join(folder, 'recaps', STORY + '.json') in story_reads
+    assert os.path.join(folder, 'recaps', OTHER + '.json') in story_reads
+    assert not any(p.startswith(os.path.join(folder, 'past')) for p in story_reads)
+
+
 @pytest.mark.skipif(not os.path.isdir(os.path.join(NEWS, 'MLBPA97')), reason='no watcher data here')
 def test_card_on_the_real_install_with_the_watcher_folder_but_no_stories(tmp_path, monkeypatch):
     ctx, spool = real_ctx(tmp_path, NEWS, monkeypatch)
