@@ -17,6 +17,11 @@ its text; they do not replace it.
   seasons the mean roster age went 28.70, 28.71, 28.65 where the old curve went 28.70, 28.80, 28.93. A `base=` line
   in bbfix.ini's `[aging]` section still overrides the curve.
 
+- **mods\aging.dll, career arcs**: each player now has his own aging arc, fixed by his id and birth date: his decline
+  can start up to three years early or late and be up to 30 percent steeper or gentler than the curve. `arc_years=`
+  and `arc_size=` in `[aging]` change the spread and `arc=off` turns arcs off. The League News team pages show the
+  scouts' read of it for players 28 and older ("ages well", "early decline risk", "steep decline").
+
 ## League News (the Python watcher and its pages, from the source)
 
 - `python3 news/play.py` starts the watcher and the Mods menu's bridge with one command. Ctrl+C stops both; a
@@ -47,6 +52,27 @@ its text; they do not replace it.
   when one is set up, else the template).
 - Roster moves are logged once even when a watcher pass stops partway (a note file that could not be written); the
   missing move notes are written on a later pass.
+- Hall of Fame (career associations): five seasons after a player's last one he is on the ballot, for up to ten
+  ballots. A career score of 75 percent of the bar inducts him with a written induction story, under 5 percent drops
+  him. Each association has a Hall of Fame page with the inductees and the current ballot.
+- Record book: each association's best single seasons and careers, measured against the best real Lahman season
+  before the association began (or a simulated season that beat it). From two fifths of the way through a season,
+  the daily column names up to three players on pace for a record.
+- Draft room: each season's rookie class as the league's scouts graded it, which teams it fills a need for, and a
+  letter grade per team's haul. Three seasons later the page revisits those grades against what the players became.
+- Scouting fog: scouting grades on the news pages are a scout's read, not the true rating. A rookie's read can be off
+  by several points and a seven-season veteran's is nearly exact; a team's own scouts read its players twice as well.
+  The same question always gets the same answer, and nothing in the game changes.
+- Trade deadline (computer GMs): between 55 and 65 percent of the season each computer team decides whether it is
+  buying or selling, and the Mods menu shows the deadline deals it proposes. Accepting one writes it into the
+  association between sessions; a deal goes stale when the rosters it names change. Preseason trades now weigh a
+  player's value by the team's plan (contender, middle, rebuilding) and swap pitchers through the rotation, not the
+  lineup.
+- My Player: follow up to three players from the Mods menu (/follow, /unfollow). Each has a page with his recent games
+  and a weekly column about how he is doing, and the front page lists them.
+- Historical replays with real midseason moves: a season built with `--moves` starts each multi-team player with his
+  first club, and the Mods menu applies the real trades and releases between sessions once the club has played the
+  share of its schedule when the move really happened.
 - The watcher keeps watching when one pass fails (the error is logged), and a day page's previous and next links
   skip days whose file cannot be read.
 
@@ -58,6 +84,13 @@ its text; they do not replace it.
 - The harness can start a plan from a saved association snapshot (`resume` in the plan).
 - news/gamedata.py reports league demographics (age make-up of rosters and free agents) from the ASN, PYR and PYF;
   the harness prints them at every rollover and logs the champion of each season.
+- Era run environments: build.py `--era CONFIG` shifts the ratings of an old season toward its era's run
+  environment (work/lahman/era.json: per-year rating offsets fitted against the real league rates), so a dead-ball
+  season plays like one. work/harness/erarates.py compares a simulated season's BA, HR/AB and BB/AB with the real one.
+- `build.py --moves` writes the season's real midseason moves (from Lahman stints) as a .MOV file next to the ASN.
+- work/harness/referee.py judges a multi-season soak against fixed bands: age drift, roster and pitcher minimums,
+  league rates against the first season or a real one, seasons completed, and crash evidence. It prints PASS or FAIL
+  with the reasons.
 - The harness's progress lines carry the lanestat verdict, so a stalled lane shows in its own log.
 - work/harness/runreport.py LOG prints one summary of a run log: demographics per rollover with the change in mean
   age, champions, seasons, verdict counts and stops (`--json` for the raw summary). It also counts the offseason
