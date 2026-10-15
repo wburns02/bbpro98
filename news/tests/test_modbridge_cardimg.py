@@ -564,3 +564,14 @@ def test_career_line_from_other_data_gives_a_note_not_a_row(pic, monkeypatch):
     assert [r['cells'][0] for r in body['rows']] == ['1975', '1976', 'Total']
     assert body['rows'][-1]['cells'][body['columns'].index('G')] == '300'
     assert body['note'] == 'The game counts 40 more career games; those seasons were not archived.'
+
+
+def test_other_note_uses_the_season_when_nothing_is_archived():
+    rows = [{'year': 1995, 'sim': False}, {'year': 1996, 'sim': False}]
+    assert modbridge._other_note(rows, 2007) == 'Other: 1997 to 2006, seasons simmed before they were saved.'
+    assert modbridge._other_note(rows, 1998) == 'Other: 1997, a season simmed before it was saved.'
+    assert modbridge._other_note(rows, 1997) == FALLBACK
+    assert modbridge._other_note(rows + [{'year': 2003, 'sim': True}], 2007) == \
+        'Other: 1997 to 2002, seasons simmed before they were saved.'
+    assert modbridge._other_note([], 2007) == FALLBACK
+    assert modbridge._other_note(rows, None) == FALLBACK

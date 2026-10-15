@@ -1081,13 +1081,15 @@ def _career(ctx, lg, pid, kind, first, last, born):
     return rows, lid, other
 
 
-def _other_note(rows):
+def _other_note(rows, season=None):
     """The note under an Other row: the years it covers when they fall between the last real season and the first
-    archived one (simmed before archiving existed), else the generic text."""
+    archived one (simmed before archiving existed), or the season before this one when nothing is archived yet; else
+    the generic text."""
     real = [r['year'] for r in rows if not r['sim']]
     played = [r['year'] for r in rows if r['sim']]
-    if real and played:
-        lo, hi = max(real) + 1, min(played) - 1
+    end = min(played) if played else season if type(season) is int else None
+    if real and end is not None:
+        lo, hi = max(real) + 1, end - 1
         if lo <= hi:
             if lo == hi:
                 return 'Other: %d, a season simmed before it was saved.' % lo
@@ -1127,7 +1129,7 @@ def _card_tab_body(ctx, lg, pid, tab, page, p, rec, base, who):
         page = min(page, pages - 1)
         cols = ['Year', 'Team'] + list(BAT_COLS if kind == 'bat' else PIT_COLS)
         if line is not None:
-            note = _other_note(rows)
+            note = _other_note(rows, lg.year)
         elif other is not None:
             note = 'The game counts %d more career games; those seasons were not archived.' % other['g']
         else:
