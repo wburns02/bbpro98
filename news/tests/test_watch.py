@@ -1104,7 +1104,7 @@ def test_a_rewind_moves_the_days_after_the_new_last_day_and_the_awards(tmp_path,
     assert sorted(os.listdir(dest / 'feed')) == ['04-11.json', '04-20.json']
     assert not (out / 'awards.json').exists() and (dest / 'awards.json').exists()
     assert json.loads((dest / 'meta.json').read_text()) == {'season_year': 1998, 'last_day': [4, 20]}
-    assert json.loads((out / 'meta.json').read_text()) == {'season_year': 1998, 'last_day': [4, 20]}
+    assert json.loads((out / 'meta.json').read_text()) == {'season_year': 1998, 'last_day': [4, 10]}
     for stays in ('preview.json', 'replay.json', 'contracts.json', 'pending/p.json', 'scout/3.json',
                   'history/1998.json', 'moves/log.json', 'notes/1.json'):
         assert (out / stays).exists() and not (dest / stays).exists()
