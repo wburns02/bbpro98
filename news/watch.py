@@ -7,7 +7,7 @@ league' column per played date, and each association's standings and leaders. se
 Data layout (server.py reads it):
     <data>/budget.json, <data>/limits.json            hive.Budget state and its limits
     <data>/teamnames.json                              full Lahman team names (optional; news/teamnames.py)
-    <data>/<ASSN>/meta.json                            name, season_year, last_day, standings, leaders, updated
+    <data>/<ASSN>/meta.json                            name, season_year, last_day, played, stories, standings, leaders, updated
     <data>/<ASSN>/recaps/<key>.json                    key = first 16 hex chars of the box score file's sha1
     <data>/<ASSN>/feed/<MM>-<DD>.json                  one column per played date
     <data>/<ASSN>/preview.json, awards.json            season preview (once), season awards (once all games are played)
@@ -79,6 +79,14 @@ def read_json(path):
 def year_of(value):
     """The season year when it is an int (a bool is not one), else None."""
     return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def story_count(out):
+    """How many *.json files <out>/recaps holds: one story per box score the watcher turned into one."""
+    try:
+        return sum(1 for f in os.listdir(os.path.join(out, 'recaps')) if f.endswith('.json'))
+    except OSError:
+        return 0
 
 
 # What a season leaves in <data>/<ASSN>/ that the next season starts without; the rest (history/, moves/,
@@ -175,7 +183,8 @@ class Watcher:
         write_json(os.path.join(out, 'meta.json'), {
             'assn': stem, 'name': assoc['name'], 'season_year': year_of(assoc.get('season_year')),
             'updated': now_iso(), 'last_day': list(last) if last else None,
-            'standings': feed.standings(assoc), 'leaders': feed.leaders(season, names, teams_played)})
+            'standings': feed.standings(assoc), 'leaders': feed.leaders(season, names, teams_played),
+            'played': sum(1 for g in assoc['games'] if g['played']), 'stories': story_count(out)})
         self.season_pieces(out, assoc, names, dat, pyr)
         self.history_piece(assoc, stem, dat)
         self.moves(out, assoc, pyr, dat)

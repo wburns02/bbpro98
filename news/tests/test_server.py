@@ -1427,3 +1427,63 @@ def test_past_pages_escape_their_values(archived):
 def test_current_season_without_a_past_folder_has_no_past_routes(seeded):
     for path in ('past', 'past/', 'past/1997', 'past/1997/'):
         assert seeded.get('/news/30L1998/' + path)[0] == 404
+
+
+def test_coverage_line_when_stories_fall_short_of_played(site):
+    write(site.root / '30L1998' / 'meta.json', meta(played=2414, stories=600))
+    write(site.root / '30L1998' / 'recaps' / (KEY + '.json'), story(KEY))
+    status, _, body = site.get('/news/30L1998/')
+    html = body.decode()
+    assert status == 200
+    assert '<p class="coverage">Stories for 600 of 2,414 games played.' in html
+    assert 'misses the games in between' in html
+    assert html.index('class="coverage"') < html.index('class="story"')
+
+
+def test_coverage_line_is_on_the_front_page_only(site):
+    write(site.root / '30L1998' / 'recaps' / (KEY2 + '.json'), story(KEY2))
+    write(site.root / '30L1998' / 'meta.json', meta(played=2414, stories=600))
+    write(site.root / '30L1998' / 'recaps' / (KEY + '.json'), story(KEY))
+    assert '600 of 2,414' in site.get('/news/30L1998/')[2].decode()
+    assert '600 of 2,414' not in site.get('/news/30L1998/?page=2')[2].decode()
+
+
+def test_coverage_line_is_escaped(site):
+    write(site.root / '30L1998' / 'meta.json',
+          meta(name='<b>Bad</b>', played=2414, stories=600, last_day=[4, 15]))
+    html = site.get('/news/30L1998/')[2].decode()
+    assert '<b>Bad</b>' not in html and '&lt;b&gt;Bad&lt;/b&gt;' in html
+
+
+def test_no_coverage_line_when_every_game_is_covered_or_the_keys_are_old(site):
+    write(site.root / '30L1998' / 'meta.json', meta())
+    base = site.get('/news/30L1998/')[2]
+    write(site.root / '30L1998' / 'meta.json', meta(played=2414, stories=2414))
+    assert site.get('/news/30L1998/')[2] == base
+    write(site.root / '30L1998' / 'meta.json', meta())          # old meta.json, no keys
+    assert site.get('/news/30L1998/')[2] == base
+    write(site.root / '30L1998' / 'meta.json', meta(played=0, stories=0))
+    assert site.get('/news/30L1998/')[2] == base
+    write(site.root / '30L1998' / 'meta.json', meta(played=True, stories=0))
+    assert site.get('/news/30L1998/')[2] == base
+    write(site.root / '30L1998' / 'meta.json', meta(played=60, stories=False))
+    assert site.get('/news/30L1998/')[2] == base
+    write(site.root / '30L1998' / 'meta.json', meta(played=60, stories='600'))
+    assert site.get('/news/30L1998/')[2] == base
+
+
+def test_coverage_html_helper_takes_the_meta_object(site):
+    assert server._coverage_html({'played': 2414, 'stories': 600}) == (
+        '<p class="coverage">Stories for 600 of 2,414 games played. The game keeps box scores for seven sim days; '
+        'a watcher that is not running during a long sim misses the games in between.</p>')
+    assert server._coverage_html({}) == ''
+    assert server._coverage_html({'played': 0, 'stories': 0}) == ''
+    assert server._coverage_html({'played': None, 'stories': None}) == ''
+
+
+def test_coverage_line_sits_after_the_column_and_before_the_stories(site):
+    write(site.root / '30L1998' / 'meta.json', meta(played=2414, stories=600))
+    write(site.root / '30L1998' / 'feed' / '04-15.json', feed(4, 15, 'Yankees hold the East'))
+    write(site.root / '30L1998' / 'recaps' / (KEY + '.json'), story(KEY))
+    html = site.get('/news/30L1998/')[2].decode()
+    assert html.index('class="feed"') < html.index('class="coverage"') < html.index('class="story"')
