@@ -17,9 +17,13 @@ POSITIONS = {'C': 'catcher', '1B': 'first baseman', '2B': 'second baseman', '3B'
              'LF': 'left fielder', 'CF': 'center fielder', 'RF': 'right fielder'}
 
 
-def snapshot(players):
-    """What the next season compares against: {'ids': [[pid, name, born], ...]} for every player, sorted by pid."""
-    return {'ids': sorted([pid, p['name'], p['born']] for pid, p in players.items())}
+def snapshot(players, season=None):
+    """What the next season compares against: {'ids': [[pid, name, born], ...]} for every player, sorted by pid, and
+    'season' (the year the snapshot was taken in) when season is an int (a bool is not one)."""
+    snap = {'ids': sorted([pid, p['name'], p['born']] for pid, p in players.items())}
+    if isinstance(season, int) and not isinstance(season, bool):
+        snap['season'] = season
+    return snap
 
 
 def _known(prev):

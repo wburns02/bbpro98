@@ -495,22 +495,25 @@ class Watcher:
     def rookie_class(self, out, assoc, pyr):
         """The rookie class (rookies.py), written once per season. rookies/ids.json holds the players of the season last
         seen. Without it the PYR is read once as the baseline, and no class is written. At a rollover (the stem is in
-        rookies_due, kept until this succeeds) the players new since that snapshot are the class, written to
-        rookies/<season_year>.json unless that file exists, and the snapshot becomes the new season's. Other passes do
-        not read the PYR. Nothing is written for an empty PYR, which would make every player of the next season new."""
+        rookies_due, kept until this succeeds, or the snapshot records another season than this one, which survives a
+        restart) the players new since that snapshot are the class, written to rookies/<season_year>.json unless that
+        file exists, and the snapshot becomes the new season's. Other passes do not read the PYR. Nothing is written
+        for an empty PYR, which would make every player of the next season new."""
         stem = os.path.basename(out)
         if pyr is None:
             return
         path = os.path.join(out, 'rookies', 'ids.json')
         prev = read_json(path)
-        if prev is not None and stem not in self.rookies_due:
+        year = year_of(assoc.get('season_year'))
+        due = stem in self.rookies_due or (isinstance(prev, dict) and year_of(prev.get('season')) is not None
+                                           and year is not None and prev['season'] != year)
+        if prev is not None and not due:
             return
         players = gamedata.players(pyr)
         if not players:
             return
-        year = year_of(assoc.get('season_year'))
         dest = os.path.join(out, 'rookies', '%s.json' % year)
-        pids = rookies.newcomers(players, prev) if stem in self.rookies_due else []
+        pids = rookies.newcomers(players, prev) if due else []
         if pids and year is not None and not os.path.exists(dest):
             facts = rookies.class_facts(assoc, players, pids, year)
             piece = _llm_or_template(rookies.write, facts, self.budget, self.complete)
@@ -518,7 +521,7 @@ class Watcher:
                 piece = dict(rookies.template(facts), source='template', reason='off')
             write_json(dest, dict(piece, kind='rookies', season=year, facts=facts, created=now_iso()))
             self.log('%s rookie class %d: %d players (%s)' % (stem, year, len(pids), piece['source']))
-        write_json(path, rookies.snapshot(players))
+        write_json(path, rookies.snapshot(players, year))
         self.rookies_due.discard(stem)
 
     def moves(self, out, assoc, pyr, dat):
