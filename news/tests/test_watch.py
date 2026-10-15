@@ -5,6 +5,7 @@ import os
 import struct
 import sqlite3
 import sys
+import time
 
 import pytest
 
@@ -1057,3 +1058,191 @@ def test_the_class_goes_to_the_model_when_there_is_one(rookie_world, monkeypatch
     assert calls == [1]
     assert (rec['headline'], rec['source'], rec['kind'], rec['season']) == ('Fresh faces', 'glm', 'rookies', 1998)
     assert '30L1998 rookie class 1998: 1 players (glm)' in st['lines']
+
+
+FIXED_NOW = 1000000000      # 2001-09-09 01:46:40 UTC
+FIXED_NAME = 'rewind-20010909T014640'
+
+
+def story_file(out, key, month, day):
+    (out / 'recaps').mkdir(parents=True, exist_ok=True)
+    (out / 'recaps' / (key + '.json')).write_text(json.dumps({'key': key, 'month': month, 'day': day, 'slot': 0}))
+
+
+def rewinding(tmp_path, monkeypatch, meta=None):
+    """An association folder at 04-20 of 1998 with stories and columns on 04-05, 04-10, 04-11 and 04-20, and a Watcher
+    whose clock is fixed."""
+    out = tmp_path / 'data' / 'A'
+    out.mkdir(parents=True)
+    (out / 'meta.json').write_text(json.dumps({'season_year': 1998, 'last_day': [4, 20]} if meta is None else meta))
+    for key, (month, day) in {'a5': (4, 5), 'a10': (4, 10), 'b11': (4, 11), 'b20': (4, 20)}.items():
+        story_file(out, key, month, day)
+        (out / 'feed').mkdir(exist_ok=True)
+        (out / 'feed' / ('%02d-%02d.json' % (month, day))).write_text('{}')
+    for name in ('awards.json', 'preview.json', 'replay.json', 'contracts.json', 'pending/p.json', 'scout/3.json',
+                 'history/1998.json', 'moves/log.json', 'notes/1.json'):
+        (out / name).parent.mkdir(parents=True, exist_ok=True)
+        (out / name).write_text('{}')
+    fixed = time.gmtime(FIXED_NOW)
+    monkeypatch.setattr(time, 'gmtime', lambda *a: fixed)
+    return out, *rolling(tmp_path)
+
+
+def played_through(month, day, year=1998):
+    return {'season_year': year, 'games': [{'month': 4, 'day': 3, 'played': True},
+                                           {'month': month, 'day': day, 'played': True},
+                                           {'month': 5, 'day': 1, 'played': False}]}
+
+
+def test_a_rewind_moves_the_days_after_the_new_last_day_and_the_awards(tmp_path, monkeypatch):
+    out, w, lines = rewinding(tmp_path, monkeypatch)
+    assert w.rewind('A', str(out), played_through(4, 10)) == FIXED_NAME
+    dest = out / 'past' / FIXED_NAME
+    assert sorted(os.listdir(out / 'recaps')) == ['a10.json', 'a5.json']
+    assert sorted(os.listdir(dest / 'recaps')) == ['b11.json', 'b20.json']
+    assert sorted(os.listdir(out / 'feed')) == ['04-05.json', '04-10.json']
+    assert sorted(os.listdir(dest / 'feed')) == ['04-11.json', '04-20.json']
+    assert not (out / 'awards.json').exists() and (dest / 'awards.json').exists()
+    assert json.loads((dest / 'meta.json').read_text()) == {'season_year': 1998, 'last_day': [4, 20]}
+    assert json.loads((out / 'meta.json').read_text()) == {'season_year': 1998, 'last_day': [4, 10]}
+    for stays in ('preview.json', 'replay.json', 'contracts.json', 'pending/p.json', 'scout/3.json',
+                  'history/1998.json', 'moves/log.json', 'notes/1.json'):
+        assert (out / stays).exists() and not (dest / stays).exists()
+    assert sorted(os.listdir(dest)) == ['awards.json', 'feed', 'meta.json', 'recaps']
+    assert lines == ['A rewound from 04-20 to 04-10: 2 stories, 2 columns moved to past/' + FIXED_NAME]
+
+
+def test_a_rewind_to_before_the_first_game_moves_every_dated_story(tmp_path, monkeypatch):
+    out, w, lines = rewinding(tmp_path, monkeypatch)
+    story_file(out, 'undated', 4, 1)
+    (out / 'recaps' / 'undated.json').write_text(json.dumps({'key': 'undated', 'slot': 0}))
+    (out / 'recaps' / 'broken.json').write_text('{not json')
+    (out / 'recaps' / 'strings.json').write_text(json.dumps({'month': '4', 'day': '30'}))
+    (out / 'recaps' / 'list.json').write_text('[]')
+    (out / 'recaps' / 'note.txt').write_text('x')
+    (out / 'feed' / 'other.json').write_text('{}')
+    assoc = {'season_year': 1998, 'games': [{'month': 4, 'day': 1, 'played': False}]}
+    assert w.rewind('A', str(out), assoc) == FIXED_NAME
+    dest = out / 'past' / FIXED_NAME
+    assert sorted(os.listdir(dest / 'recaps')) == ['a10.json', 'a5.json', 'b11.json', 'b20.json']
+    assert sorted(os.listdir(out / 'recaps')) == ['broken.json', 'list.json', 'note.txt', 'strings.json', 'undated.json']
+    assert sorted(os.listdir(out / 'feed')) == ['other.json']
+    assert lines == ['A rewound from 04-20 to opening day: 4 stories, 4 columns moved to past/' + FIXED_NAME]
+
+
+@pytest.mark.parametrize('meta,assoc', [
+    ({}, played_through(4, 20)),                                        # same last day
+    ({}, played_through(4, 25)),                                        # later
+    ({}, played_through(5, 1)),
+    ({}, played_through(4, 10, year=1999)),                             # another season: the rollover's
+    ({}, played_through(4, 10, year=None)),
+    ({}, played_through(4, 10, year=True)),
+    ({'season_year': None}, played_through(4, 10)),
+    ({'season_year': True}, played_through(4, 10, year=True)),
+    ({'season_year': '1998'}, played_through(4, 10)),
+    ({'last_day': None}, played_through(4, 10)),
+    ({'last_day': [4]}, played_through(4, 10)),
+    ({'last_day': [4, 20, 1]}, played_through(4, 10)),
+    ({'last_day': ['4', 20]}, played_through(4, 10)),
+    ({'last_day': [4, 20.0]}, played_through(4, 10)),
+    ({'last_day': [4, True]}, played_through(4, 10)),
+    ({'last_day': '04-20'}, played_through(4, 10)),
+    ({'last_day': {'month': 4}}, played_through(4, 10)),
+])
+def test_no_rewind_unless_the_same_season_is_back_before_its_last_day(tmp_path, monkeypatch, meta, assoc):
+    out, w, lines = rewinding(tmp_path, monkeypatch, meta=dict({'season_year': 1998, 'last_day': [4, 20]}, **meta))
+    before = sorted(str(p) for p in out.rglob('*'))
+    assert w.rewind('A', str(out), assoc) is None
+    assert lines == [] and not (out / 'past').exists() and sorted(str(p) for p in out.rglob('*')) == before
+
+
+def test_no_rewind_without_a_last_day_or_a_year_in_meta(tmp_path, monkeypatch):
+    out, w, lines = rewinding(tmp_path, monkeypatch, meta={'season_year': 1998})
+    assert w.rewind('A', str(out), played_through(4, 10)) is None
+    (out / 'meta.json').write_text(json.dumps({'last_day': [4, 20]}))
+    assert w.rewind('A', str(out), played_through(4, 10)) is None
+    assert lines == [] and not (out / 'past').exists() and (out / 'awards.json').exists()
+
+
+def test_no_rewind_without_a_readable_meta_dict(tmp_path, monkeypatch):
+    out, w, lines = rewinding(tmp_path, monkeypatch)
+    for text in ('{not json', '[4, 20]', 'null'):
+        (out / 'meta.json').write_text(text)
+        assert w.rewind('A', str(out), played_through(4, 10)) is None
+    (out / 'meta.json').unlink()
+    assert w.rewind('A', str(out), played_through(4, 10)) is None
+    assert lines == [] and not (out / 'past').exists() and (out / 'recaps' / 'b20.json').exists()
+
+
+def test_a_second_rewind_in_the_same_second_gets_a_numbered_folder(tmp_path, monkeypatch):
+    out, w, lines = rewinding(tmp_path, monkeypatch)
+    resimmed = json.dumps({'season_year': 1998, 'last_day': [4, 20]})     # a pass wrote meta at 04-20 again
+    assert w.rewind('A', str(out), played_through(4, 10)) == FIXED_NAME
+    story_file(out, 'c15', 4, 15)
+    (out / 'meta.json').write_text(resimmed)
+    assert w.rewind('A', str(out), played_through(4, 10)) == FIXED_NAME + '-2'
+    story_file(out, 'c16', 4, 16)
+    (out / 'meta.json').write_text(resimmed)
+    assert w.rewind('A', str(out), played_through(4, 10)) == FIXED_NAME + '-3'
+    assert sorted(os.listdir(out / 'past' / FIXED_NAME / 'recaps')) == ['b11.json', 'b20.json']
+    assert os.listdir(out / 'past' / (FIXED_NAME + '-2') / 'recaps') == ['c15.json']
+    assert os.listdir(out / 'past' / (FIXED_NAME + '-3') / 'recaps') == ['c16.json']
+    assert lines[1] == 'A rewound from 04-20 to 04-10: 1 stories, 0 columns moved to past/' + FIXED_NAME + '-2'
+
+
+def test_a_rewind_sets_meta_to_the_new_last_day_so_the_next_pass_does_not_rewind_again(tmp_path, monkeypatch):
+    out, w, lines = rewinding(tmp_path, monkeypatch)
+    assert w.rewind('A', str(out), played_through(4, 10)) == FIXED_NAME
+    meta = json.loads((out / 'meta.json').read_text())
+    assert meta == {'season_year': 1998, 'last_day': [4, 10]}
+    assert json.loads((out / 'past' / FIXED_NAME / 'meta.json').read_text())['last_day'] == [4, 20]
+    assert w.rewind('A', str(out), played_through(4, 10)) is None
+    assert os.listdir(out / 'past') == [FIXED_NAME] and len(lines) == 1
+
+
+def test_a_rewind_move_that_fails_leaves_the_rest_for_the_next_pass(tmp_path, monkeypatch):
+    out, w, lines = rewinding(tmp_path, monkeypatch)
+    real = os.replace
+
+    def replace(src, dst):
+        if os.path.basename(src) == '04-20.json':
+            raise OSError('disk')
+        real(src, dst)
+
+    monkeypatch.setattr(os, 'replace', replace)
+    with pytest.raises(OSError):
+        w.rewind('A', str(out), played_through(4, 10))
+    assert (out / 'past' / FIXED_NAME / 'recaps' / 'b20.json').exists() and (out / 'feed' / '04-20.json').exists()
+    assert (out / 'awards.json').exists() and lines == []
+    monkeypatch.setattr(os, 'replace', real)
+    assert w.rewind('A', str(out), played_through(4, 10)) == FIXED_NAME + '-2'
+    assert not (out / 'feed' / '04-20.json').exists() and not (out / 'awards.json').exists()
+
+
+def test_a_scan_after_a_restore_writes_stories_for_the_re_simmed_days(world, monkeypatch):
+    gd, data, st = world
+    out = data / '30L1998'
+    named(monkeypatch, '1998 Test', season_year=1998)
+    st['boxfile']('30L1998.H10', {'away': side(1, 3, 100), 'home': side(2, 1, 200)})
+    st['boxfile']('30L1998.H20', {'away': side(2, 0, 200), 'home': side(1, 5, 100)})
+    lines = []
+    watch.Watcher(str(gd), str(data), None, None, log=lines.append).scan()
+    first = {s['day']: s['key'] for s in stories(data)}
+    assert sorted(first) == [1, 2] and json.loads((out / 'meta.json').read_text())['last_day'] == [4, 2]
+    (out / 'awards.json').write_text('{}')
+    st['games'][1].update(played=False, away_runs=0, home_runs=0)           # the backup: day 2 is still to play
+    watch.Watcher(str(gd), str(data), None, None, log=lines.append).scan()
+    (rewound,) = os.listdir(out / 'past')
+    assert rewound.startswith('rewind-') and [s['day'] for s in stories(data)] == [1]
+    assert os.listdir(out / 'past' / rewound / 'recaps') == [first[2] + '.json']
+    assert os.listdir(out / 'past' / rewound / 'feed') == ['04-02.json'] and (out / 'past' / rewound / 'awards.json').exists()
+    assert sorted(os.listdir(out / 'feed')) == ['04-01.json'] and not (out / 'awards.json').exists()
+    assert lines[-1].startswith('30L1998 rewound from 04-02 to 04-01: 1 stories, 1 columns moved to past/rewind-')
+    assert json.loads((out / 'meta.json').read_text())['last_day'] == [4, 1]
+    st['games'][1].update(played=True, away_runs=1, home_runs=2)            # the same day, played out differently
+    st['boxfile']('30L1998.H20', {'away': side(2, 1, 200), 'home': side(1, 2, 100)})
+    watch.Watcher(str(gd), str(data), None, None, log=lines.append).scan()
+    again = {s['day']: s['key'] for s in stories(data)}
+    assert sorted(again) == [1, 2] and again[1] == first[1] and again[2] != first[2]
+    assert sorted(os.listdir(out / 'feed')) == ['04-01.json', '04-02.json']
+    assert os.listdir(out / 'past') == [rewound]                            # one rewind, not one per scan

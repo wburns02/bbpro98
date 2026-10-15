@@ -178,6 +178,7 @@ class Watcher:
         season = gamedata.season_lines(dat) if dat else {'bat': {}, 'pit': {}}
         if self.rollover(stem, out, assoc) is not None:
             self.rookies_due.add(stem)
+        self.rewind(stem, out, assoc)
         self.capture(stem)
         self.columns(out, assoc, names, season)      # first: a few calls a day, and the page leads with them
         self.recaps(stem, out, assoc, names, stats_dir)
@@ -218,6 +219,58 @@ class Watcher:
             if os.path.lexists(os.path.join(out, entry)):
                 os.replace(os.path.join(out, entry), os.path.join(dest, entry))
         self.log('%s season %d news archived to past/%s' % (stem, stored, name))
+        return name
+
+    def rewind(self, stem, out, assoc):
+        """A restored ASN backup puts the association back in time inside one season. When meta.json holds the same
+        season year and a last_day later than the association's own (or the association has played nothing), the
+        abandoned days' stories (recaps/ with a month and day after the new last day), columns (feed/<MM>-<DD>.json)
+        and awards.json move to <out>/past/rewind-<UTC YYYYmmddTHHMMSS>/ (-2, -3 ... for a name already taken;
+        meta.json is copied), so the re-simmed games get stories again. Everything else stays. Returns that folder's
+        name, or None when there was no rewind. An OSError part way propagates to scan(), which logs it; what was not
+        moved stays, and the next pass tries again."""
+        meta = read_json(os.path.join(out, 'meta.json'))
+        if not isinstance(meta, dict):
+            return None
+        year, old = year_of(meta.get('season_year')), meta.get('last_day')
+        if year is None or year != year_of(assoc.get('season_year')):
+            return None
+        if not (isinstance(old, list) and len(old) == 2 and all(type(v) is int for v in old)):
+            return None
+        now = feed.last_day(assoc)
+        if now is not None and not tuple(now) < tuple(old):
+            return None
+        after = lambda month, day: now is None or (month, day) > tuple(now)
+        base = 'rewind-' + time.strftime('%Y%m%dT%H%M%S', time.gmtime())
+        name, n = base, 1
+        while os.path.exists(os.path.join(out, 'past', name)):
+            n += 1
+            name = '%s-%d' % (base, n)
+        dest = os.path.join(out, 'past', name)
+        os.makedirs(dest)
+        shutil.copyfile(os.path.join(out, 'meta.json'), os.path.join(dest, 'meta.json'))
+        stories = columns = 0
+        rdir, fdir = os.path.join(out, 'recaps'), os.path.join(out, 'feed')
+        for f in sorted(os.listdir(rdir)) if os.path.isdir(rdir) else []:
+            r = read_json(os.path.join(rdir, f)) if f.endswith('.json') else None
+            if isinstance(r, dict) and type(r.get('month')) is int and type(r.get('day')) is int \
+                    and after(r['month'], r['day']):
+                os.makedirs(os.path.join(dest, 'recaps'), exist_ok=True)
+                os.replace(os.path.join(rdir, f), os.path.join(dest, 'recaps', f))
+                stories += 1
+        for f in sorted(os.listdir(fdir)) if os.path.isdir(fdir) else []:
+            m = re.fullmatch(r'([0-9]{2})-([0-9]{2})\.json', f)
+            if m and after(int(m.group(1)), int(m.group(2))):
+                os.makedirs(os.path.join(dest, 'feed'), exist_ok=True)
+                os.replace(os.path.join(fdir, f), os.path.join(dest, 'feed', f))
+                columns += 1
+        if os.path.lexists(os.path.join(out, 'awards.json')):
+            os.replace(os.path.join(out, 'awards.json'), os.path.join(dest, 'awards.json'))
+        # meta.json now says the new last day, so a pass that fails before association() rewrites it does not rewind
+        # again (one empty past/rewind-* folder per pass)
+        write_json(os.path.join(out, 'meta.json'), dict(meta, last_day=list(now) if now is not None else None))
+        self.log('%s rewound from %02d-%02d to %s: %d stories, %d columns moved to past/%s' % (
+            stem, old[0], old[1], 'opening day' if now is None else '%02d-%02d' % tuple(now), stories, columns, name))
         return name
 
     def archived(self, out):
