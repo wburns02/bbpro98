@@ -16,6 +16,7 @@ Data layout (server.py reads it):
     <data>/<ASSN>/moves/log.json, notes/<n>.json       roster moves and milestones, newest last; a note per notable one
     <data>/<ASSN>/moves/last.json                      the snapshot the next scan diffs against
     <data>/<ASSN>/contracts.json                       contracts and payrolls, priced from news/salary_table.json
+    <data>/<ASSN>/hof.json, hof/<YEAR>-<PID>.json      the Hall of Fame (once a season year) and an induction story each
     <data>/<ASSN>/replay.json                          the season against its Lahman namesake (with --db; replay.py)
     <data>/<ASSN>/past/<YEAR>/                         the last seasons' news, moved there at each rollover
 
@@ -42,6 +43,7 @@ import contracts  # noqa: E402
 import feed      # noqa: E402
 import gamedata  # noqa: E402
 import history   # noqa: E402
+import hof       # noqa: E402
 import hive      # noqa: E402
 import moves     # noqa: E402
 import recap     # noqa: E402
@@ -55,6 +57,7 @@ SETTLE = 5            # seconds a game file must sit unchanged before it is read
 LLM_DAYS = 3          # columns for the newest dates go to the model; older dates get the template
 SCOUT_CALLS = 3       # scouting reports asked of the model per scan, so a backfill never holds up box scores
 MOVE_CALLS = 3        # transaction notes asked of the model per scan; the rest of a scan's notes get the template
+HOF_CALLS = 3         # induction stories asked of the model per scan; the rest wait for a later scan
 MOVE_KEEP = 3000      # events kept in moves/log.json
 MOVE_CATCHUP = 20     # missing notes of this season written per pass, after an interrupted pass left some out
 DEFAULT_TABLE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'salary_table.json')
@@ -95,7 +98,7 @@ def story_count(out):
 
 
 # What a season leaves in <data>/<ASSN>/ that the next season starts without; the rest (history/, moves/,
-# contracts.json, notes/) spans seasons.
+# contracts.json, notes/, hof.json, hof/) spans seasons.
 SEASON_ENTRIES = ('recaps', 'pending', 'feed', 'scout', 'preview.json', 'awards.json', 'replay.json',
                   'postseason.json')
 
@@ -149,7 +152,10 @@ class Watcher:
         self.captured = {}      # stem -> box score keys already in pending/ or recaps/
         self.scout_left = SCOUT_CALLS   # model scouting reports left in this scan
         self.move_left = MOVE_CALLS     # model transaction notes left in this scan
+        self.hof_left = HOF_CALLS       # model induction stories left in this scan
         self.scouting_open = set()      # stems with teams still waiting for a scouting report
+        self.hof_open = set()           # stems with inductees still waiting for a story
+        self.hof_bad = set()            # stems whose hof.json does not parse: logged once, never overwritten
         self.real_seasons = {}  # (year, leagues) -> replay.real(): the database is read once per season
         self.off_season = set() # stems whose season_year is not the year their name gives: logged once
         self.rookies_due = set()    # stems that rolled into a new season whose rookie class is not written yet
@@ -177,10 +183,11 @@ class Watcher:
     def scan(self):
         self.scout_left = SCOUT_CALLS
         self.move_left = MOVE_CALLS
+        self.hof_left = HOF_CALLS
         for stem, asn_path in sorted(associations(self.game).items()):
             try:
                 sig = self.signature(stem, asn_path)
-                if self.seen.get(stem) == sig and stem not in self.scouting_open:
+                if self.seen.get(stem) == sig and stem not in self.scouting_open and stem not in self.hof_open:
                     continue
                 self.association(stem, asn_path)
                 # Files younger than SETTLE were left for later; only a settled set may be skipped next time.
@@ -215,6 +222,7 @@ class Watcher:
         self.season_pieces(out, assoc, names, dat, pyr)
         self.postseason_piece(out, assoc, asn_path)
         self.history_piece(assoc, stem, dat)
+        self.hof_piece(out, assoc, stem, pyr)
         self.moves(out, assoc, pyr, dat)
         self.contracts_piece(out, assoc, pyr, dat)
         self.replay_piece(out, assoc, names, season)
@@ -362,6 +370,133 @@ class Watcher:
             if any(line.get('g') for kind in lines.values() for line in kind.values()):
                 if history.archive_season(self.data, stem, y, lines, teams if scope == 1 else None):
                     self.log('%s history %d archived' % (stem, y))
+
+    def hof_piece(self, out, assoc, stem, pyr):
+        """The Hall of Fame (hof.py), once per season year: when hof.json is missing or holds an earlier year's ballot
+        and a history archive exists, this season year's ballot is held and hof.json written (an association with no
+        history, a real-only one, writes nothing). Then every inductee without a story gets one in
+        hof/<year>-<pid>.json: the model's while this scan has HOF_CALLS left (the rest wait for later scans, the stem
+        staying in hof_open), the template when there is no model. A hof.json that does not parse is left alone and
+        logged once. A read that fails (a torn PYR or PYF, a bad Lahman file) is logged and the ballot tried again on
+        the next pass; the pieces after this one still run."""
+        path = os.path.join(out, 'hof.json')
+        old = read_json(path)
+        if old is None and os.path.lexists(path):
+            if stem not in self.hof_bad:
+                self.hof_bad.add(stem)
+                self.log('%s hof: hof.json does not parse, left alone' % stem)
+            return
+        year = year_of(assoc.get('season_year'))
+        try:
+            if year is not None and pyr is not None and hof.due(old, year):
+                new = self.hof_ballot(stem, assoc, pyr, old, year)
+                if new is not None:
+                    write_json(path, new)
+                    self.log('%s hof %d: %d inducted, %d on the ballot' % (
+                        stem, year, sum(1 for e in new['inducted'] if e.get('year') == year), len(new['ballot'])))
+                    old = new
+            if old is not None:
+                self.hof_stories(out, assoc, old)
+        except (OSError, ValueError, KeyError, IndexError, TypeError, struct.error, sqlite3.Error) as e:
+            self.log('%s hof: %s: %s' % (stem, type(e).__name__, e))
+
+    def hof_ballot(self, stem, assoc, pyr, old, year):
+        """hof.run's hof dict for the ballot of season year, or None when it cannot be held yet: no history archive or
+        no teams, no PYF beside the PYR, or the PYR or PYF younger than SETTLE (a retired player is one no roster and
+        not the free-agent list holds, so a half-saved set would retire free agents). A retired player's last line is
+        his last archived season, so only players with one in the window are looked up in the Lahman database (when
+        there is one: none, or a failing one, leaves their real seasons out) and read from the PYR for the lookup."""
+        if not hof.archive_years(self.data, stem) or not assoc['teams']:
+            return None
+        pyf = gamedata.find(os.path.dirname(pyr), os.path.splitext(os.path.basename(pyr))[0] + '.PYF')
+        if pyf is None or time.time() - max(os.stat(p).st_mtime for p in (pyr, pyf)) < SETTLE:
+            return None
+        free = gamedata.free_agents(pyf)
+        index = hof.sim_index(self.data, stem)
+        rostered = {pid for t in assoc['teams'].values() for pid in t['roster']}
+        players = gamedata.players(pyr)
+        found = {}
+        for pid, p in players.items():
+            if pid in rostered or pid in free:
+                continue
+            rows = history.drop_seeded(index[hof.kind_of(p['pos'])].get(pid, []), stem)
+            if rows and hof.MIN_WAIT <= year - rows[-1]['year'] <= hof.MAX_WAIT:
+                found[pid] = rows
+        who = {}
+        for rec in gamedata._records(pyr) if found else ():
+            pid = rec[0] | rec[1] << 8
+            if pid in found:
+                try:
+                    born = datetime.date.fromordinal(struct.unpack_from('<I', rec, gamedata.P_BORN)[0] - 365)
+                except (ValueError, OverflowError):
+                    born = None
+                who[pid] = (gamedata.cstr(rec[30:47]), gamedata.cstr(rec[47:64]), born)
+        start, conn, careers = history.start_year(stem, year), self.hof_db(), []
+        try:
+            for pid in sorted(found):
+                first, last, born = who[pid]
+                kind, real = hof.kind_of(players[pid]['pos']), []
+                if conn is not None and born is not None:
+                    try:
+                        lid = history.lahman_id(conn, first, last, born)
+                        real = history.real_seasons(conn, lid, kind, before=start) if lid else []
+                    except sqlite3.Error:
+                        real = []
+                careers.append({'pid': pid, 'name': players[pid]['name'], 'pos': players[pid]['pos'], 'gone': True,
+                                'rows': history.merge(real, found[pid], start)})
+        finally:
+            if conn is not None:
+                conn.close()
+        return hof.run(old, year, careers, stem, now_iso())
+
+    def hof_db(self):
+        """A read-only connection to the Lahman database (the --db file, else history.find_db), or None without one."""
+        path = self.db if self.db and os.path.isfile(self.db) else history.find_db()
+        if not path:
+            return None
+        try:
+            return history.open_db(path)
+        except sqlite3.Error:
+            return None
+
+    def hof_stories(self, out, assoc, doc):
+        """The induction story of each inductee in doc (an hof dict) that has none, written to hof/<year>-<pid>.json,
+        then hof.json with each story key set. With the model on, at most HOF_CALLS stories a scan and none once the
+        day's budget is spent (a template written then would stand for good); the stem stays in hof_open until every
+        inductee has one. A story file already on disk (hof.json not updated after it) is only linked. An entry without
+        the fields a story is built from is left alone."""
+        stem, entries = os.path.basename(out), doc.get('inducted')
+        todo = [e for e in entries if isinstance(e, dict) and e.get('story') is None and type(e.get('pid')) is int
+                and type(e.get('year')) is int] if isinstance(entries, list) else []
+        changed = False
+        for e in todo:
+            key = hof.story_key(e['year'], e['pid'])
+            dest = os.path.join(out, 'hof', key + '.json')
+            if not os.path.exists(dest):
+                try:
+                    facts = hof.story_facts(e, assoc['name'])
+                except (KeyError, TypeError):
+                    continue
+                if self.complete is not None and self.hof_left <= 0:
+                    self.hof_open.add(stem)
+                    break
+                if self.complete is not None:
+                    self.hof_left -= 1
+                piece = _llm_or_template(hof.write, facts, self.budget, self.complete)
+                if piece is not None and piece.get('reason') == 'budget':
+                    self.hof_open.add(stem)
+                    break
+                if piece is None:
+                    piece = dict(hof.template(facts), source='template', reason='off')
+                write_json(dest, dict(piece, kind='hof', pid=e['pid'], year=e['year'], name=e['name'], facts=facts,
+                                      created=now_iso()))
+                self.log('%s hof story %s (%s)' % (stem, e['name'], piece['source']))
+            e['story'] = key
+            changed = True
+        else:
+            self.hof_open.discard(stem)
+        if changed:
+            write_json(os.path.join(out, 'hof.json'), doc)
 
     def contracts_piece(self, out, assoc, pyr, dat):
         """The contracts and payrolls (contracts.py), after moves: each rostered player's contract, ticked down at each

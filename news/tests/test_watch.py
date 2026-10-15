@@ -11,8 +11,10 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import gamedata  # noqa: E402
+import history   # noqa: E402
 import hive      # noqa: E402
 import watch     # noqa: E402
+from tests.test_modbridge import player, pyf_bytes, pyr_bytes   # noqa: E402
 
 TEAMS = {1: {'tid': 1, 'name': 'Ash', 'abbrev': 'ASH', 'city': 'X', 'stadium': 'Ash Park', 'manager': 'M',
              'league': 'AL', 'division': 'East', 'w': 0, 'l': 0, 'roster': [100]},
@@ -1283,3 +1285,351 @@ def test_main_once_still_raises_a_failed_pass(tmp_path, monkeypatch):
     monkeypatch.setattr(watch.Watcher, 'scan', lambda self: (_ for _ in ()).throw(FileNotFoundError('x')))
     with pytest.raises(FileNotFoundError):
         watch.main(['--game', str(tmp_path / 'g'), '--data', str(tmp_path / 'd'), '--no-llm', '--once'])
+
+
+# The Hall of Fame (watch.hof_piece), on a real synthetic PYR and PYF and history archives. 30L2025 starts in 2025, so
+# the 2024 archive is the build's seeded copy of a real season. The season is 2040: the ballot holds players whose
+# last line is 2025 to 2035.
+HOF_STEM = '30L2025'
+HOF_YEAR = 2040
+
+
+def hof_bat(**kw):
+    return dict({'g': 150, 'ab': 600, 'r': 100, 'h': 180, 'hr': 30, 'rbi': 100, 'sb': 5}, **kw)
+
+
+# (pid, first, last, PYR position, birth year). 103 is on a roster, 104 is a free agent, the rest are retired.
+HOF_PLAYERS = [(100, 'Hank', 'Slugger', 5, 1960), (101, 'Mid', 'Dleton', 3, 1965), (102, 'Bo', 'Nobody', 4, 1965),
+               (103, 'Active', 'Joe', 6, 1965), (104, 'Free', 'Agent', 8, 1965), (105, 'Recent', 'Ret', 7, 1965),
+               (106, 'Last', 'Chance', 9, 1965), (107, 'Seeded', 'Only', 3, 1965), (108, 'No', 'Lines', 2, 1965),
+               (110, 'Cy', 'Hurler', 1, 1965), (111, 'Ace', 'Hurler', 1, 1965)]
+# Season -> {'bat': {pid: line}, 'pit': {pid: line}}. Hank bats 2026-2030 (900 hits), Cy wins 200 (pct 76), and the
+# 2030 pitcher wins 99 (pct 22); Mid has 400 hits in 2035 (pct 8), Bo 50 (pct 1), Last Chance 1000 in 2025 (pct 20),
+# Recent 900 in 2036 (pct 18).
+HOF_LINES = {2024: {'bat': {107: hof_bat()}}, 2025: {'bat': {106: {'g': 100, 'h': 1000}}},
+             2030: {'bat': {100: hof_bat(), 103: hof_bat(h=900), 104: hof_bat(h=900)},
+                    'pit': {110: {'g': 30, 'w': 40, 'so': 500, 'outs': 600}, 111: {'g': 30, 'w': 99, 'outs': 600}}},
+             2031: {'bat': {102: {'g': 100, 'h': 50}}}, 2035: {'bat': {101: {'g': 100, 'h': 400}}},
+             2036: {'bat': {105: {'g': 100, 'h': 900}}}}
+for _year in (2026, 2027, 2028, 2029):
+    HOF_LINES[_year] = {'bat': {100: hof_bat()}, 'pit': {110: {'g': 30, 'w': 40, 'so': 500, 'outs': 600}}}
+HOF_TEAMS = {1: dict(TEAMS[1], roster=[103])}
+
+
+def hof_lahman(path):
+    """A Lahman database with Hank Slugger (born 1960-07-01) batting 170 hits, 25 home runs, 90 RBI, 90 runs and 5
+    steals in 550 at-bats for each of 2015 to 2024 (team CIN)."""
+    conn = sqlite3.connect(path)
+    conn.executescript('''
+        CREATE TABLE people(playerID TEXT, nameFirst TEXT, nameLast TEXT, birthYear INT, birthMonth INT, birthDay INT);
+        CREATE TABLE teams(yearID INT, teamID TEXT, teamIDBR TEXT);
+        CREATE TABLE batting(playerID, yearID, stint, teamID, G, AB, R, H, "2B", "3B", HR, RBI, SB, CS, BB, SO, IBB,
+                             HBP, SH, SF, GIDP);
+        CREATE TABLE pitching(playerID, yearID, stint, teamID, W, L, G, GS, CG, SHO, SV, IPouts, H, ER, HR, BB, SO, HBP,
+                              BFP, R);''')
+    conn.execute("INSERT INTO people VALUES ('slugha01', 'Hank', 'Slugger', 1960, 7, 1)")
+    for y in range(2015, 2025):
+        conn.execute("INSERT INTO teams VALUES (?, 'CIN', 'CIN')", (y,))
+        conn.execute("INSERT INTO batting VALUES ('slugha01', ?, 1, 'CIN', 150, 550, 90, 170, 30, 2, 25, 90, 5, 2, 60,"
+                     " 90, 0, 2, 1, 4, 10)", (y,))
+    conn.commit()
+    conn.close()
+    return str(path)
+
+
+@pytest.fixture
+def hall(tmp_path, monkeypatch):
+    """(gd, data, assoc, pyr): a game folder with the PYR and PYF (settled), the archives under data, the Lahman
+    database missing, and the association in season 2040."""
+    gd, data = tmp_path / 'game', tmp_path / 'data'
+    (gd / 'Assn').mkdir(parents=True)
+    (gd / 'Stats').mkdir()
+    pyr, pyf = gd / 'Assn' / ('%s.PYR' % HOF_STEM), gd / 'Assn' / ('%s.PYF' % HOF_STEM)
+    pyr.write_bytes(pyr_bytes([player(pid, first, last, pos=pos, born=born)
+                               for pid, first, last, pos, born in HOF_PLAYERS]))
+    pyf.write_bytes(pyf_bytes([104]))
+    for path in (pyr, pyf):
+        os.utime(path, (1, 1))
+    for year, lines in HOF_LINES.items():
+        teams = {pid: 'Cubs' if pid == 110 else 'Reds' for kind in lines for pid in lines[kind]}
+        history.archive_season(str(data), HOF_STEM, year, lines, teams)
+    monkeypatch.setattr(history, 'find_db', lambda env=None: None)
+    assoc = {'name': '2025 Test League', 'season_year': HOF_YEAR, 'teams': HOF_TEAMS, 'games': []}
+    return gd, data, assoc, str(pyr)
+
+
+def hall_watcher(gd, data, complete=None, db=None, log=None):
+    return watch.Watcher(str(gd), str(data), object(), complete, log=log or (lambda s: None), db=db)
+
+
+def hof_doc(data):
+    return json.loads((data / HOF_STEM / 'hof.json').read_text())
+
+
+def hof_piece(w, data, assoc, pyr):
+    w.hof_left = watch.HOF_CALLS        # what scan() does at its start
+    w.hof_piece(str(data / HOF_STEM), assoc, HOF_STEM, pyr)
+
+
+def test_hof_piece_holds_the_ballot_and_inducts_with_template_stories(hall):
+    gd, data, assoc, pyr = hall
+    w = hall_watcher(gd, data)
+    hof_piece(w, data, assoc, pyr)
+    doc = hof_doc(data)
+    assert (doc['stem'], doc['year']) == (HOF_STEM, HOF_YEAR) and doc['updated']
+    assert [(e['pid'], e['name'], e['kind'], e['year'], e['retired'], e['pct'], e['story'])
+            for e in doc['inducted']] == [(110, 'Cy Hurler', 'pit', HOF_YEAR, 2030, 76, '2040-110')]
+    assert doc['inducted'][0]['line']['w'] == 200 and doc['inducted'][0]['line']['seasons'] == 5
+    assert doc['inducted'][0]['teams'] == ['Cubs'] and doc['inducted'][0]['score'] == pytest.approx(50.83)
+    # best first; 105 (last line 2036, four seasons ago), 103 (rostered), 104 (free agent), 107 (a seeded row only) and
+    # 108 (no line) are not on it; 102 (1 percent) is dropped
+    assert [(b['pid'], b['name'], b['kind'], b['retired'], b['years_on'], b['pct']) for b in doc['ballot']] == [
+        (100, 'Hank Slugger', 'bat', 2030, 6, 42), (111, 'Ace Hurler', 'pit', 2030, 6, 22),
+        (106, 'Last Chance', 'bat', 2025, 11, 20), (101, 'Mid Dleton', 'bat', 2035, 1, 8)]
+    assert sorted(doc['dropped']) == [102, 106]                      # 106 after his last ballot
+    story = json.loads((data / HOF_STEM / 'hof' / '2040-110.json').read_text())
+    assert (story['kind'], story['source'], story['reason'], story['pid'], story['year']) == (
+        'hof', 'template', 'off', 110, HOF_YEAR)
+    assert story['headline'] == 'Cy Hurler elected to the Hall of Fame' and story['created']
+    assert story['facts']['association'] == '2025 Test League' and story['facts']['line']['w'] == 200
+    assert os.listdir(data / HOF_STEM / 'hof') == ['2040-110.json']
+
+
+def test_hof_piece_holds_one_ballot_a_season_year(hall, monkeypatch):
+    gd, data, assoc, pyr = hall
+    w = hall_watcher(gd, data)
+    hof_piece(w, data, assoc, pyr)
+    before = (data / HOF_STEM / 'hof.json').read_bytes()
+    monkeypatch.setattr(w, 'hof_ballot', lambda *a: pytest.fail('the ballot was held twice in one season year'))
+    monkeypatch.setattr(watch, 'write_json', lambda *a: pytest.fail('a quiet pass rewrote a file'))
+    hof_piece(w, data, assoc, pyr)
+    assert (data / HOF_STEM / 'hof.json').read_bytes() == before
+
+
+def test_hof_piece_next_season_keeps_the_inducted_and_never_ballots_a_dropped_player_again(hall):
+    gd, data, assoc, pyr = hall
+    w = hall_watcher(gd, data)
+    hof_piece(w, data, assoc, pyr)
+    hof_piece(w, data, dict(assoc, season_year=HOF_YEAR + 1), pyr)
+    doc = hof_doc(data)
+    assert doc['year'] == HOF_YEAR + 1
+    assert [(e['pid'], e['year']) for e in doc['inducted']] == [(110, HOF_YEAR)]
+    assert [(b['pid'], b['years_on']) for b in doc['ballot']] == [(100, 7), (111, 7), (105, 1), (101, 2)]
+    assert sorted(doc['dropped']) == [102, 106]
+    hof_piece(w, data, dict(assoc, season_year=HOF_YEAR + 6), pyr)         # 100 and 111 are out of range
+    assert [b['pid'] for b in hof_doc(data)['ballot']] == [105, 101]
+    assert [e['pid'] for e in hof_doc(data)['inducted']] == [110]
+
+
+def test_hof_piece_counts_real_seasons_from_the_lahman_database(hall, tmp_path):
+    gd, data, assoc, pyr = hall
+    w = hall_watcher(gd, data, db=hof_lahman(tmp_path / 'lahman.sqlite'))
+    hof_piece(w, data, assoc, pyr)
+    doc = hof_doc(data)
+    hank = next(e for e in doc['inducted'] if e['pid'] == 100)
+    # 1700 + 900 hits in 8500 at-bats: 34.67 + 20 + 14 + 9.33 + 0.94 + 5.59
+    assert (hank['pct'], hank['line']['h'], hank['line']['seasons']) == (99, 2600, 15)
+    assert hank['score'] == pytest.approx(84.53, abs=0.01)
+    assert hank['teams'] == ['CIN', 'Reds'] and hank['year'] == HOF_YEAR
+    assert [e['pid'] for e in doc['inducted']] == [100, 110] and 100 not in [b['pid'] for b in doc['ballot']]
+    assert sorted(os.listdir(data / HOF_STEM / 'hof')) == ['2040-100.json', '2040-110.json']
+
+
+def test_hof_piece_without_the_database_or_with_a_broken_one_still_runs(hall, tmp_path):
+    gd, data, assoc, pyr = hall
+    broken = tmp_path / 'broken.sqlite'
+    broken.write_bytes(b'not a database')
+    w = hall_watcher(gd, data, db=str(broken))
+    hof_piece(w, data, assoc, pyr)
+    assert [(b['pid'], b['pct']) for b in hof_doc(data)['ballot']][:1] == [(100, 42)]
+    assert not (data / HOF_STEM / 'hof.json.tmp').exists()
+    empty = tmp_path / 'empty.sqlite'
+    sqlite3.connect(str(empty)).close()                                    # no tables: every query fails
+    (data / HOF_STEM / 'hof.json').unlink()
+    hof_piece(hall_watcher(gd, data, db=str(empty)), data, assoc, pyr)
+    assert [(b['pid'], b['pct']) for b in hof_doc(data)['ballot']][:1] == [(100, 42)]
+
+
+def test_hof_piece_does_nothing_without_history_a_pyr_a_pyf_or_settled_files(hall, tmp_path):
+    gd, data, assoc, pyr = hall
+    hof_json = data / HOF_STEM / 'hof.json'
+    w = hall_watcher(gd, data)
+    hof_piece(hall_watcher(gd, tmp_path / 'other'), tmp_path / 'other', assoc, pyr)    # real-only: no history folder
+    assert not (tmp_path / 'other' / HOF_STEM).exists()
+    hof_piece(w, data, assoc, None)
+    hof_piece(w, data, dict(assoc, season_year=None), pyr)
+    hof_piece(w, data, dict(assoc, teams={}), pyr)
+    assert not hof_json.exists()
+    pyf = pyr[:-3] + 'PYF'
+    os.rename(pyf, pyf + '.off')
+    hof_piece(w, data, assoc, pyr)
+    assert not hof_json.exists()                                           # no PYF: free agents unknown
+    os.rename(pyf + '.off', pyf)
+    os.utime(pyf, None)                                                    # saved just now: the set may be torn
+    hof_piece(w, data, assoc, pyr)
+    assert not hof_json.exists()
+    os.utime(pyf, (1, 1))
+    hof_piece(w, data, assoc, pyr)
+    assert hof_json.exists()
+
+
+def test_a_history_folder_with_no_archive_files_writes_no_hall(hall):
+    gd, data, assoc, pyr = hall
+    for name in os.listdir(data / HOF_STEM / 'history'):
+        os.remove(data / HOF_STEM / 'history' / name)
+    hof_piece(hall_watcher(gd, data), data, assoc, pyr)
+    assert not (data / HOF_STEM / 'hof.json').exists()
+
+
+def test_hof_piece_logs_a_torn_pyr_and_a_torn_pyf_and_retries(hall):
+    gd, data, assoc, pyr = hall
+    lines = []
+    w = hall_watcher(gd, data, log=lines.append)
+    good = open(pyr, 'rb').read()
+    open(pyr, 'wb').write(b'pyr')
+    os.utime(pyr, (1, 1))
+    hof_piece(w, data, assoc, pyr)
+    assert not (data / HOF_STEM / 'hof.json').exists() and any('hof: ValueError' in line for line in lines)
+    open(pyr, 'wb').write(good)
+    os.utime(pyr, (1, 1))
+    pyf = pyr[:-3] + 'PYF'
+    open(pyf, 'wb').write(b'PPD:')
+    os.utime(pyf, (1, 1))
+    hof_piece(w, data, assoc, pyr)
+    assert not (data / HOF_STEM / 'hof.json').exists() and sum('hof: ValueError' in line for line in lines) == 2
+    open(pyf, 'wb').write(pyf_bytes([104]))
+    os.utime(pyf, (1, 1))
+    hof_piece(w, data, assoc, pyr)
+    assert (data / HOF_STEM / 'hof.json').exists()
+
+
+def test_a_hof_json_that_does_not_parse_is_left_alone_and_logged_once(hall):
+    gd, data, assoc, pyr = hall
+    lines = []
+    w = hall_watcher(gd, data, log=lines.append)
+    (data / HOF_STEM).mkdir(exist_ok=True)
+    (data / HOF_STEM / 'hof.json').write_text('{"inducted": [')
+    hof_piece(w, data, assoc, pyr)
+    hof_piece(w, data, assoc, pyr)
+    assert (data / HOF_STEM / 'hof.json').read_text() == '{"inducted": ['
+    assert [line for line in lines if 'hof.json' in line] == ['30L2025 hof: hof.json does not parse, left alone']
+    assert not (data / HOF_STEM / 'hof').exists()
+
+
+def test_hof_piece_stories_use_the_model_with_a_template_when_its_numbers_are_wrong(hall):
+    gd, data, assoc, pyr = hall
+    asked = []
+
+    def complete(system, user, budget):
+        asked.append(user)
+        return 'Hurler is in\n\nCy Hurler finished with 9999 wins.', {}
+
+    w = hall_watcher(gd, data, complete=complete)
+    hof_piece(w, data, assoc, pyr)
+    story = json.loads((data / HOF_STEM / 'hof' / '2040-110.json').read_text())
+    assert (story['source'], story['reason']) == ('template', 'numbers') and len(asked) == 2
+    assert story['body'] == hof_template_body(story['facts']) and hof_doc(data)['inducted'][0]['story'] == '2040-110'
+
+
+def hof_template_body(facts):
+    return watch.hof.template(facts)['body']
+
+
+def test_hof_piece_story_from_the_model_when_its_numbers_check(hall):
+    gd, data, assoc, pyr = hall
+    w = hall_watcher(gd, data, complete=lambda system, user, budget: ('Hurler in\n\nCy Hurler is in the Hall.', {}))
+    hof_piece(w, data, assoc, pyr)
+    story = json.loads((data / HOF_STEM / 'hof' / '2040-110.json').read_text())
+    assert (story['source'], story['headline'], story['body'], 'reason' in story) == (
+        'glm', 'Hurler in', 'Cy Hurler is in the Hall.', False)
+
+
+def test_hof_piece_asks_the_model_for_at_most_hof_calls_a_scan_and_finishes_later(hall, tmp_path, monkeypatch):
+    gd, data, assoc, pyr = hall
+    monkeypatch.setattr(watch, 'HOF_CALLS', 1)
+    asked = []
+    w = hall_watcher(gd, data, complete=lambda s, u, b: asked.append(u) or ('Head\n\nA fine career.', {}),
+                     db=hof_lahman(tmp_path / 'lahman.sqlite'))        # two inductees: 100 and 110
+    hof_piece(w, data, assoc, pyr)
+    assert len(asked) == 1 and HOF_STEM in w.hof_open
+    assert [e['story'] for e in hof_doc(data)['inducted']] == ['2040-100', None]
+    hof_piece(w, data, assoc, pyr)
+    assert len(asked) == 2 and HOF_STEM not in w.hof_open
+    assert [e['story'] for e in hof_doc(data)['inducted']] == ['2040-100', '2040-110']
+    hof_piece(w, data, assoc, pyr)
+    assert len(asked) == 2                                                 # nothing left to write: no more calls
+
+
+def test_hof_piece_leaves_stories_open_while_the_budget_is_spent_and_writes_them_later(hall):
+    gd, data, assoc, pyr = hall
+
+    def spent(system, user, budget):
+        raise hive.BudgetExceeded('spent')
+
+    w = hall_watcher(gd, data, complete=spent)
+    hof_piece(w, data, assoc, pyr)
+    assert HOF_STEM in w.hof_open and not (data / HOF_STEM / 'hof').exists()      # a template now would stand for good
+    assert hof_doc(data)['inducted'][0]['story'] is None
+    w.complete = lambda system, user, budget: ('Head\n\nA fine career.', {})
+    hof_piece(w, data, assoc, pyr)
+    assert HOF_STEM not in w.hof_open and hof_doc(data)['inducted'][0]['story'] == '2040-110'
+
+
+def test_hof_piece_links_a_story_file_a_crash_left_without_asking_the_model(hall):
+    gd, data, assoc, pyr = hall
+    hof_piece(hall_watcher(gd, data), data, assoc, pyr)
+    doc = hof_doc(data)
+    doc['inducted'][0]['story'] = None
+    (data / HOF_STEM / 'hof.json').write_text(json.dumps(doc))
+    (data / HOF_STEM / 'hof' / '2040-110.json').write_text('{"kept": true}')
+
+    def complete(system, user, budget):
+        raise AssertionError('the model was asked for a story that exists')
+
+    hof_piece(hall_watcher(gd, data, complete=complete), data, assoc, pyr)
+    assert hof_doc(data)['inducted'][0]['story'] == '2040-110'
+    assert json.loads((data / HOF_STEM / 'hof' / '2040-110.json').read_text()) == {'kept': True}
+
+
+def test_hof_piece_skips_an_inductee_entry_it_cannot_build_a_story_from(hall):
+    gd, data, assoc, pyr = hall
+    out = data / HOF_STEM
+    out.mkdir(exist_ok=True)
+    (out / 'hof.json').write_text(json.dumps({'year': HOF_YEAR, 'inducted': [
+        'junk', {'pid': 1, 'year': HOF_YEAR, 'story': None}, {'pid': 'x', 'year': 1, 'story': None},
+        {'pid': 2, 'year': HOF_YEAR, 'name': 'Ok Man', 'kind': 'bat', 'retired': 2030, 'pct': 80,
+         'line': {'seasons': 1}, 'story': None}]}))
+    hof_piece(hall_watcher(gd, data), data, assoc, pyr)
+    got = hof_doc(data)['inducted']
+    assert got[1]['story'] is None and got[2]['story'] is None and got[3]['story'] == '2040-2'
+    assert os.listdir(out / 'hof') == ['2040-2.json']
+
+
+def test_a_scan_runs_hof_after_history_and_visits_the_stem_again_while_stories_wait(hall, tmp_path, monkeypatch):
+    gd, data, assoc, pyr = hall
+    monkeypatch.setattr(watch, 'HOF_CALLS', 1)
+    (gd / 'Assn' / ('%s.ASN' % HOF_STEM)).write_bytes(b'asn')
+    os.utime(gd / 'Assn' / ('%s.ASN' % HOF_STEM), (1, 1))
+    monkeypatch.setattr(gamedata, 'association', lambda path: dict(assoc))
+    monkeypatch.setattr(gamedata, 'season_lines', lambda path, scope=1: {'bat': {}, 'pit': {}})
+    asked, order, lines = [], [], []
+    w = hall_watcher(gd, data, complete=lambda s, u, b: asked.append(u) or ('Head\n\nA fine career.', {}),
+                     db=hof_lahman(tmp_path / 'lahman.sqlite'), log=lines.append)
+    for name in ('columns', 'recaps', 'season_pieces', 'postseason_piece', 'history_piece', 'moves', 'contracts_piece',
+                 'replay_piece', 'rookie_class'):
+        monkeypatch.setattr(w, name, lambda *a, name=name: order.append(name))
+    real = w.hof_piece
+    monkeypatch.setattr(w, 'hof_piece', lambda *a: order.append('hof_piece') or real(*a))
+    w.scan()
+    assert order[order.index('history_piece') + 1] == 'hof_piece' and order.index('hof_piece') < order.index('moves')
+    assert len(asked) == 1 and HOF_STEM in w.hof_open
+    assert HOF_STEM in w.seen                                              # the files are settled and unchanged ...
+    w.scan()                                                               # ... yet the stem is visited again
+    assert len(asked) == 2 and HOF_STEM not in w.hof_open
+    w.scan()
+    assert len(asked) == 2 and order.count('hof_piece') == 2               # all written: the quiet stem is skipped
+    assert not [line for line in lines if 'Error' in line]
+
+
+def test_the_hall_spans_seasons_when_a_season_rolls_over():
+    assert 'hof.json' not in watch.SEASON_ENTRIES and 'hof' not in watch.SEASON_ENTRIES

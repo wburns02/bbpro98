@@ -367,3 +367,88 @@ def test_card_on_the_real_install_with_the_watcher_folder_but_no_stories(tmp_pat
     assert head['status'] == 'ok'
     assert ('Association news', '/news/MLBPA97/') in links_of(head)
     assert 'No news yet.' in body.split('\n')
+
+
+def hall(ctx, doc, folder_name='TEST77'):
+    """Writes <data>/<folder_name>/hof.json (text as it is, anything else as JSON); returns the file's path."""
+    folder = os.path.join(ctx.data, folder_name)
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, 'hof.json')
+    with open(path, 'w', encoding='utf-8') as fh:
+        fh.write(doc if isinstance(doc, str) else json.dumps(doc))
+    return path
+
+
+INDUCTED = {'year': YEAR, 'inducted': [{'pid': 100, 'name': 'Pat Doe', 'kind': 'bat', 'year': 2036, 'story': None},
+                                       {'pid': 205, 'name': 'Bo Bee', 'kind': 'pit', 'year': 2031, 'story': None}],
+            'ballot': [{'pid': 300, 'name': 'Old Timer'}], 'dropped': []}
+
+
+def test_an_inductee_card_shows_the_hall_of_fame_year_after_the_player_lines(card):
+    ctx, spool, _ = card
+    hall(ctx, INDUCTED)
+    lines = page(ctx, spool, '/news/card/TEST77/p/100')[1].split('\n')
+    assert lines[lines.index('Age: 25') + 1] == 'Hall of Fame, 2036'
+    assert lines.count('Hall of Fame, 2036') == 1
+    assert 'Hall of Fame, 2031' in page(ctx, spool, '/news/card/TEST77/p/205')[1].split('\n')
+
+
+def test_only_an_inductee_gets_the_badge(card):
+    ctx, spool, _ = card
+    hall(ctx, INDUCTED)
+    assert 'Hall of Fame' not in page(ctx, spool, '/news/card/TEST77/p/300')[1]          # on the ballot only
+    other = dict(INDUCTED, inducted=[dict(INDUCTED['inducted'][0], pid=101)])
+    hall(ctx, other)
+    assert 'Hall of Fame' not in page(ctx, spool, '/news/card/TEST77/p/100')[1]
+
+
+def test_no_badge_and_no_error_without_a_hall_file_or_with_a_torn_one(card):
+    ctx, spool, _ = card
+    assert 'Hall of Fame' not in page(ctx, spool, '/news/card/TEST77/p/100')[1]          # no watcher folder
+    os.makedirs(os.path.join(ctx.data, 'TEST77'))
+    assert 'Hall of Fame' not in page(ctx, spool, '/news/card/TEST77/p/100')[1]          # a folder, no file
+    for text in ('{"inducted": [{"pid": 100, "yea', '[]', '"x"', 'null', '', '{"inducted": 5}',
+                 '{"inducted": [{"pid": 100, "year": "2036"}, "junk", {"pid": "100", "year": 2036}]}'):
+        hall(ctx, text)
+        head, body = page(ctx, spool, '/news/card/TEST77/p/100')
+        assert head['http'] == '200' and 'Team: Reds' in body.split('\n') and 'Hall of Fame' not in body, text
+
+
+def test_the_hall_file_is_found_without_regard_to_the_case_of_the_stem(card):
+    ctx, spool, _ = card
+    hall(ctx, INDUCTED)
+    assert 'Hall of Fame, 2036' in page(ctx, spool, '/news/card/test77/p/100')[1].split('\n')
+
+
+def test_hof_json_is_read_once_per_card_render(card, monkeypatch):
+    ctx, spool, _ = card
+    hall(ctx, INDUCTED)
+    read = []
+    real = modbridge.server._read_obj
+    monkeypatch.setattr(modbridge.server, '_read_obj', lambda path: read.append(path) or real(path))
+    page(ctx, spool, '/news/card/TEST77/p/100')
+    assert [os.path.basename(p) for p in read].count('hof.json') == 1
+
+
+def test_the_card_picture_shows_the_badge_in_its_header_and_in_its_text(card, monkeypatch):
+    from tests.test_modbridge_cardimg import fnx, pal            # the picture tests' synthetic fonts
+    ctx, spool, game = card
+    (game / '4.FNX').write_bytes(fnx(1, 11, 6))
+    (game / '5.fnx').write_bytes(fnx(3, 20, 10, 95))
+    (game / 'bb0.pal').write_bytes(pal())
+    monkeypatch.setattr(modbridge, '_FONTS', {})
+    cards = []
+    real = modbridge.cardimg.render
+    monkeypatch.setattr(modbridge.cardimg, 'render', lambda c, f: cards.append(c) or real(c, f))
+    hall(ctx, INDUCTED)
+    head, body = page(ctx, spool, '/news/card/TEST77/p/100')
+    assert head['image'] == '1' and 'This card is a picture page.' in body
+    assert body.split('\n')[3:5] == ['Hall of Fame, 2036', 'This card is a picture page.']
+    assert cards[-1]['header'][1].endswith('   |   Hall of Fame, 2036') and 'Born' in cards[-1]['header'][1]
+    page(ctx, spool, '/news/card/TEST77/p/100/career')                  # every tab carries the header
+    assert 'Hall of Fame, 2036' in cards[-1]['header'][1]
+    head, body = page(ctx, spool, '/news/card/TEST77/p/300')
+    assert head['image'] == '1' and 'Hall of Fame' not in body and 'Hall of Fame' not in cards[-1]['header'][1]
+    hall(ctx, '{"torn')
+    head, body = page(ctx, spool, '/news/card/TEST77/p/100')
+    assert head['image'] == '1' and 'Hall of Fame' not in body and 'Hall of Fame' not in cards[-1]['header'][1]
