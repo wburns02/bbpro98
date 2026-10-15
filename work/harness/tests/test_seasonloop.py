@@ -297,3 +297,73 @@ def test_postseason_after_the_champion_a_still_screen_stops_without_a_sim(tmp_pa
     out = capsys.readouterr().out
     assert '"postseason": "champion_idle"' in out and '"postseason": "sim"' not in out
     assert (tmp_path / 'post_champ_idle.png').exists()
+
+
+def _labels(monkeypatch, tmp_path, names):
+    """An Assn folder of empty ASN files whose labels come from names {stem: label}."""
+    assn = tmp_path / 'Assn'
+    assn.mkdir(exist_ok=True)
+    for stem in names:
+        (assn / (stem + '.ASN')).write_bytes(b'a')
+    monkeypatch.setattr(seasonloop.gamedata, 'association',
+                        lambda path: {'name': names[os.path.splitext(os.path.basename(path))[0]]})
+    return assn
+
+
+def test_assn_row_is_the_label_order_without_default(tmp_path, monkeypatch):
+    assn = _labels(monkeypatch, tmp_path, {'_DEFAULT': '0 default', '30L2025': '2025 Major Leagues',
+                                           'MLBPA97': '1997 MLBPA Opening Day', '16L1927': '1927 Major League'})
+    (assn / '30L2025.PYR').write_bytes(b'p')
+    assert seasonloop.assn_row(str(assn), '30L2025') == 2
+    assert seasonloop.assn_row(str(assn), '16l1927') == 0
+    assert seasonloop.assn_row(str(assn), 'NOPE') is None
+
+
+def test_assn_row_unknown_when_a_label_cannot_be_read(tmp_path, monkeypatch):
+    assn = _labels(monkeypatch, tmp_path, {'30L2025': '2025 Major Leagues'})
+    (assn / 'BAD.ASN').write_bytes(b'x')
+    assert seasonloop.assn_row(str(assn), '30L2025') is None
+
+
+def _reopen_screen(monkeypatch, h, after):
+    """The champion, then still association screens; once ctrl+l was sent every look shows `after`."""
+    mock = _stub_screen(monkeypatch, _Poster(['sched', 'champ'] + ['assn'] * (seasonloop.POST_HELD + 3)))
+
+    def look(h_, png):
+        mock.faces[png] = after if ('key', 'ctrl+l') in h.keys else mock.next()
+        Image.new('L', (4, 4)).save(png)
+    monkeypatch.setattr(seasonloop, 'look', look)
+    return mock
+
+
+def test_postseason_after_the_champion_reopens_the_association_and_returns_on_its_notice(tmp_path, monkeypatch,
+                                                                                         capsys):
+    assn = _labels(monkeypatch, tmp_path, {'30L2025': '2025 Major Leagues', 'MLBPA97': '1997 MLBPA Opening Day'})
+    h = _H(tmp_path)
+    _reopen_screen(monkeypatch, h, 'complete')
+    assert seasonloop.postseason(h, str(tmp_path), ENDLESS, asn=str(assn / '30L2025.ASN')) is True
+    assert h.keys == [('key', 'Return'), ('key', 'ctrl+l')]
+    assert h.clicks == [(575, seasonloop.LIST_Y + seasonloop.LIST_DY), (735, 538)]
+    out = capsys.readouterr().out
+    assert '"reopened": true' in out and '"postseason": "sim"' not in out
+
+
+def test_postseason_reopen_without_the_notice_stops_with_champion_idle(tmp_path, monkeypatch, capsys):
+    assn = _labels(monkeypatch, tmp_path, {'30L2025': '2025 Major Leagues'})
+    h = _H(tmp_path)
+    _reopen_screen(monkeypatch, h, 'assn')
+    assert seasonloop.postseason(h, str(tmp_path), ENDLESS, asn=str(assn / '30L2025.ASN')) is False
+    assert h.keys == [('key', 'Return'), ('key', 'ctrl+l')] and len(h.clicks) == 2
+    assert '"postseason": "champion_idle"' in capsys.readouterr().out
+    assert (tmp_path / 'post_reopen.png').exists()
+
+
+def test_postseason_reopen_sends_nothing_for_a_row_past_the_list(tmp_path, monkeypatch, capsys):
+    names = {'A%02d' % i: 'label %02d' % i for i in range(seasonloop.LIST_ROWS)}
+    names['ZZ'] = 'zz last'
+    assn = _labels(monkeypatch, tmp_path, names)
+    h = _H(tmp_path)
+    _reopen_screen(monkeypatch, h, 'complete')
+    assert seasonloop.postseason(h, str(tmp_path), ENDLESS, asn=str(assn / 'ZZ.ASN')) is False
+    assert h.keys == [('key', 'Return')] and h.clicks == []
+    assert '"postseason": "champion_idle"' in capsys.readouterr().out

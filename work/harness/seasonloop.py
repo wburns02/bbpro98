@@ -49,6 +49,7 @@ CHAMP_BOX = (330, 470, 950, 750)              # body of the World Series champio
 POST_HELD = 6                                 # still looks 20 s apart that bring the postseason wait to reopen the sim
 BUSY_STILL = 12                               # still busy looks (4 min, the ASN unchanged) that mark the update box stale
 CHAMP_HELD = 6                                # champion looks still up after a Return before one more Return is sent
+LIST_Y, LIST_DY, LIST_ROWS = 479, 11, 9       # Open Association list: first row's y, row pitch, rows shown unscrolled
 
 
 def _diff(png, ref, box):
@@ -243,12 +244,42 @@ def season(h, shots, stem, limit):
     return False
 
 
+def assn_row(assn_dir, stem):
+    """stem's row in the Open Association list (0 is the top), or None: the list holds every association in assn_dir
+    but _DEFAULT, sorted by its label (gamedata.association's name). None too when stem is missing or any label
+    cannot be read (a row counted wrong would open another league)."""
+    labels = []
+    for path in glob.glob(os.path.join(assn_dir, '*')):
+        base, ext = os.path.splitext(os.path.basename(path))
+        if ext.lower() != '.asn' or base.upper() == '_DEFAULT':
+            continue
+        try:
+            labels.append((gamedata.association(path)['name'], base.lower()))
+        except (OSError, ValueError, KeyError, IndexError, struct.error):
+            return None
+    rows = [base for _, base in sorted(labels)]
+    return rows.index(stem.lower()) if stem.lower() in rows else None
+
+
+def reopen(h, stem):
+    """Open stem's association from the Open Association list (ctrl+l, its row, Open). False, with no input, when its
+    row is unknown or below the rows the list shows without scrolling."""
+    n = assn_row(os.path.join(h.WORK, 'Assn'), stem)
+    if n is None or n >= LIST_ROWS:
+        return False
+    h.x('key', 'ctrl+l'); time.sleep(4)
+    h.click(575, LIST_Y + LIST_DY * n); time.sleep(1)
+    h.click(735, 538); time.sleep(12)                # Open
+    return True
+
+
 def postseason(h, shots, t_end, max_sims=8, asn=None):
     """After the last regular-season game: wait for the season-complete notice while the playoffs play, reopening the
     sim only after POST_HELD unchanged looks. A busy look ('Updating association data') is progress and never sims,
     unless it holds still BUSY_STILL looks (a stale paint over the idle game: one Return);
     a champion look ('Led by Coach ..., the ... capture the World Series') is answered with Return, and after it the
-    sim never reopens (a still screen with no notice stops with champion_idle);
+    sim never reopens: a still screen with no notice reopens the association (asn given), True when that shows the
+    season-complete notice, else it stops with champion_idle;
     a refused sim counts as one of max_sims. When asn is given, any other association file changing stops it with
     wrong_association and no more input."""
     a, b = f'{shots}/_post_a.png', f'{shots}/_post_b.png'
@@ -310,8 +341,16 @@ def postseason(h, shots, t_end, max_sims=8, asn=None):
             continue
         if champ:
             # After the World Series the sim must never reopen: 2025 run, 20:56, a ctrl+k from the screen left after
-            # the champion's Return opened another association's schedule and simmed its games. Stop with no input.
+            # the champion's Return opened another association's schedule and simmed its games. The 21:24 probe
+            # showed why: the game writes <stem>.eos, closes the association and shows another one (MLBPA97).
+            # Reopening this one brings up the season-complete notice that offseason() answers.
             shutil.copyfile(a, f'{shots}/post_champ_idle.png')
+            if asn is not None and reopen(h, os.path.splitext(os.path.basename(asn))[0]):
+                look(h, a)
+                if notice(a) == 'complete':
+                    print(json.dumps({'postseason': 'complete', 'sims': sims, 'reopened': True}), flush=True)
+                    return True
+                shutil.copyfile(a, f'{shots}/post_reopen.png')
             print(json.dumps({'postseason': 'champion_idle', 'sims': sims}), flush=True)
             return False
         if sims >= max_sims:
