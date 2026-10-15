@@ -22,6 +22,16 @@ its text; they do not replace it.
   a watcher that is not running through a long sim misses games), the front page says so: "Stories for N of M
   games played."
 - Scouting reports use the season year for ages, not the calendar year.
+- Rookie class pages: at each rollover the watcher writes the new season's rookie class, linked from the Season box.
+- A page per sim day: that day's Around the league column and its stories, linked from the feed.
+- Re-simming from an earlier day (a restored save) no longer leaves newer news behind: the watcher moves the newer
+  stories aside and sets the last day back.
+- The front page has a League box: players on rosters, mean age, how many are 25 or under and 33 or over, and free
+  agents.
+- Postseason: a postseason page per season (the bracket, series by series, linked from the season links), recaps
+  for postseason games (round and game number in the story), and a Champions page per league (one row per season,
+  linked from Past seasons once a season has a champion). The in-game News reader shows the League box and the
+  Champions page as well.
 
 ## For people running the source
 
@@ -29,6 +39,12 @@ its text; they do not replace it.
   `--watch` and `--heartbeat`. Judge a stall from it, never by attaching a debugger to the game.
 - news/gamedata.py reads the postseason bracket (series, wins, games, champion) from the association file.
 - The harness can start a plan from a saved association snapshot (`resume` in the plan).
+- news/gamedata.py reports league demographics (age make-up of rosters and free agents) from the ASN, PYR and PYF;
+  the harness prints them at every rollover and logs the champion of each season.
+- The harness's progress lines carry the lanestat verdict, so a stalled lane shows in its own log.
+- work/harness/runreport.py LOG prints one summary of a run log: demographics per rollover with the change in mean
+  age, champions, seasons, verdict counts and stops (`--json` for the raw summary).
+- Developer scripts (hookab, simdays, sort_test, play_logged) were hardened.
 
 ## Known limits
 

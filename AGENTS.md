@@ -66,7 +66,8 @@ Public repo (MIT) of tools and research for FPS Baseball Pro '98. Python codecs 
   lowers peak with age and retires by age and ability. New players (FUN_68040da0) top the pool up to 55 per team,
   at least 3 per team, so inflow only grows once retirements pull the pool under 55 per team. Any multi-season check
   must measure league age and per-team roster and pitcher counts each offseason (seasonloop "seasons" prints
-  demographics per rollover), not just one season's stats.
+  demographics per rollover; work/harness/runreport.py LOG tabulates them with the change per rollover), not just one
+  season's stats.
 - In-game Mods menu: mods\modmenu.dll takes over the main menu's WWW SITE button (EZShell 0x6a006370) and talks to
   news/modbridge.py only through files in <game>/Mods/spool (the hosted game's sandbox has no network). Requests are
   written as .tmp then renamed to .req, claimed by renaming to .work, answered as .rsp; never read a half-written file.
