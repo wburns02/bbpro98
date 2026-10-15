@@ -60,6 +60,20 @@ def test_snapshot_lists_every_player_by_pid_with_name_and_birth_year():
     assert rookies.snapshot({}) == {'ids': []}
 
 
+def test_snapshot_records_the_season_only_when_it_is_an_int():
+    assert rookies.snapshot(PLAYERS, 1998)['season'] == 1998
+    assert rookies.snapshot(PLAYERS, 1998)['ids'] == rookies.snapshot(PLAYERS)['ids']
+    for bad in (None, True, False, '1998', 1998.0):
+        assert rookies.snapshot(PLAYERS, bad) == {'ids': rookies.snapshot(PLAYERS)['ids']}
+    assert list(rookies.snapshot(PLAYERS)) == ['ids']
+
+
+def test_newcomers_ignores_the_snapshots_season():
+    prev = rookies.snapshot({pid: PLAYERS[pid] for pid in (101, 102, 201)}, 1997)
+    assert rookies.newcomers(PLAYERS, prev) == [103, 104, 202, 203]
+    assert rookies.newcomers(PLAYERS, rookies.snapshot(PLAYERS, 1998)) == []
+
+
 def test_newcomers_are_the_triples_not_in_the_previous_snapshot():
     prev = rookies.snapshot({pid: PLAYERS[pid] for pid in (101, 102, 201)})
     assert rookies.newcomers(PLAYERS, prev) == [103, 104, 202, 203]
