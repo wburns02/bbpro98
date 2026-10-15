@@ -146,7 +146,7 @@ def test_the_current_bracket_is_written_to_the_season_folder(pieces):
     assert rec['kind'] == 'postseason' and rec['source'] == 'template' and rec['created']
     assert rec['headline'] == '1998 postseason' and rec['body'].startswith('Ash beat Birch 3-1 in the Division Series.')
     assert rec['facts'] == bracket.facts(ASSOC, pieces.b, 1998)
-    assert pieces.logs == ['A postseason 1998 (7 games)']
+    assert pieces.logs == ['A postseason 1998 (7 games) (template)']
 
 
 def test_last_seasons_bracket_goes_to_its_past_folder_only_when_that_exists(pieces):
@@ -188,7 +188,7 @@ def test_an_unchanged_bracket_leaves_the_file_alone_and_a_new_game_rewrites_it(p
     pieces.run()
     rec = pieces.read()
     assert rec['created'] != '2000-01-01T00:00:00' and 'Cedar leads Dogwood 2-1' in rec['body']
-    assert pieces.logs[-1] == 'A postseason 1998 (8 games)'
+    assert pieces.logs[-1] == 'A postseason 1998 (8 games) (template)'
 
 
 def test_the_finished_bracket_names_the_champion(pieces):
@@ -224,7 +224,7 @@ def test_a_scan_writes_the_piece_after_the_season_pieces(tmp_path, monkeypatch):
     logs = []
     watch.Watcher(str(game_dir), str(tmp_path / 'data'), None, None, log=logs.append).scan()
     assert (tmp_path / 'data' / '30L1998' / 'postseason.json').is_file()
-    assert [m for m in logs if 'postseason' in m] == ['30L1998 postseason 1998 (7 games)']
+    assert [m for m in logs if 'postseason' in m] == ['30L1998 postseason 1998 (7 games) (template)']
 
 
 # the pages

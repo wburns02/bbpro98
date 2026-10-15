@@ -58,3 +58,17 @@ def template(f):
                 else '%s postseason' % f['season'])
     body = '\n\n'.join(' '.join(_sentence(s, r['name']) for s in r['series']) for r in f['rounds'])
     return {'headline': headline, 'body': body}
+
+
+SYSTEM = ("You are a newspaper baseball writer. Write the wrap of the association's postseason: 150 to "
+          "250 words on how the champion got there, round by round, ending with the World Series. " + recap.RULES)
+
+
+def prompt(f):
+    """(system, user) for the wrap."""
+    return SYSTEM, recap.facts_message(f)
+
+
+def write(f, budget, complete, attempts=2):
+    """The wrap from the model, or the template when it cannot give one that checks out."""
+    return recap.draft(f, budget, complete, prompt, template, attempts)
