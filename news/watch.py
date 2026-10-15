@@ -7,7 +7,7 @@ league' column per played date, and each association's standings and leaders. se
 Data layout (server.py reads it):
     <data>/budget.json, <data>/limits.json            hive.Budget state and its limits
     <data>/teamnames.json                              full Lahman team names (optional; news/teamnames.py)
-    <data>/<ASSN>/meta.json                            name, last_day, standings, leaders, updated
+    <data>/<ASSN>/meta.json                            name, season_year, last_day, standings, leaders, updated
     <data>/<ASSN>/recaps/<key>.json                    key = first 16 hex chars of the box score file's sha1
     <data>/<ASSN>/feed/<MM>-<DD>.json                  one column per played date
     <data>/<ASSN>/preview.json, awards.json            season preview (once), season awards (once all games are played)
@@ -16,6 +16,7 @@ Data layout (server.py reads it):
     <data>/<ASSN>/moves/last.json                      the snapshot the next scan diffs against
     <data>/<ASSN>/contracts.json                       contracts and payrolls, priced from news/salary_table.json
     <data>/<ASSN>/replay.json                          the season against its Lahman namesake (with --db; replay.py)
+    <data>/<ASSN>/past/<YEAR>/                         the last seasons' news, moved there at each rollover
 
 The game files are only read. A box score is matched to its schedule game by teams and final score (gamedata); one
 that matches nothing yet (the association not saved since the game) is retried on later scans. Stories go to the
@@ -28,6 +29,7 @@ import json
 import os
 import pathlib
 import re
+import shutil
 import sqlite3
 import sys
 import time
@@ -72,6 +74,16 @@ def read_json(path):
         return obj if isinstance(obj, dict) else None
     except (OSError, ValueError):
         return None
+
+
+def year_of(value):
+    """The season year when it is an int (a bool is not one), else None."""
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+# What a season leaves in <data>/<ASSN>/ that the next season starts without; the rest (history/, moves/,
+# contracts.json, notes/) spans seasons.
+SEASON_ENTRIES = ('recaps', 'pending', 'feed', 'scout', 'preview.json', 'awards.json', 'replay.json')
 
 
 def associations(game_dir):
@@ -153,6 +165,7 @@ class Watcher:
         names = gamedata.names(pyr) if pyr else {}
         dat = gamedata.find(stats_dir, stem + '.DAT')
         season = gamedata.season_lines(dat) if dat else {'bat': {}, 'pit': {}}
+        self.rollover(stem, out, assoc)
         self.capture(stem)
         self.columns(out, assoc, names, season)      # first: a few calls a day, and the page leads with them
         self.recaps(stem, out, assoc, names, stats_dir)
@@ -160,13 +173,46 @@ class Watcher:
         teams_played = played * 2 / len(assoc['teams']) if assoc['teams'] else 0.0
         last = feed.last_day(assoc)
         write_json(os.path.join(out, 'meta.json'), {
-            'assn': stem, 'name': assoc['name'], 'updated': now_iso(), 'last_day': list(last) if last else None,
+            'assn': stem, 'name': assoc['name'], 'season_year': year_of(assoc.get('season_year')),
+            'updated': now_iso(), 'last_day': list(last) if last else None,
             'standings': feed.standings(assoc), 'leaders': feed.leaders(season, names, teams_played)})
         self.season_pieces(out, assoc, names, dat, pyr)
         self.history_piece(assoc, stem, dat)
         self.moves(out, assoc, pyr, dat)
         self.contracts_piece(out, assoc, pyr, dat)
         self.replay_piece(out, assoc, names, season)
+
+    def rollover(self, stem, out, assoc):
+        """A career association plays many seasons under one stem. When meta.json holds the last season's year and the
+        association is now in another, the season's news moves to <out>/past/<year>/ (-2, -3 ... for a name already
+        taken; meta.json is copied, the rest moved) and the new season starts as a new association. Returns that
+        folder's name, or None when nothing rolled over: no meta.json, no year in it (written before this), no year
+        in the association, or the same year. An OSError part way propagates to scan(), which logs it; what was not
+        moved stays, and the next pass tries again."""
+        meta = read_json(os.path.join(out, 'meta.json'))
+        stored, year = year_of(meta.get('season_year')) if meta else None, year_of(assoc.get('season_year'))
+        if stored is None or year is None or stored == year:
+            return None
+        name, n = str(stored), 1
+        while os.path.exists(os.path.join(out, 'past', name)):
+            n += 1
+            name = '%d-%d' % (stored, n)
+        dest = os.path.join(out, 'past', name)
+        os.makedirs(dest)
+        shutil.copyfile(os.path.join(out, 'meta.json'), os.path.join(dest, 'meta.json'))
+        for entry in SEASON_ENTRIES:
+            if os.path.lexists(os.path.join(out, entry)):
+                os.replace(os.path.join(out, entry), os.path.join(dest, entry))
+        self.log('%s season %d news archived to past/%s' % (stem, stored, name))
+        return name
+
+    def archived(self, out):
+        """Keys of the box scores whose stories (or captures) a rollover moved to <out>/past/*/."""
+        keys = set()
+        for sub in ('recaps', 'pending'):
+            for path in pathlib.Path(out, 'past').glob('*/' + sub + '/*.json'):
+                keys.add(path.stem)
+        return keys
 
     def history_piece(self, assoc, stem, dat):
         """Archives each simulated season's lines for the player card's Career tab (history.py), once per season: this
@@ -353,16 +399,18 @@ class Watcher:
     def capture(self, stem):
         """Copy every new box score of this association into <data>/<ASSN>/pending/ as parsed JSON. The game keeps
         only the last seven sim days of box scores (Stats/<ASSN>.H<day><game>, the oldest day deleted as each new one
-        is written), so this runs before every story the model is asked for, and a long sim loses nothing."""
+        is written), so this runs before every story the model is asked for, and a long sim loses nothing. A box
+        score already archived under past/ is not captured again."""
         stats_dir = os.path.join(self.game, 'Stats')
         out = os.path.join(self.data, stem)
+        past = self.archived(out)       # read once a pass, not once a box score
         for path in gamedata.box_files(stats_dir, stem):
             try:
                 if time.time() - os.path.getmtime(path) < SETTLE:
                     continue
                 with open(path, 'rb') as fh:
                     key = hashlib.sha1(fh.read()).hexdigest()[:16]
-                if key in self.captured.setdefault(stem, set()):
+                if key in self.captured.setdefault(stem, set()) or key in past:
                     continue
                 if not (os.path.exists(os.path.join(out, 'recaps', key + '.json'))
                         or os.path.exists(os.path.join(out, 'pending', key + '.json'))):

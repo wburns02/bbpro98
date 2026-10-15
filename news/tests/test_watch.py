@@ -1,4 +1,5 @@
 """watch.Watcher over a fake game directory: gamedata's readers are replaced by dicts, so no game files are needed."""
+import hashlib
 import json
 import os
 import struct
@@ -550,7 +551,8 @@ def test_a_season_that_moved_on_leaves_the_old_scorecard_alone(world, monkeypatc
     named(monkeypatch, '1998 Major Leagues', season_year=1999)
     w.seen.clear()
     w.scan()
-    assert (data / '30L1998' / 'replay.json').read_text() == before
+    assert (data / '30L1998' / 'past' / '1998' / 'replay.json').read_text() == before     # archived at the rollover
+    assert not (data / '30L1998' / 'replay.json').exists()                               # and none written for 1999
 
 
 @pytest.fixture
@@ -668,3 +670,169 @@ def test_a_season_with_no_year_prices_nothing(league, salary_table, monkeypatch)
     c = contract_file(data)
     assert c['season_year'] is None and c['contracts'] == {} and c['events'] == []
     assert [(r['tid'], r['players']) for r in c['payroll']] == [(1, 0), (2, 0)]
+
+
+def season_folder(out, year=1997):
+    """An association folder as the watcher leaves it after a season: season files, cross-season files, a meta.json."""
+    files = {'meta.json': {'season_year': year}, 'recaps/aa.json': {'key': 'aa'}, 'pending/bb.json': {'key': 'bb'},
+             'feed/10-01.json': {}, 'scout/3.json': {}, 'preview.json': {}, 'awards.json': {}, 'replay.json': {},
+             'history/1997.json': {}, 'moves/log.json': {}, 'contracts.json': {}, 'notes/1.json': {}}
+    for name, obj in files.items():
+        (out / name).parent.mkdir(parents=True, exist_ok=True)
+        (out / name).write_text(json.dumps(obj))
+    return sorted(files)
+
+
+def rolling(tmp_path):
+    lines = []
+    return watch.Watcher(str(tmp_path / 'game'), str(tmp_path / 'data'), None, None, log=lines.append), lines
+
+
+def test_meta_carries_the_season_year_int_or_none(world, monkeypatch):
+    gd, data, st = world
+    named(monkeypatch, '1998 Test', season_year=1998)
+    watch.Watcher(str(gd), str(data), None, None, log=lambda s: None).scan()
+    assert json.loads((data / '30L1998' / 'meta.json').read_text())['season_year'] == 1998
+    named(monkeypatch, '1998 Test', season_year=True)
+    watch.Watcher(str(gd), str(data), None, None, log=lambda s: None).scan()
+    assert json.loads((data / '30L1998' / 'meta.json').read_text())['season_year'] is None
+
+
+def test_a_new_season_year_moves_the_seasons_news_to_past_and_copies_meta(tmp_path):
+    out = tmp_path / 'data' / 'A'
+    files = season_folder(out)
+    w, lines = rolling(tmp_path)
+    assert w.rollover('A', str(out), {'season_year': 1998}) == '1997'
+    assert lines == ['A season 1997 news archived to past/1997']
+    past = out / 'past' / '1997'
+    for gone in ('recaps', 'pending', 'feed', 'scout', 'preview.json', 'awards.json', 'replay.json'):
+        assert not (out / gone).exists() and (past / gone).exists()
+    assert (past / 'recaps' / 'aa.json').exists() and (past / 'feed' / '10-01.json').exists()
+    assert json.loads((past / 'meta.json').read_text()) == {'season_year': 1997}
+    assert json.loads((out / 'meta.json').read_text()) == {'season_year': 1997}      # copied, not moved
+    stay = [f for f in files if f.split('/')[0] in ('history', 'moves', 'notes', 'contracts.json')]
+    assert len(stay) == 4 and all((out / f).exists() for f in stay)
+
+
+def test_a_second_rollover_into_a_used_name_does_not_overwrite(tmp_path):
+    out = tmp_path / 'data' / 'A'
+    season_folder(out)
+    w, lines = rolling(tmp_path)
+    assert w.rollover('A', str(out), {'season_year': 1998}) == '1997'
+    (out / 'recaps').mkdir()
+    (out / 'recaps' / 'cc.json').write_text('{}')
+    assert w.rollover('A', str(out), {'season_year': 1998}) == '1997-2'
+    assert w.rollover('A', str(out), {'season_year': 1999}) == '1997-3'
+    assert (out / 'past' / '1997' / 'recaps' / 'aa.json').exists()
+    assert (out / 'past' / '1997-2' / 'recaps' / 'cc.json').exists()
+    assert lines[1] == 'A season 1997 news archived to past/1997-2'
+
+
+@pytest.mark.parametrize('stored,year', [(None, 1998), (1997, None), (1997, 1997), (True, 1998), (1997, True),
+                                         ('1997', 1998), (1997, '1998')])
+def test_no_rollover_without_two_different_int_years(tmp_path, stored, year):
+    out = tmp_path / 'data' / 'A'
+    files = season_folder(out)
+    meta = {} if stored is None else {'season_year': stored}
+    (out / 'meta.json').write_text(json.dumps(meta))
+    w, lines = rolling(tmp_path)
+    assert w.rollover('A', str(out), {'season_year': year}) is None
+    assert lines == [] and not (out / 'past').exists() and all((out / f).exists() for f in files)
+
+
+def test_no_rollover_without_a_readable_meta(tmp_path):
+    out = tmp_path / 'data' / 'A'
+    season_folder(out)
+    w, lines = rolling(tmp_path)
+    (out / 'meta.json').write_text('{not json')
+    assert w.rollover('A', str(out), {'season_year': 1998}) is None
+    (out / 'meta.json').unlink()
+    assert w.rollover('A', str(out), {'season_year': 1998}) is None
+    assert lines == [] and not (out / 'past').exists() and (out / 'recaps' / 'aa.json').exists()
+
+
+def test_a_move_that_fails_leaves_the_rest_in_place_and_raises_for_scan_to_log(tmp_path, monkeypatch):
+    out = tmp_path / 'data' / 'A'
+    season_folder(out)
+    w, lines = rolling(tmp_path)
+    real = os.replace
+
+    def replace(src, dst):
+        if os.path.basename(src) == 'feed':
+            raise OSError('disk')
+        real(src, dst)
+
+    monkeypatch.setattr(os, 'replace', replace)
+    with pytest.raises(OSError):
+        w.rollover('A', str(out), {'season_year': 1998})
+    assert (out / 'past' / '1997' / 'recaps').exists() and (out / 'feed' / '10-01.json').exists()
+    assert (out / 'scout').exists() and lines == []
+
+
+def test_a_scan_in_a_new_season_archives_the_old_and_starts_fresh(world, monkeypatch):
+    gd, data, st = world
+    out = data / '30L1998'
+    st['boxfile']('30L1998.H10', {'away': side(1, 3, 100), 'home': side(2, 1, 200)})
+    st['boxfile']('30L1998.H20', {'away': side(2, 0, 200), 'home': side(1, 5, 100)})
+    lines = []
+    named(monkeypatch, '1998 Test', season_year=1997)
+    watch.Watcher(str(gd), str(data), None, None, log=lines.append).scan()
+    assert len(stories(data)) == 2 and (out / 'preview.json').exists()
+    (out / 'preview.json').write_text('{"kept": 1997}')
+    (out / 'moves').mkdir(exist_ok=True)
+    (out / 'moves' / 'log.json').write_text('{}')
+    named(monkeypatch, '1998 Test', season_year=1998)
+    w = watch.Watcher(str(gd), str(data), None, None, log=lines.append)
+    w.scan()
+    assert '30L1998 season 1997 news archived to past/1997' in lines
+    assert json.loads((out / 'past' / '1997' / 'preview.json').read_text()) == {'kept': 1997}
+    assert json.loads((out / 'preview.json').read_text())['kind'] == 'preview'
+    assert len(list((out / 'past' / '1997' / 'recaps').iterdir())) == 2
+    assert sorted(os.listdir(out / 'past' / '1997' / 'feed')) == ['04-01.json', '04-02.json']
+    assert sorted(os.listdir(out / 'feed')) == ['04-01.json', '04-02.json']      # this season's own columns
+    assert (out / 'moves' / 'log.json').exists()
+    assert json.loads((out / 'meta.json').read_text())['season_year'] == 1998
+    # The same box scores are last season's: neither captured again nor given a story in the new season.
+    assert not (out / 'pending').exists() or not os.listdir(out / 'pending')
+    assert not (out / 'recaps').exists() or not os.listdir(out / 'recaps')
+    w2 = watch.Watcher(str(gd), str(data), None, None, log=lines.append)      # a restart forgets what it captured
+    w2.seen.clear()
+    w2.scan()
+    assert not (out / 'pending').exists() or not os.listdir(out / 'pending')
+
+
+def test_a_new_season_gets_a_fresh_preview_and_stories_on_the_old_slots(world, monkeypatch):
+    gd, data, st = world
+    out = data / '30L1998'
+    named(monkeypatch, '1998 Test', season_year=1997)
+    st['boxfile']('30L1998.H10', {'away': side(1, 3, 100), 'home': side(2, 1, 200)})
+    watch.Watcher(str(gd), str(data), None, None, log=lambda s: None).scan()
+    archived = [s['key'] for s in stories(data)]
+    assert len(archived) == 1
+    named(monkeypatch, '1998 Test', season_year=1998)
+    st['boxfile']('30L1998.H11', {'away': side(1, 4, 100), 'home': side(2, 2, 200)})     # a new game, same slot
+    st['games'][0].update(away_runs=4, home_runs=2)
+    watch.Watcher(str(gd), str(data), None, None, log=lambda s: None).scan()
+    got = stories(data)
+    assert [s['day'] for s in got] == [1] and got[0]['key'] != archived[0]       # a story on the slot 1997 used
+    assert (out / 'preview.json').exists() and (out / 'past' / '1997' / 'preview.json').exists()
+
+
+def test_an_archived_box_score_is_not_captured_into_pending_again(world):
+    gd, data, st = world
+    out = data / '30L1998'
+    st['boxfile']('30L1998.H10', {'away': side(1, 3, 100), 'home': side(2, 1, 200)})
+    key = hashlib.sha1((gd / 'Stats' / '30L1998.H10').read_bytes()).hexdigest()[:16]
+    (out / 'past' / '1997' / 'recaps').mkdir(parents=True)
+    (out / 'past' / '1997' / 'recaps' / (key + '.json')).write_text('{}')
+    w = watch.Watcher(str(gd), str(data), None, None, log=lambda s: None)
+    w.capture('30L1998')
+    assert not (out / 'pending').exists()
+    (out / 'past' / '1997' / 'recaps' / (key + '.json')).rename(out / 'past' / '1997' / 'recaps' / 'zz.json')
+    (out / 'past' / '1997' / 'pending').mkdir()
+    (out / 'past' / '1997' / 'pending' / (key + '.json')).write_text('{}')
+    w.capture('30L1998')
+    assert not (out / 'pending').exists()
+    (out / 'past' / '1997' / 'pending' / (key + '.json')).unlink()
+    w.capture('30L1998')
+    assert (out / 'pending' / (key + '.json')).exists()
