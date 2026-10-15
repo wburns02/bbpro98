@@ -4,9 +4,9 @@
 
 Prints one JSON line: the lane's game pids, their CPU ticks over --secs seconds, the newest write in the
 work copy's Assn and Stats, the last non-periodic bbtrace.log line with its age, what the screen shows,
-and a verdict ('no_game', 'working', 'stale_paint', 'idle'). Takes no input, kills nothing, writes nothing
+and a verdict ('no_game', 'working', 'stale_paint', 'idle'). Takes no input, signals no process, writes nothing
 inside the work copy (the shot lands in a new tempfile.mkstemp file unless --shot says otherwise), attaches no
-debugger. Judge a stall from this line, not by attaching winedbg (the attach thread faults under wow64).
+debugger. Judge a stall from this line, not by attaching a debugger (the attach thread faults under wow64).
 """
 import argparse
 import datetime
