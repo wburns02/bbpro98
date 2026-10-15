@@ -15,12 +15,15 @@
    own button handler: its command 0xe is the stock dialog's OK button, so it is not hooked.)
 
    Export: mm_open_page(path) runs the News reader at path for another mod (playercard.dll's player card) and returns when
-   it is closed; 0 when the bridge answered, 1 when it did not.
+   it is closed; 0 when the bridge answered, 1 when it did not (at once, with no window, when the bridge's alive.txt in
+   the spool is missing or older than ALIVE_MS).
 
    Spool: a request is written as q<ID>.tmp and renamed to q<ID>.req in <exe dir>\Mods\spool\; the bridge (news/modbridge.py)
    answers with r<ID>.rsp, which the mod polls for on a 250 ms timer, reads, deletes and parses. A picture page (image=1,
    the player card's tabs) also has r<ID>.bmp, written before the .rsp: the reader shows it in place of the page text and
    link list and opens hot.N = "x,y,w,h<TAB>path" on a click. The file name comes from the reader's own request id.
+   The bridge also rewrites alive.txt (the unix time) in the spool every 2 s; mm_open_page skips the reader when its
+   last-write time is older than ALIVE_MS.
 
    bbfix.ini:  [mods] load=mods\modmenu.dll      [modmenu] enable=1
    Build:  /mnt/nvme/bbpro98/zigenv/bin/python -m ziglang cc -target x86-windows-gnu -O2 -shared -Isrc-latest
@@ -40,6 +43,7 @@ static const BBModAPI *api;
 #define TIMER_POLL 1
 #define POLL_MS 250
 #define TIMEOUT_MS 20000
+#define ALIVE_MS 10000                      /* the bridge's alive.txt may be this old (or this far ahead) and still count */
 #define BUILD_TIMEOUT_MS 1200000
 #define IDC_CLOSE IDCANCEL                  /* Close buttons use IDCANCEL, so ESC and the close box share a path */
 
@@ -77,6 +81,27 @@ static int mm_dir(char *out, int n) {
 
 static void mm_set_spool(const char *dir) {
     snprintf(spool_override, sizeof spool_override, "%s", dir ? dir : "");
+}
+
+/* 1 when the bridge is running: <spool>alive.txt exists and was written no more than ALIVE_MS ago by the system clock
+   (a time up to ALIVE_MS ahead counts too: clock skew); 0 for an old or missing file or a missing spool folder */
+static int mm_bridge_alive(void) {
+    char dir[MAX_PATH], path[MAX_PATH + 16];
+    WIN32_FILE_ATTRIBUTE_DATA d;
+    FILETIME now;
+    ULARGE_INTEGER a, b;
+    long long age;
+    if (!mm_dir(dir, sizeof dir)) return 0;
+    snprintf(path, sizeof path, "%salive.txt", dir);
+    if (!GetFileAttributesExA(path, GetFileExInfoStandard, &d) || (d.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY))
+        return 0;
+    GetSystemTimeAsFileTime(&now);
+    a.LowPart = now.dwLowDateTime;
+    a.HighPart = now.dwHighDateTime;
+    b.LowPart = d.ftLastWriteTime.dwLowDateTime;
+    b.HighPart = d.ftLastWriteTime.dwHighDateTime;
+    age = (long long)(a.QuadPart / 10000) - (long long)(b.QuadPart / 10000);     /* ms; negative: written ahead */
+    return age <= ALIVE_MS && age >= -ALIVE_MS;
 }
 
 /* copy src to dst, dropping bytes below 0x20, at most n-1 bytes */
@@ -1570,9 +1595,14 @@ static int run_newassn(void) {
 
 /* The News reader at path, run like the menu (the same CBT hook and message loop) for another mod's window: a player
    card's link to a page. Returns when the reader is closed. 0 when the bridge answered the page; 1 when it did not (no
-   spool, no answer in time, or a bad answer), in which case the reader shows the same message the menu shows. */
+   spool, no answer in time, or a bad answer), in which case the reader shows the same message the menu shows. With no
+   bridge running (no fresh alive.txt in the spool) it returns 1 at once: no window, no request. */
 BB_EXPORT int mm_open_page(const char *path) {
     HWND owner;
+    if (!mm_bridge_alive()) {
+        if (api) api->log("modmenu: bridge not running, %s left to the caller", path);
+        return 1;
+    }
     init_once();
     owner = GetActiveWindow();
     if (!owner) owner = GetForegroundWindow();

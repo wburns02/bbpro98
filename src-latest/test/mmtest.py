@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Unit test of the Mods menu's spool protocol (src-latest/mods/modmenu.c), under Wine. Builds mmtest.exe (which
 includes modmenu.c) and runs it against a fake bridge thread in this process: the request bytes, the response parsing,
-TAB values, timeouts, a missing spool folder and mm_clean. Check 7 runs the real news/modbridge.py when it imports.
+TAB values, timeouts, a missing spool folder and mm_clean, the bridge heartbeat (alive.txt) and mm_open_page's
+immediate return without one. Checks 7 and 12 run the real news/modbridge.py when it imports.
 usage: python3 mmtest.py OUTDIR   (needs the zig env at /mnt/nvme/bbpro98/zigenv and wine; prints SKIP and exits 0
 when either is missing)"""
 import os
@@ -156,6 +157,40 @@ def main():
     r = run(['visible'])
     check(8, 'window shown', r.stdout == b'VISIBLE 1\n', 'out %r err %r' % (r.stdout, r.stderr[-200:]))
 
+    # 9-11. the bridge's heartbeat: alive.txt missing, fresh or a minute old
+    def alive(spool):
+        r = run(['alive', wpath(spool)])
+        return r.stdout.decode('latin-1').strip(), r
+
+    def beat_file(spool, age=0):
+        path = os.path.join(spool, 'alive.txt')
+        with open(path, 'w') as f:
+            f.write('%d\n' % (time.time() - age))
+        os.utime(path, (time.time() - age,) * 2)
+
+    sp = fresh('alive-none')
+    got, r = alive(sp)
+    check(9, 'no alive.txt', got == 'ALIVE 0', 'out %r err %r' % (r.stdout[:100], r.stderr[-200:]))
+    sp = fresh('alive-fresh')
+    beat_file(sp)
+    got, r = alive(sp)
+    check(10, 'fresh alive.txt', got == 'ALIVE 1', 'out %r err %r' % (r.stdout[:100], r.stderr[-200:]))
+    sp = fresh('alive-old')
+    beat_file(sp, 60)
+    got, r = alive(sp)
+    check(11, 'alive.txt 60 s old', got == 'ALIVE 0', 'out %r err %r' % (r.stdout[:100], r.stderr[-200:]))
+
+    # 13. mm_open_page with no bridge running: returns 1 at once, no request in the spool, no window
+    t0 = time.time()
+    outs = []
+    for name, age in (('open-none', None), ('open-old', 60)):
+        sp = fresh(name)
+        if age:
+            beat_file(sp, age)
+        r = run(['open', wpath(sp), '/news/card/TEST77/p/1'], timeout=20)
+        outs.append((r.stdout.decode('latin-1').strip(), leftover(sp, 'q', '')))
+    check(13, 'open_page with no bridge', outs == [('OPEN 1', [])] * 2 and time.time() - t0 < 20, 'out %r' % outs)
+
     # 7. the real bridge, when it imports
     sys.path.insert(0, os.path.join(ROOT, 'news'))
     try:
@@ -164,6 +199,7 @@ def main():
         modbridge = None
     if modbridge is None:
         print('SKIP 7 real bridge: news/modbridge.py does not import')
+        print('SKIP 12 real bridge beat: news/modbridge.py does not import')
     else:
         tree = os.path.join(out, 'tree')
         shutil.rmtree(tree, ignore_errors=True)
@@ -192,6 +228,12 @@ def main():
         _, hdr, _, _ = parse(r.stdout)
         check(7, 'real bridge ping', r.returncode == 0 and ('status', 'ok') in hdr and ('version', '1') in hdr and not err,
               'rc %d hdr %r err %r out %r' % (r.returncode, hdr, err, r.stdout[:200]))
+
+        # 12. the real beat() makes a fresh alive.txt
+        sp = fresh('alive-real')
+        modbridge.beat(os.path.abspath(sp))
+        got, r = alive(sp)
+        check(12, 'real bridge beat', got == 'ALIVE 1', 'out %r err %r' % (r.stdout[:100], r.stderr[-200:]))
 
     fails = results.count(False)
     print('%d checks, %d failures' % (len(results), fails))
