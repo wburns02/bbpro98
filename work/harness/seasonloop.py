@@ -162,6 +162,30 @@ def busy(png):
     return _diff(png, 'f_update.png', UPDATE_BOX) < 10.0
 
 
+def health(h, secs=2.0, scr=None):
+    """lanestat's verdict for the lane h drives, as fields for a progress line: the game's CPU ticks over `secs`
+    seconds (no sleep without game pids), the age of the newest Assn/Stats write and of the last bbtrace.log line.
+    Never raises: a failure is {'verdict': 'error', 'error': <exception class name>}."""
+    try:
+        import lanestat          # lanestat imports this module at its top
+        gp = getattr(h, 'game_pids', None)
+        pids = list(gp() or []) if callable(gp) else []
+        dticks = None
+        if pids:
+            first = {p: lanestat.ticks(p) or 0 for p in pids}
+            time.sleep(secs)
+            dticks = sum(max(0, (lanestat.ticks(p) or 0) - first[p]) for p in pids)
+        _, mtime = lanestat.newest([os.path.join(h.WORK, 'Assn'), os.path.join(h.WORK, 'Stats')])
+        write_age = None if mtime is None else int(round(time.time() - mtime))
+        tpath = os.path.join(h.WORK, 'bbtrace.log')
+        tage = lanestat.trace_age(lanestat.last_trace(tpath)) if os.path.exists(tpath) else None
+        tage = None if tage is None else int(round(tage))
+        return {'verdict': lanestat.verdict(dticks, write_age, tage, scr), 'dticks': dticks,
+                'write_age_s': write_age, 'trace_age_s': tage}
+    except Exception as e:
+        return {'verdict': 'error', 'error': type(e).__name__}
+
+
 def sim(h, shots):
     """From the schedule: Action > Simulate..., All games until next "Play", OK. First confirms the screen is the
     League Schedule: after one ctrl+k from Association Data, or refused with no click at all otherwise."""
@@ -214,7 +238,7 @@ def season(h, shots, stem, limit):
                 if cur is not None and cur != last:
                     last, quiet_since = cur, time.time()
                 if time.time() - shown >= PROGRESS:
-                    say(round=rnd, progress=last, of=total)
+                    say(round=rnd, progress=last, of=total, **health(h))
                     shown = time.time()
             cur, total = played(asn)
         if total and cur == total:            # season over: the loop top reports it; nothing on screen to answer
@@ -302,13 +326,15 @@ def postseason(h, shots, t_end, max_sims=8, asn=None):
             return False
         held = held + 1 if _same(a, b) else 0
         os.replace(b, a)
+        if time.time() - shown >= PROGRESS:
+            b_now = busy(a)
+            say(postseason='waiting', screen='busy' if b_now else 'other', held=held, stale=stale, sims=sims,
+                **health(h, scr='busy' if b_now else None))
+            shown = time.time()
         if busy(a):
             # Under Wine the update box can stay painted over the idle schedule after the update ends (2025 run,
             # October 6: an hour with no input). An update writes the ASN within seconds, so a box that holds still
             # BUSY_STILL looks with the ASN unchanged is a stale paint; Return repaints it, as in season()'s stops.
-            if time.time() - shown >= PROGRESS:
-                say(postseason='waiting', screen='busy', held=held, stale=stale, sims=sims)
-                shown = time.time()
             now = os.stat(asn).st_mtime_ns if asn is not None and os.path.exists(asn) else None
             stale = stale + 1 if held and now == stamp else 0
             stamp, held = now, 0
