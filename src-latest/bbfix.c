@@ -13,11 +13,26 @@ static char ini_path[MAX_PATH];
 static void L(const char *f, ...) { if(!lg) return; va_list a; va_start(a,f); vfprintf(lg,f,a); va_end(a); fputc('\n',lg); fflush(lg); }
 #include <stdarg.h>
 static HANDLE tr; static CRITICAL_SECTION trcs;
+static char tr_path[MAX_PATH]; static unsigned long long tr_max, tr_n; static int tr_rot;   // [trace] max_mb: bbtrace.log -> bbtrace.1.log past tr_max bytes (0 = no limit)
+static void tr_rotate(const SYSTEMTIME *st) {   // caller holds trcs
+    char old[MAX_PATH], h[160]; DWORD w; size_t l=strlen(tr_path);
+    CloseHandle(tr); snprintf(old,sizeof old,"%.*s.1.log",(int)(l>4?l-4:l),tr_path); MoveFileExA(tr_path,old,MOVEFILE_REPLACE_EXISTING);
+    tr=CreateFileA(tr_path,GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,0,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,0);
+    if(tr==INVALID_HANDLE_VALUE){ tr=0; return; }
+    tr_n=0; tr_rot++;
+    int n=snprintf(h,sizeof h,"%02d:%02d:%02d.%03d [%04lx] TRACE  rotated #%d, earlier lines in bbtrace.1.log\n",st->wHour,st->wMinute,st->wSecond,st->wMilliseconds,GetCurrentThreadId(),tr_rot);
+    WriteFile(tr,h,n,&w,0); tr_n+=n;
+}
 static void T(const char *f, ...) {   // timestamped trace line -> bbtrace.log (flushed immediately)
     if(!tr) return; char b[900]; SYSTEMTIME st; GetLocalTime(&st);
     int n=snprintf(b,200,"%02d:%02d:%02d.%03d [%04lx] ",st.wHour,st.wMinute,st.wSecond,st.wMilliseconds,GetCurrentThreadId());
-    va_list a; va_start(a,f); n+=vsnprintf(b+n,sizeof b-n-2,f,a); va_end(a); b[n++]='\n';
-    EnterCriticalSection(&trcs); DWORD w; WriteFile(tr,b,n,&w,0); LeaveCriticalSection(&trcs);
+    va_list a; va_start(a,f); int r=vsnprintf(b+n,sizeof b-n-2,f,a); va_end(a); if(r>0) n+=r;
+    if(n>(int)sizeof b-3) n=(int)sizeof b-3;   // vsnprintf returns the would-be length; keep the line inside b (the cut leaves the NUL at b[sizeof b-3])
+    b[n++]='\n';
+    EnterCriticalSection(&trcs);
+    if(tr_max && tr_n+n>tr_max) tr_rotate(&st);
+    if(tr){ DWORD w; WriteFile(tr,b,n,&w,0); tr_n+=n; }
+    LeaveCriticalSection(&trcs);
 }
 static const char *modname(void *addr,char *buf,int n){ HMODULE m=0; buf[0]=0;
     if(GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,(LPCSTR)addr,&m)){ char p[MAX_PATH]; GetModuleFileNameA(m,p,MAX_PATH); char*b=strrchr(p,'\\'); snprintf(buf,n,"%s+0x%lx",b?b+1:p,(unsigned long)((char*)addr-(char*)m)); } else snprintf(buf,n,"%p",addr); return buf; }
@@ -486,7 +501,8 @@ BOOL WINAPI DllMain(HINSTANCE h, DWORD why, LPVOID r) {
     if(why==DLL_PROCESS_ATTACH) {
         char p[MAX_PATH]; GetModuleFileNameA(h,p,MAX_PATH); char *s=strrchr(p,'\\'); if(s) strcpy(s+1,"bbfix.log");
         lg=fopen(p,"w"); L("bbfix loaded");
-        strcpy(s+1,"bbfix.ini"); strcpy(ini_path,p); InitializeCriticalSection(&trcs); strcpy(s+1,"bbtrace.log"); tr=CreateFileA(p,GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,0,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,0);
+        strcpy(s+1,"bbfix.ini"); strcpy(ini_path,p); InitializeCriticalSection(&trcs); strcpy(s+1,"bbtrace.log"); strcpy(tr_path,p); tr=CreateFileA(p,GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,0,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,0);
+        { int mb=(int)GetPrivateProfileIntA("trace","max_mb",64,ini_path); if(mb<0) mb=0; if(mb>4095) mb=4095; tr_max=(unsigned long long)mb*1048576; }
         trace_cfg(); T("=== BBPRO98 action trace started (pid %lu) ===",GetCurrentProcessId()); AddVectoredExceptionHandler(1,VEH); CreateThread(0,0,HandleWatch,0,0,0);
         patch_all(); mods_load();
         typedef LONG (NTAPI *Reg_t)(ULONG,LDR_CB,PVOID,PVOID*);
