@@ -28,13 +28,11 @@ def commands(args):
     return [watch, bridge]
 
 
-def _name(argv):
-    if not isinstance(argv, list):
-        return os.path.basename(argv)
-    for a in argv:
-        if isinstance(a, str) and a.endswith(".py"):
-            return os.path.splitext(os.path.basename(a))[0]
-    return "child"
+NAMES = ("watch", "bridge")      # commands() order
+
+
+def _name(i):
+    return NAMES[i] if i < len(NAMES) else "child %d" % (i + 1)
 
 
 def _stop(procs):
@@ -63,10 +61,10 @@ def run(cmds, popen=subprocess.Popen):
     procs = []
     code = 0
     try:
-        for cmd in cmds:
+        for i, cmd in enumerate(cmds):
             p = popen(cmd)
             procs.append(p)
-            print("play: started %s (pid %d)" % (_name(cmd), p.pid), flush=True)
+            print("play: started %s (pid %d)" % (_name(i), p.pid), flush=True)
         first = None
         while first is None:
             for p in procs:
@@ -76,7 +74,7 @@ def run(cmds, popen=subprocess.Popen):
             if first is None:
                 time.sleep(POLL_SECONDS)
         code = first.returncode
-        print("play: %s exited with code %s" % (_name(first.args), code), flush=True)
+        print("play: %s exited with code %s" % (_name(procs.index(first)), code), flush=True)
         others = [p for p in procs if p is not first]
         _stop(others)
         for p in [first] + others:

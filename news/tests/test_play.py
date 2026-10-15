@@ -89,3 +89,12 @@ def test_run_first_exit_stops_other():
     # the slow child must have been terminated: no stray python holding 30 s sleep
     out = subprocess.run(["ps", "-eo", "pid,args"], capture_output=True, text=True).stdout
     assert "time.sleep(30)" not in out
+
+
+def test_run_names_children_by_their_place(capsys):
+    quick = [sys.executable, "-c", "import sys; sys.exit(0)"]
+    slow = [sys.executable, "-c", "import time; time.sleep(30)"]
+    assert play.run([slow, quick]) == 0
+    out = capsys.readouterr().out
+    assert "play: started watch (pid " in out and "play: started bridge (pid " in out
+    assert "play: bridge exited with code 0" in out
