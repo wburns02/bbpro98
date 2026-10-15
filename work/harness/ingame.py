@@ -181,8 +181,54 @@ def norm(s):
     return re.sub(r'\s+', ' ', s).strip().lower()
 
 
+def expand_resume(plan):
+    """Resume from a seasonloop snapshot: plan['resume'] = {'dir': D, 'stem': S} adds an install entry for every
+    snapshot file of D/Assn and D/Stats whose name starts with S. (skipping *.pyc); explicit install entries win."""
+    res = plan.get('resume')
+    if res is None:
+        return plan
+    d, stem = res['dir'], res['stem']
+    if not stem or any(c in stem for c in '/\\') or '..' in stem:
+        sys.exit(f"REFUSED: resume stem {stem!r} is not a plain name")
+    if not os.path.isdir(d):
+        sys.exit(f'REFUSED: resume dir {d} is not a directory')
+    out = dict(plan)
+    install = dict(plan.get('install', {}))
+    low = stem.lower() + '.'
+    found_asn = False
+    assn_match = False
+    for sub in ('Assn', 'Stats'):
+        sdir = os.path.join(d, sub)
+        if sub == 'Assn':
+            if not os.path.isdir(sdir):
+                sys.exit(f'REFUSED: no {stem}.* files in {sdir}')
+            assn_match = False
+        else:
+            if not os.path.isdir(sdir):
+                continue
+        for name in os.listdir(sdir):
+            if not name.lower().startswith(low) or name.lower().endswith('.pyc'):
+                continue
+            src = os.path.join(sdir, name)
+            if not os.path.isfile(src):
+                continue
+            if sub == 'Assn':
+                assn_match = True
+                if name.lower() == low + 'asn':
+                    found_asn = True
+            key = f'{sub}/{name}'
+            if key not in install:
+                install[key] = os.path.abspath(src)
+    if not assn_match:
+        sys.exit(f"REFUSED: no {stem}.* files in {os.path.join(d, 'Assn')}")
+    if not found_asn:
+        sys.exit(f"REFUSED: no {stem}.ASN in {os.path.join(d, 'Assn')}")
+    out['install'] = install
+    return out
+
+
 def main():
-    plan = json.load(open(sys.argv[1]))
+    plan = expand_resume(json.load(open(sys.argv[1])))
     shots = os.path.abspath(sys.argv[2])
     os.makedirs(shots, exist_ok=True)
     if os.path.realpath(WORK) == LIVE or os.path.realpath(WORK).startswith(LIVE + os.sep):
