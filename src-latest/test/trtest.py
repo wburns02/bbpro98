@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Test of the bbtrace.log size cap (bbfix.ini [trace] max_mb) under Wine. Builds bbfix.dll, a mod that logs N lines of
 about 400 characters and a runner, then runs three cases, each in its own folder with its own bbfix.ini:
-rotation at max_mb=1, no rotation at max_mb=0, and the 64 MB default (no [trace] section).
+rotation at max_mb=1, no rotation at max_mb=0, and the 64 MB default (no [trace] section); a fourth case blocks the
+rename (bbtrace.1.log is a folder) and checks no line is lost.
 usage: python3 trtest.py OUTDIR      (OUTDIR is created; needs zig env at /mnt/nvme/bbpro98/zigenv and wine; SKIP without)"""
 import os, re, shutil, subprocess, sys
 HERE = os.path.dirname(os.path.abspath(__file__)); SRC = os.path.dirname(HERE)
@@ -27,8 +28,9 @@ def check(name, ok, why=''):
     print(('PASS ' if ok else 'FAIL ') + name + ('' if ok else f'  ({why})'))
     if not ok: fails.append(name)
 
-def run_case(name, lines, max_mb):
+def run_case(name, lines, max_mb, pre=None):
     d = f'{out}/{name}'; shutil.rmtree(d, ignore_errors=True); os.makedirs(d)
+    if pre: pre(d)
     for f in ('bbfix.dll', 'trmod.dll', 'trrun.exe'): shutil.copy(f'{out}/{f}', d)
     with open(f'{d}/bbfix.ini', 'w') as fh:
         fh.write(f'[mods]\r\nload=trmod.dll\r\n[trtest]\r\nlines={lines}\r\n')
@@ -70,6 +72,16 @@ cur = read(f'{d}/bbtrace.log')
 check('default: no bbtrace.1.log', not os.path.exists(f'{d}/bbtrace.1.log'))
 check('default: "action trace started" line present', 'action trace started' in (cur or ''))
 check('default: bbtrace.log holds all 100 lines', indexes(cur) == list(range(100)), f'{len(indexes(cur))} lines')
+
+def block(d):
+    os.makedirs(f'{d}/bbtrace.1.log'); open(f'{d}/bbtrace.1.log/keep', 'w').close()
+
+d = run_case('tr_blocked', N, 1, block)
+cur = read(f'{d}/bbtrace.log')
+check('blocked: bbtrace.1.log is still the folder', os.path.isdir(f'{d}/bbtrace.1.log'))
+check('blocked: "rotation off" line present', 'rotation off' in (cur or ''))
+check('blocked: bbtrace.log holds every line', indexes(cur) == list(range(N)), f'{len(indexes(cur))} lines')
+check('blocked: action trace start kept', 'action trace started' in (cur or ''))
 
 print('FAIL' if fails else 'PASS')
 sys.exit(1 if fails else 0)

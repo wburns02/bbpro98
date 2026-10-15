@@ -509,6 +509,8 @@ static int apply_wheel(uint8_t *mgr, int x, int y) {
     int notches = acc / WHEEL_DELTA;
     if (acc % WHEEL_DELTA) InterlockedExchangeAdd(&wheel_acc, acc % WHEEL_DELTA);
     if (!notches) return 0;
+    if (notches > 10) notches = 10;       /* a long stall between ticks would otherwise replay every notch at once */
+    if (notches < -10) notches = -10;
     uint8_t *n = wheel_group(mgr, x, y);
     int top = n ? *(int16_t *)(n + 0xa) : -1, id = n ? *(uint16_t *)(n + (notches > 0 ? 0x14 : 0x16)) : 0;
     if (n && id) {
