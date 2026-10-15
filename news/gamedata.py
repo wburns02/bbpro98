@@ -250,6 +250,21 @@ def postseason(asn_path):
             'champion': final[0]['winner'] if complete and final else None, 'rounds': rounds}
 
 
+def postseason_schedule(asn_path):
+    """The postseason games on the schedule (s records with p[15] == 1) in file order, shaped like association()'s
+    games. association() leaves them out, so match_game() never finds them."""
+    with open(asn_path, 'rb') as fh:
+        mem = _members(fh.read())
+    games = []
+    for _, p in mem.get('s', []):
+        if len(p) >= 17 and p[15] == 1 and 1 <= p[6] <= MAX_TEAM and 1 <= p[10] <= MAX_TEAM:
+            g = league._game_json(p)
+            games.append({'month': g['month'], 'day': g['day'], 'slot': g['slot'], 'away': g['away'],
+                          'home': g['home'], 'away_runs': g['ar'], 'home_runs': g['hr'], 'played': g['played'],
+                          'innings': g['innings']})
+    return games
+
+
 BAT_KEYS = ('ab', 'h', '2b', '3b', 'hr', 'rbi', 'bb', 'so', 'r', 'sb')
 PIT_KEYS = ('outs', 'h', 'r', 'er', 'bb', 'so', 'hr', 'w', 'l', 'sv')
 

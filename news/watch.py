@@ -121,6 +121,16 @@ def _llm_or_template(write, facts, budget, complete):
     return write(facts, budget, complete)
 
 
+def _postseason(asn_path):
+    """(bracket, schedule) of the postseason in one ASN file; (None, []) without a path or when it cannot be read."""
+    if asn_path is None:
+        return None, []
+    try:
+        return gamedata.postseason(asn_path), gamedata.postseason_schedule(asn_path)
+    except Exception:       # association() read this file already: what fails here is not a postseason shape
+        return None, []
+
+
 class Watcher:
     def __init__(self, game_dir, data_dir, budget, complete, log=print, db=None, salary_table=None):
         self.game, self.data, self.budget, self.complete, self.log = game_dir, data_dir, budget, complete, log
@@ -183,7 +193,7 @@ class Watcher:
         self.rewind(stem, out, assoc)
         self.capture(stem)
         self.columns(out, assoc, names, season)      # first: a few calls a day, and the page leads with them
-        self.recaps(stem, out, assoc, names, stats_dir)
+        self.recaps(stem, out, assoc, names, stats_dir, asn_path)
         played = sum(1 for g in assoc['games'] if g['played'])
         teams_played = played * 2 / len(assoc['teams']) if assoc['teams'] else 0.0
         last = feed.last_day(assoc)
@@ -549,14 +559,16 @@ class Watcher:
             except OSError:
                 continue            # deleted or replaced while being read: the next pass sees its successor
 
-    def recaps(self, stem, out, assoc, names, stats_dir):
+    def recaps(self, stem, out, assoc, names, stats_dir, asn_path=None):
         rdir, pdir = os.path.join(out, 'recaps'), os.path.join(out, 'pending')
-        used = set()
+        used, post_used = set(), set()
         if os.path.isdir(rdir):
             for f in os.listdir(rdir):
                 r = read_json(os.path.join(rdir, f)) if f.endswith('.json') else None
                 if r and all(k in r for k in ('month', 'day', 'slot')):
                     used.add((r['month'], r['day'], r['slot']))
+                if r and isinstance(r.get('post'), dict) and all(k in r['post'] for k in ('round', 'series', 'game')):
+                    post_used.add((r['post']['round'], r['post']['series'], r['post']['game']))
         self.capture(stem)
         pending = []
         for f in os.listdir(pdir) if os.path.isdir(pdir) else []:
@@ -564,14 +576,45 @@ class Watcher:
             if p and isinstance(p.get('box'), dict):
                 pending.append(p)
         pending.sort(key=lambda p: (p.get('mtime', 0), p.get('file', '')), reverse=True)   # newest games first
+        post = None     # (bracket, postseason schedule), read the first time a box fits no regular-season game
         for p in pending:
             key, box = p['key'], p['box']
             cands = [g for g in recap.in_order(gamedata.match_game(assoc, box))
                      if (g['month'], g['day'], g['slot']) not in used]
             if not cands:
-                if key not in self.waiting:
-                    self.waiting.add(key)
-                    self.log('%s: %s matches no unreported played game yet' % (stem, p['file']))
+                if post is None:
+                    post = _postseason(asn_path)
+                bracket, sched = post
+                hit = recap.match_post(bracket, box, post_used) if bracket is not None else None
+                if hit is None:
+                    if key not in self.waiting:
+                        self.waiting.add(key)
+                        self.log('%s: %s matches no unreported played game yet' % (stem, p['file']))
+                    continue
+                rnd, si, gi = hit
+                score = (box['away']['tid'], box['home']['tid'], box['away']['runs'], box['home']['runs'])
+                g = next((x for x in sched if x['played'] and (x['away'], x['home'], x['away_runs'], x['home_runs'])
+                          == score and (x['month'], x['day'], x['slot']) not in used), None)
+                facts = recap.post_facts(assoc, box, bracket, rnd, si, gi, names, g)
+                story = _llm_or_template(recap.post_write, facts, self.budget, self.complete)
+                if story is None:
+                    story = dict(recap.post_template(facts), source='template', reason='off')
+                if g:
+                    when = (g['month'], g['day'], g['slot'])
+                else:       # no schedule record: sort after the regular season, in bracket order
+                    last = max(((x['month'], x['day']) for x in assoc['games'] if x['played']), default=(0, 0))
+                    when = last + (100 + 50 * (rnd - 1) + 8 * si + gi,)
+                write_json(os.path.join(rdir, key + '.json'),
+                           dict(story, key=key, assn=stem, month=when[0], day=when[1], slot=when[2], file=p['file'],
+                                facts=facts, post={'round': rnd, 'series': si, 'game': gi}, created=now_iso()))
+                os.remove(os.path.join(pdir, key + '.json'))
+                post_used.add(hit)
+                if g:
+                    used.add(when)
+                self.log('%s: %s %s -> %s (%s)' % (stem, facts['date'] or facts['round'], p['file'], key,
+                                                    story['source']))
+                if story['source'] == 'glm':
+                    self.capture(stem)
                 continue
             game = cands[-1]
             facts = recap.game_facts(assoc, box, game, names)
