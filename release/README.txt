@@ -38,15 +38,17 @@ Python program from the source answers them. It runs on Linux beside a Wine inst
 
   git clone https://github.com/wburns02/bbpro98 && cd bbpro98
   G=~/.wine/drive_c/Sierra/BBPRO_98                 # your game folder (holds Assn and Stats)
-  mkdir -p ~/bbnews ~/bbnews-backup
-  python3 news/watch.py --game "$G" --data ~/bbnews --once --no-llm      # League News pages for your leagues
-  python3 news/modbridge.py --game "$G" --data ~/bbnews --backup ~/bbnews-backup
+  python3 news/play.py --game "$G"                  # starts watch.py and modbridge.py together
 
-Leave modbridge.py running while you play. Run watch.py without --once to keep the news current as you play.
-Keep watch.py running across season ends too: it saves each finished season for the card's Career tab, and a
-season it never saw played is not saved. The real seasons before your association need modbridge.py --db (below).
-Build a Season also needs --db (a Lahman database, work/lahman/load_csv.py) and --templates (minted with
-work/lahman); without them it says it is not set up. Create a Player copies each file it changes to --backup first.
+That one command starts the watcher to keep the news current as you play, and the bridge to answer the game's
+requests; when one of them exits or you press Ctrl+C, the other stops with it. It makes the data folders
+(~/bbnews and ~/bbnews-backup by default; change them with --data and --backup) and refuses to run when the game
+folder has no Assn. Keep it running across season ends too: the watcher saves each finished season for the card's
+Career tab, and a season it never saw played is not saved. The real seasons before your association need the
+bridge's --db (below). Build a Season also needs --db (a Lahman database, work/lahman/load_csv.py) and
+--templates (minted with work/lahman); without them it says it is not set up. Pass those to play.py with --db and
+--templates and it forwards them to the bridge, --db to the watcher too; --no-llm makes the watcher skip the
+recap writer. Create a Player copies each file it changes to --backup first.
 
 Install
 -------
