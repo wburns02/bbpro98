@@ -1,0 +1,5 @@
+{"ref_year": 1996,
+ "alpha": {"bat": 0.0, "pit": 0.0},
+ "offset": {"CH": 0, "PH": 0, "SP": 0, "GF": 0, "EN": 0, "CO": 0, "K": 0, "ST": 0},
+ "by_year": [],
+ "note": "alpha blends each z-score toward the ref_year league norms; offset adds rating points per fitted target"}

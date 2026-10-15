@@ -33,6 +33,7 @@ from lahman import lahdb, structure, ratings as RT       # noqa: E402
 from lahman.asnfile import AsnFile, put_str, cstr          # noqa: E402
 
 DB = '/mnt/nvme/bbpro98/lahman2025/lahman2025.sqlite'     # work/lahman/load_csv.py, SABR 2025 release
+ERA = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'era.json')     # the all-zero era config
 TEMPLATES = '/mnt/nvme/bbpro98/lahman/templates'
 
 # The game's weather cities (t record byte 4 = index + 1), in the game's order.
@@ -497,7 +498,14 @@ def write_outputs(install, name, blobs, force=False, log=print):
     return out
 
 
-def build(year, install, db=DB, name=None, log=print, leagues=lahdb.MLB_LEAGUES, force=False):
+def era_line(year, era):
+    """The one line main prints before a build: the year, both alphas and the nonzero offsets of a load_era dict."""
+    return 'era: year=%d alpha bat=%s pit=%s offsets=%s' % (
+        year, era['alpha']['bat'], era['alpha']['pit'], {k: v for k, v in era['offset'].items() if v})
+
+
+def build(year, install, db=DB, name=None, log=print, leagues=lahdb.MLB_LEAGUES, force=False, era=None):
+    """era is a ratings.load_era dict (alpha blends, rating offsets); None builds with today's ratings."""
     con = lahdb.connect(db)
     teams = lahdb.teams(con, year, leagues)
     if not teams:
@@ -515,6 +523,7 @@ def build(year, install, db=DB, name=None, log=print, leagues=lahdb.MLB_LEAGUES,
     # ---- players
     season = RT.Season(con, year, leagues)
     model = RT.Model.fit(os.path.join(install, 'Assn', 'MLBPA96E.PYR'), con)
+    model.set_era(era, season=season, con=con)
     owner = primary_owner(season.app)
     rosters = {}
     for pid, tid in owner.items():
@@ -734,6 +743,8 @@ def main(argv=None):
     ap.add_argument('--templates', help='directory of minted structure templates (default %s)' % TEMPLATES)
     ap.add_argument('--leagues', default=','.join(lahdb.MLB_LEAGUES),
                     help='comma-separated Lahman lgIDs to build (default the majors; e.g. NN2,NAL for 1937-48)')
+    ap.add_argument('--era', default=ERA,
+                    help='era run config (alpha blends toward the ref_year norms, rating offsets); default %s' % ERA)
     a = ap.parse_args(argv)
     if a.name and a.name.upper() in RESERVED:
         ap.error('--name: %s is a reserved association name' % a.name)
@@ -747,6 +758,12 @@ def main(argv=None):
                                                                     ','.join(leagues)))
     if a.name and (len(a.name) > 8 or not a.name.isalnum()):
         ap.error('--name: up to 8 letters/digits')
+    if a.era != ERA and not os.path.isfile(a.era):
+        ap.error('--era: %s is not a file' % a.era)
+    try:
+        era = RT.load_era(a.era, a.year)
+    except (OSError, ValueError) as e:
+        ap.error('--era: %s' % e)
     if a.templates:
         TEMPLATES = a.templates
     from lahman import teamnames
@@ -761,7 +778,8 @@ def main(argv=None):
         if str(a.year) not in tbl:
             print('warning: %s has no %d; League News will show 16-letter team names until work/lahman/teamnames.py is rerun'
                   % (teamnames.OUT, a.year))
-    build(a.year, a.install, a.db, a.name, leagues=leagues, force=a.force)
+    print(era_line(a.year, era))
+    build(a.year, a.install, a.db, a.name, leagues=leagues, force=a.force, era=era)
     return 0
 
 
