@@ -5,7 +5,7 @@
 Prints one JSON line: the lane's game pids, their CPU ticks over --secs seconds, the newest write in the
 work copy's Assn and Stats, the last non-periodic bbtrace.log line with its age, what the screen shows,
 and a verdict ('no_game', 'working', 'stale_paint', 'idle'). Takes no input, kills nothing, writes nothing
-inside the work copy (the shot lands in tempfile.gettempdir() unless --shot says otherwise), attaches no
+inside the work copy (the shot lands in a new tempfile.mkstemp file unless --shot says otherwise), attaches no
 debugger. Judge a stall from this line, not by attaching winedbg (the attach thread faults under wow64).
 """
 import argparse
@@ -129,7 +129,10 @@ def main(argv=None):
 
     scr = None
     if not a.no_shot:
-        png = a.shot or os.path.join(tempfile.gettempdir(), f'lanestat_lane{a.lane}.png')
+        png = a.shot
+        if not png:     # a fresh mode-600 file, never a guessable name in a shared directory
+            fd, png = tempfile.mkstemp(prefix=f'lanestat_lane{a.lane}_', suffix='.png')
+            os.close(fd)
         ingame.shot(png)
         scr = screen(png)
 
