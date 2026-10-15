@@ -41,7 +41,8 @@ typedef int (__cdecl *roll_fn)(void);
 
 static int roll(void) {
     roll_fn f = (roll_fn)api->addr(SHELL, 0x6805c450);
-    return f ? (int)(signed char)f() : 50;
+    int r = f ? (int)(signed char)f() : 50;
+    return r < 1 ? 1 : r > 100 ? 100 : r;   /* a value outside 1..100 would index RQ_TGT out of range */
 }
 
 /* the class of rating k for a hitter or pitcher, or -1 when the class is not mapped */
@@ -90,7 +91,7 @@ static long target_at(const unsigned char *tgt, long q) {
 static void remap(uint8_t *rec) {
     int pitcher = 0, k;
     for (k = 7; k < 14; k++) if (rec[R_PEAK + k]) pitcher = 1;
-    char before[80], after[80];
+    char before[96], after[96];   /* 23 bytes as "%d " take at most 23 * 4 + 1 */
     int nb = 0, na = 0;
     if (probe > 0)
         for (k = 0; k < 23; k++) nb += _snprintf(before + nb, sizeof before - nb, "%d ", rec[R_PEAK + k]);

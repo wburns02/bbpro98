@@ -445,7 +445,7 @@ def do_apply(src, edits):
         for _ in range(CHAIN_WALK):
             if not head or head >= end or head == hdr:
                 break
-            if buf[head:head + 2] != FAFA:
+            if buf[head:head + 2] != FAFA or head + 23 > len(buf):
                 return
             prevh, head = head, struct.unpack_from('<I', buf, head + 19)[0]
         if head != hdr:
