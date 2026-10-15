@@ -14,7 +14,11 @@ CREATE TABLE people (playerID TEXT, birthYear INT, birthMonth INT, birthDay INT,
 CREATE TABLE teams (ID INTEGER, yearID INT, lgID TEXT, teamID TEXT, divID TEXT, div_ID INT, teamRank INT);
 CREATE TABLE batting (ID INTEGER, playerID TEXT, yearID INT, teamID TEXT, team_ID INT, G INT, G_batting INT);
 CREATE TABLE appearances (ID INTEGER, playerID TEXT, yearID INT, teamID TEXT, team_ID INT, G_batting INT);
+CREATE TABLE awardsplayers (ID INTEGER NOT NULL, playerID VARCHAR(9) NOT NULL, awardID VARCHAR(255) NOT NULL,
+                            yearID SMALLINT NOT NULL, lgID CHARACTER(2) NULL, tie VARCHAR(1) NULL,
+                            notes VARCHAR(100) NULL, PRIMARY KEY (ID));
 CREATE UNIQUE INDEX people_key ON people (playerID);
+CREATE UNIQUE INDEX "awardsplayers_playerID" ON "awardsplayers" ("playerID", "awardID", "yearID", "lgID");
 '''
 
 CSV = {
@@ -24,6 +28,9 @@ CSV = {
     'Teams.csv': 'yearID,lgID,teamID,divID,Rank\n2025,AL,NYA,E,1\n1942,NN2,HG,,2\n',
     'Batting.csv': 'playerID,yearID,teamID,G\nsmithjo01,2025,NYA,150\ngibsojo01,1942,HG,60\n',
     'Appearances.csv': 'playerID,yearID,teamID,G_batting\nsmithjo01,2025,NYA,148\ngibsojo01,1942,HG,58\n',
+    'AwardsPlayers.csv': 'playerID,awardID,yearID,lgID,tie,notes\n'
+                         'smithjo01,MVP,2025,AL,,\n'
+                         'gibsojo01,Player of the Week,1942,NN2,,\n',
 }
 
 
@@ -85,11 +92,22 @@ def test_unknown_column_and_missing_table_are_errors(tmp_path, ref):
     assert not (tmp_path / 'b.sqlite').exists()
 
 
-def test_broken_unique_index_kept_without_constraint(tmp_path, ref):
-    dup = dict(CSV, **{'People.csv': CSV['People.csv'] + '3,smithjo01,1990,7,4,,,,,\n'})
+def test_unlisted_broken_unique_index_stops_load(tmp_path, ref):
+    bad_people = CSV['People.csv'].replace('gibsojo01', 'smithjo01')
+    files = dict(CSV, **{'People.csv': bad_people})
+    out = tmp_path / 'e.sqlite'
+    with pytest.raises(SystemExit, match='people_key'):
+        L.load(release(tmp_path, files), ref, out, log=lambda s: None)
+    assert not out.exists()
+    assert not out.with_name(out.name + '.part').exists()
+
+
+def test_no_duplicates_index_stays_unique(tmp_path, ref):
+    out = tmp_path / 'f.sqlite'
     logs = []
-    L.load(release(tmp_path, dup), ref, tmp_path / 'c.sqlite', log=logs.append)
-    con = sqlite3.connect(str(tmp_path / 'c.sqlite'))
-    assert con.execute("SELECT sql FROM sqlite_master WHERE name = 'people_key'").fetchone()[0].startswith(
-        'CREATE INDEX')
-    assert any('people_key' in s for s in logs)
+    L.load(release(tmp_path), ref, out, log=logs.append)
+    con = sqlite3.connect(str(out))
+    assert con.execute("SELECT sql FROM sqlite_master WHERE name = 'awardsplayers_playerID'"
+                       ).fetchone()[0].startswith('CREATE UNIQUE INDEX')
+    assert not any('not unique' in s for s in logs)
+

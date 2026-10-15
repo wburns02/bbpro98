@@ -34,6 +34,12 @@ EXTRA_LEAGUES = {
 DATE_COLS = {'birth_date': ('birthYear', 'birthMonth', 'birthDay'), 'death_date': ('deathYear', 'deathMonth',
                                                                                     'deathDay')}
 
+# Unique keys the CSV release breaks, index name (without quotes) -> reason. Anything not listed here stops the load.
+RELAXED = {
+    'awardsplayers_playerID': 'weekly and monthly awards (Player of the Week, Player of the Month, '
+                              'Rookie of the Month) repeat for one player within a season',
+}
+
 
 def ref_schema(ref):
     tables = {}
@@ -168,10 +174,13 @@ def load(csv_dir, ref_path, out_path, log=print):
             try:
                 con.execute(sql)
             except sqlite3.IntegrityError:
-                # The newer data breaks some of the old unique keys (shared awards, Negro Leagues splits); keep the
-                # index for speed, without the constraint.
+                name = sql.split(' ON ')[0].split()[-1].strip('"')
+                if name not in RELAXED:
+                    raise SystemExit('unique key %s broken by the release; check the data, then add it to '
+                                     'load_csv.RELAXED with the reason' % name)
+                # Keep the index for speed, without the constraint; see RELAXED.
                 con.execute(sql.replace('CREATE UNIQUE INDEX', 'CREATE INDEX', 1))
-                log('not unique: %s' % sql.split(' ON ')[0].split()[-1])
+                log('not unique: %s (%s)' % (name, RELAXED[name]))
         # derive()'s correlated lookups need these; the reference indexes do not cover them all.
         helpers = {'_load_teams_key': 'teams (yearID, teamID)', '_load_parks_key': 'parks (parkkey)',
                    '_load_app_key': 'appearances (playerID, yearID, teamID)'}
@@ -182,10 +191,12 @@ def load(csv_dir, ref_path, out_path, log=print):
         for name in helpers:
             con.execute('DROP INDEX %s' % name)
         con.commit()
+        os.replace(tmp, out_path)
     finally:
         con.close()
         ref.close()
-    os.replace(tmp, out_path)
+        if tmp.exists():
+            tmp.unlink()
     for t in sorted(counts):
         log('%-22s %8d rows' % (t, counts[t]))
     return counts
