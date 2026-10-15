@@ -100,10 +100,16 @@ SEASON_ENTRIES = ('recaps', 'pending', 'feed', 'scout', 'preview.json', 'awards.
 
 
 def associations(game_dir):
-    """{stem: ASN path} for every association in Assn/ except the game's _DEFAULT files."""
+    """{stem: ASN path} for every association in Assn/ except the game's _DEFAULT files; {} when Assn/ cannot be read
+    (a game folder moved or an unmounted drive), so a watcher pass or a bridge page finds no association instead of
+    failing."""
     assn_dir = os.path.join(game_dir, 'Assn')
     out = {}
-    for f in os.listdir(assn_dir):
+    try:
+        names = os.listdir(assn_dir)
+    except OSError:
+        return out
+    for f in names:
         stem, ext = os.path.splitext(f)
         if ext.upper() == '.ASN' and not stem.startswith('_') and re.fullmatch(r'[A-Za-z0-9]{1,8}', stem):
             out[stem.upper()] = os.path.join(assn_dir, f)
@@ -728,7 +734,12 @@ def main(argv=None):
     w = Watcher(a.game, a.data, budget, None if a.no_llm else hive.complete, log=lambda s: print(s, flush=True),
                 db=a.db)
     while True:
-        w.scan()
+        try:
+            w.scan()
+        except Exception as e:      # one bad pass (a file vanishing mid-read) must not end a watcher left running
+            if a.once:
+                raise
+            print('scan failed: %s: %s' % (type(e).__name__, e), flush=True)
         if a.once:
             return
         time.sleep(a.interval)

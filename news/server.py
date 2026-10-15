@@ -719,7 +719,11 @@ def _postseason(folder, assn, home):
 
 
 def _is_num(value):
-    return type(value) in (int, float)
+    """A number a page can print: an int or a finite float, under 10**15 either way. json.load reads NaN, Infinity and
+    400-digit ints, which would make round() or a '%.3f' raise and take the page down."""
+    if type(value) is int:
+        return abs(value) < 10 ** 15
+    return type(value) is float and math.isfinite(value) and abs(value) < 1e15
 
 
 def _pct_text(value):
@@ -1167,6 +1171,15 @@ def _day_link(home, day, text):
     return '<a href="%sday/%02d-%02d">%s</a>' % (esc(home), day[0], day[1], text)
 
 
+def _readable_around(folder, at):
+    """The nearest column dates before and after `at` whose column reads (a pager link to an unreadable one would 404),
+    sorted; each side read only as far as its first readable column."""
+    days = _feed_days(folder)
+    before = next((d for d in reversed(days) if d < at and _feed_file(folder, *d) is not None), None)
+    after = next((d for d in days if d > at and _feed_file(folder, *d) is not None), None)
+    return [d for d in (before, after) if d is not None]
+
+
 def _day_pager(home, days, at):
     """Links to the column dates before and after `at` in days (sorted), each only when there is one."""
     before = [d for d in days if d < at]
@@ -1197,7 +1210,7 @@ def _day(folder, assn, home, month, day):
                % (''.join(rows) or '<p class="empty">No stories for this date.</p>'))
     back = '<a href="%s">&larr; Front page</a> &middot; ' % esc(home)
     body = (_masthead(name, date) + _nav(back) + _feed_html(feed) + results + stories
-            + _day_pager(home, _feed_days(folder), (month, day)))
+            + _day_pager(home, _readable_around(folder, (month, day)), (month, day)))
     return _page_reply(200, '%s · %s · League News' % (name, date), body)
 
 

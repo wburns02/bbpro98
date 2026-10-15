@@ -1250,3 +1250,31 @@ def test_a_scan_after_a_restore_writes_stories_for_the_re_simmed_days(world, mon
     assert sorted(again) == [1, 2] and again[1] == first[1] and again[2] != first[2]
     assert sorted(os.listdir(out / 'feed')) == ['04-01.json', '04-02.json']
     assert os.listdir(out / 'past') == [rewound]                            # one rewind, not one per scan
+
+
+def test_a_game_folder_with_no_assn_has_no_associations_and_a_pass_does_nothing(tmp_path):
+    assert watch.associations(str(tmp_path / 'gone')) == {}
+    lines = []
+    watch.Watcher(str(tmp_path / 'gone'), str(tmp_path / 'data'), None, None, log=lines.append).scan()
+    assert lines == []
+
+
+def test_main_logs_a_failed_pass_and_keeps_watching(tmp_path, monkeypatch, capsys):
+    calls = []
+
+    def scan(self):
+        calls.append(1)
+        if len(calls) == 1:
+            raise FileNotFoundError('AB.H02')
+        raise KeyboardInterrupt
+    monkeypatch.setattr(watch.Watcher, 'scan', scan)
+    monkeypatch.setattr(watch.time, 'sleep', lambda s: None)
+    with pytest.raises(KeyboardInterrupt):
+        watch.main(['--game', str(tmp_path / 'g'), '--data', str(tmp_path / 'd'), '--no-llm'])
+    assert len(calls) == 2 and 'scan failed: FileNotFoundError: AB.H02' in capsys.readouterr().out
+
+
+def test_main_once_still_raises_a_failed_pass(tmp_path, monkeypatch):
+    monkeypatch.setattr(watch.Watcher, 'scan', lambda self: (_ for _ in ()).throw(FileNotFoundError('x')))
+    with pytest.raises(FileNotFoundError):
+        watch.main(['--game', str(tmp_path / 'g'), '--data', str(tmp_path / 'd'), '--no-llm', '--once'])

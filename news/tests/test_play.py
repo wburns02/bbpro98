@@ -123,3 +123,11 @@ def test_run_second_interrupt_kills_at_once():
     feed = list(procs)
     assert play.run([["a"], ["b"]], popen=lambda cmd: feed.pop(0)) == 0
     assert all(p.terminated and p.killed for p in procs)
+
+
+def test_main_expands_a_tilde_in_game(tmp_path, capsys, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _mkgame(tmp_path)
+    rc = play.main(["--game", "~/game", "--data", str(tmp_path / "d"), "--backup", str(tmp_path / "b"), "--dry-run"])
+    out = capsys.readouterr().out
+    assert rc == 0 and shlex.quote(str(tmp_path / "game")) in out and "~/game" not in out

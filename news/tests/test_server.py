@@ -1850,3 +1850,28 @@ def test_day_page_escapes_values_from_the_files(days):
     assert '<title>&lt;s&gt;League&lt;/s&gt; · &lt;em&gt;April&lt;/em&gt; · League News</title>' in html
     front = days.get('/news/30L1998/')[2].decode()
     assert '<script' not in front
+
+
+def test_the_pager_skips_an_unreadable_column_for_the_next_readable_one(days):
+    write(days.root / '30L1998' / 'feed' / '04-10.json', '{torn')
+    write(days.root / '30L1998' / 'feed' / '04-17.json', '[]')
+    html = days.get('/news/30L1998/day/04-15')[2].decode()
+    assert '<nav class="pager"><a href="/news/30L1998/day/04-02">&larr; April 2</a>' \
+           '<a href="/news/30L1998/day/04-20">April 20 &rarr;</a></nav>' in html
+    assert days.get('/news/30L1998/day/04-10')[0] == 404
+
+
+def test_numbers_a_page_cannot_print_are_left_blank():
+    big = 10 ** 400
+    for value in (float('nan'), float('inf'), -float('inf'), big, 1e300, True, '3'):
+        assert not server._is_num(value)
+        assert server._pct_text(value) == '' and server._money(value) == ''
+    server._stat_text('ERA', float('nan'))         # passed through as it is, never a '%.2f' that raises
+    assert server._pct_text(0.612) == '.612' and server._money(850000) == '$850K'
+    assert server._is_num(10 ** 14) and server._is_num(-2.5)
+
+
+def test_a_replay_file_with_nan_games_played_still_renders(scorecard):
+    write(scorecard.root / '30L1998' / 'replay.json', replay_file(played=float('nan'), scheduled=float('inf')))
+    status, _, body = scorecard.get('/news/30L1998/replay')
+    assert status == 200 and 'After ' not in body.decode()

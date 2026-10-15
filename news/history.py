@@ -184,10 +184,23 @@ def seen_years(data_dir, stem):
     return {y for y in years if isinstance(y, int) and not isinstance(y, bool)}
 
 
+def _damaged(path):
+    """True when path exists but is not a {'years': [...]} JSON object."""
+    try:
+        with open(path, encoding='utf-8') as f:
+            obj = json.load(f)
+    except FileNotFoundError:
+        return False
+    except (OSError, ValueError):
+        return True
+    return not (isinstance(obj, dict) and isinstance(obj.get('years'), list))
+
+
 def mark_seen(data_dir, stem, year):
     """Records that a watcher pass saw season year of stem being played, once: True when written, False when year was
     already there and nothing is written. The list stays sorted, the folder is created as needed, and the file is
-    written through seen.json.tmp and os.replace. A stem that is not 1 to 8 letters or digits, or a year outside
+    written through seen.json.tmp and os.replace. A seen.json that exists but does not parse is moved aside to
+    seen.json.bad first rather than silently replaced. A stem that is not 1 to 8 letters or digits, or a year outside
     1800..3000, is a ValueError."""
     if not isinstance(stem, str) or STEM_RE.fullmatch(stem) is None:
         raise ValueError('stem must be 1 to 8 letters or digits, not %r' % (stem,))
@@ -197,6 +210,8 @@ def mark_seen(data_dir, stem, year):
     if year in years:
         return False
     path = seen_path(data_dir, stem)
+    if not years and _damaged(path):
+        os.replace(path, path + '.bad')     # kept for a look by hand, never overwritten by a one-year list
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + '.tmp'
     try:

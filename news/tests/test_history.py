@@ -358,3 +358,21 @@ def test_start_year_is_fixed_for_mlbpa_and_season_year_for_other_stems():
     assert history.start_year('mlbpa96e') == 1997
     assert history.start_year('CUSTOM1', 2003) == 2003
     assert history.start_year('CUSTOM1') is None
+
+
+def test_mark_seen_moves_a_damaged_seen_file_aside_rather_than_replacing_it(tmp_path):
+    path = tmp_path / '30L1998' / 'history' / 'seen.json'
+    path.parent.mkdir(parents=True)
+    path.write_text('{"years": [1997, 19', encoding='utf-8')
+    assert history.mark_seen(str(tmp_path), '30L1998', 1999)
+    assert (path.parent / 'seen.json.bad').read_text(encoding='utf-8') == '{"years": [1997, 19'
+    assert json.loads(path.read_text(encoding='utf-8')) == {'years': [1999]}
+
+
+def test_mark_seen_leaves_a_good_but_empty_list_in_place(tmp_path):
+    path = tmp_path / '30L1998' / 'history' / 'seen.json'
+    path.parent.mkdir(parents=True)
+    path.write_text('{"years": []}', encoding='utf-8')
+    assert history.mark_seen(str(tmp_path), '30L1998', 1999)
+    assert not (path.parent / 'seen.json.bad').exists()
+    assert history.seen_years(str(tmp_path), '30L1998') == {1999}

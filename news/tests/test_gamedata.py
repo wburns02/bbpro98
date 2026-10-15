@@ -58,3 +58,21 @@ def test_a_serial_that_is_not_a_date_is_no_season_year(asn, junk):
 def test_no_record_to_read_is_no_name_and_no_season_year(asn):
     assert gamedata.association(asn()) == {'name': '', 'season_year': None, 'teams': {}, 'games': []}
     assert gamedata.association(asn((league.TEMPLATE_KEY, a_record('Template', serial(2001)))))['season_year'] is None
+
+
+def test_box_files_without_a_stats_folder_is_empty(tmp_path):
+    assert gamedata.box_files(str(tmp_path / 'Stats'), 'AB') == []
+
+
+def test_box_files_leaves_out_a_box_score_deleted_while_listing(tmp_path, monkeypatch):
+    for name, t in (('AB.H01', 100), ('AB.H02', 200), ('AB.H03', 50), ('CD.H01', 10)):
+        (tmp_path / name).write_bytes(b'x')
+        os.utime(tmp_path / name, (t, t))
+    real = os.path.getmtime
+
+    def vanishing(path):
+        if os.path.basename(path) == 'AB.H02':
+            os.remove(path)
+        return real(path)
+    monkeypatch.setattr(os.path, 'getmtime', vanishing)
+    assert [os.path.basename(p) for p in gamedata.box_files(str(tmp_path), 'AB')] == ['AB.H03', 'AB.H01']

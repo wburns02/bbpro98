@@ -109,6 +109,7 @@ def main(argv=None):
     ap.add_argument("--dry-run", action="store_true", help="print the commands and exit")
     args = ap.parse_args(argv)
 
+    args.game = os.path.expanduser(args.game)
     args.data = os.path.expanduser(args.data)
     args.backup = os.path.expanduser(args.backup)
     assn = os.path.join(args.game, "Assn")

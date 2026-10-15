@@ -416,10 +416,22 @@ def demographics(asn_path, pyr_path, pyf_path, year):
 
 
 def box_files(stats_dir, assn):
-    """Paths of this association's box scores, Stats/<ASSN>.Hxx, sorted by modification time then name."""
+    """Paths of this association's box scores, Stats/<ASSN>.Hxx, sorted by modification time then name. [] without a
+    Stats folder; a box score the game deletes while this lists them (it keeps seven sim days) is left out."""
     pat = re.compile(re.escape(assn) + r'\.H[0-9A-Z]{2}$', re.I)
-    out = [os.path.join(stats_dir, f) for f in os.listdir(stats_dir) if pat.match(f)]
-    return sorted(out, key=lambda p: (os.path.getmtime(p), os.path.basename(p).upper()))
+    try:
+        names = os.listdir(stats_dir)
+    except OSError:
+        return []
+    out = []
+    for f in names:
+        if pat.match(f):
+            path = os.path.join(stats_dir, f)
+            try:
+                out.append((os.path.getmtime(path), f.upper(), path))
+            except OSError:
+                continue
+    return [path for _, _, path in sorted(out)]
 
 
 def _u16s(b):
