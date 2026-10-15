@@ -82,6 +82,8 @@ its text; they do not replace it.
   the current log and stops rotating instead of emptying it. The card's mouse wheel caps a burst at 10 notches per
   tick. The harness stops a running game before it backs up the files a plan replaces.
 - patch_ext.py refuses a BBShell.dll too short to hold its code cave instead of writing past the end.
+- work/patch_widen.py is retired (it now refuses to run): it wrote the live install directly and its offsets patch
+  the Hall of Fame screen. bbfix [widen] does the widening.
 
 ## Known limits
 
