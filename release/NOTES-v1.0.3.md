@@ -32,6 +32,10 @@ its text; they do not replace it.
   for postseason games (round and game number in the story), and a Champions page per league (one row per season,
   linked from Past seasons once a season has a champion). The in-game News reader shows the League box and the
   Champions page as well.
+- Day pages and the Around the league column cover postseason days too, with the series state in place of the
+  standings.
+- Once the World Series is over, the postseason page leads with a written wrap of the whole postseason (the model
+  when one is set up, else the template).
 
 ## For people running the source
 
