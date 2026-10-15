@@ -50,6 +50,8 @@ MAX_LINES = 100
 MAX_VALUE = 256             # characters
 MAX_WORKERS = 4             # requests answered at once
 HOUSEKEEP_EVERY = 60        # seconds
+ALIVE = 'alive.txt'         # the heartbeat the game reads: the unix time of the last pass, one line
+ALIVE_EVERY = 2             # seconds between heartbeats
 STALE = 600                 # seconds before a reply or temporary file is removed
 BUILD_TIMEOUT = 900         # seconds
 TAIL = 10                   # lines of build output in a reply
@@ -1635,6 +1637,28 @@ def spool_ok(game):
     return True
 
 
+def beat(spool, now=None):
+    """Writes the unix time (whole seconds) and a newline to ALIVE in spool: the game's player card reads its age to tell
+    whether a bridge is running. Through open_dir and alive.tmp (O_EXCL, O_NOFOLLOW, then os.replace), so a symlink the
+    game side planted as either name is never written through."""
+    now = time.time() if now is None else now
+    dfd = open_dir(spool)
+    try:
+        _remove(dfd, 'alive.tmp')   # a name the game side planted goes, as in _put
+        fd = os.open('alive.tmp', os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644, dir_fd=dfd)
+        with os.fdopen(fd, 'wb') as fh:
+            fh.write(b'%d\n' % int(now))
+        os.replace('alive.tmp', ALIVE, src_dir_fd=dfd, dst_dir_fd=dfd)   # replaces a symlink alive.txt itself
+    finally:
+        os.close(dfd)
+
+
+def beat_due(last, now=None):
+    """True when no beat has been made (last is None) or ALIVE_EVERY seconds have passed since last (time.monotonic)."""
+    now = time.monotonic() if now is None else now
+    return last is None or now - last >= ALIVE_EVERY
+
+
 def housekeep(spool, now=None):
     """Removes replies (r*.rsp), their pictures (r*.bmp) and temporary files (*.tmp) older than STALE seconds by
     mtime. Work files are kept. Works through open_dir, so it never removes anything outside the spool."""
@@ -1654,7 +1678,8 @@ def housekeep(spool, now=None):
 
 
 def serve(ctx, poll):
-    """Answers the game's spool until interrupted, housekeeping it every HOUSEKEEP_EVERY seconds."""
+    """Answers the game's spool until interrupted, housekeeping it every HOUSEKEEP_EVERY seconds and beating (ALIVE)
+    every ALIVE_EVERY."""
     spool = os.path.join(ctx.game, 'Mods', 'spool')
     try:
         make_spool(ctx.game)
@@ -1662,6 +1687,7 @@ def serve(ctx, poll):
         traceback.print_exc()
     sys.stderr.write('modbridge: spool %s\n' % spool)
     due = 0.0
+    last_beat = None
     while True:
         try:
             if not spool_ok(ctx.game):
@@ -1671,6 +1697,9 @@ def serve(ctx, poll):
             if time.monotonic() >= due:
                 housekeep(spool)
                 due = time.monotonic() + HOUSEKEEP_EVERY
+            if beat_due(last_beat):
+                beat(spool)
+                last_beat = time.monotonic()
             process_spool(ctx, spool, wait=False)
         except OSError:     # a spool that vanished or cannot be read this pass; the next pass tries again
             traceback.print_exc()

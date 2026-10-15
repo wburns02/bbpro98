@@ -3,6 +3,9 @@
      ID <id>, H <key>=<value> per header, then BODY and the body. Exit 2 on timeout (after mm_cancel), 3 when the send
      fails (prints SEND <code>), 4 on a bad answer.
    clean <text>: prints mm_clean(text) in brackets.
+   alive <spooldir>: prints ALIVE <mm_bridge_alive()> for that spool folder.
+   open <spooldir> <path>: prints OPEN <mm_open_page(path)> for that spool folder; only useful with no fresh alive.txt
+     there, where it returns 1 at once (a live bridge would open the reader window).
    visible: makes a window with make_win and prints VISIBLE 1 when it is shown (a top-level popup without WS_VISIBLE
      and no ShowWindow is never mapped, so the menu would open invisibly). */
 #include "../mods/modmenu.c"
@@ -39,6 +42,18 @@ int main(int argc, char **argv) {
         wrs("]\n");
         return 0;
     }
+    if (argc == 3 && !strcmp(argv[1], "alive")) {
+        mm_set_spool(argv[2]);
+        snprintf(line, sizeof line, "ALIVE %d\n", mm_bridge_alive());
+        wrs(line);
+        return 0;
+    }
+    if (argc == 4 && !strcmp(argv[1], "open")) {
+        mm_set_spool(argv[2]);
+        snprintf(line, sizeof line, "OPEN %d\n", mm_open_page(argv[3]));
+        wrs(line);
+        return 0;
+    }
     if (argc == 2 && !strcmp(argv[1], "visible")) {
         WNDCLASSA c;
         HWND h;
@@ -55,7 +70,7 @@ int main(int argc, char **argv) {
         return 0;
     }
     if (argc < 4 || strcmp(argv[1], "send")) {
-        wrs("usage: mmtest.exe send <spooldir> <op> [k v ...] | clean <text>\n");
+        wrs("usage: mmtest.exe send <spooldir> <op> [k v ...] | clean <text> | alive <spooldir> | open <spooldir> <path>\n");
         return 1;
     }
     env = getenv("MMTEST_TIMEOUT_MS");
