@@ -74,3 +74,12 @@ def test_demographics_bad_birth_serial_leaves_the_player_out_of_the_ages(tmp_pat
     _stub(monkeypatch, {1: {'roster': [100]}})
     got = gamedata.demographics('x.ASN', str(tmp_path / 'TEST.PYR'), None, 2007)
     assert (got['players'], got['rostered'], got['hist'], got['retired']) == (2, 1, {27: 1}, 1)
+
+
+def test_players_reads_service_seasons_as_a_magnitude_retired_ones_negated(tmp_path):
+    active, retired = bytearray(player(100, datetime.date(1990, 5, 1))), bytearray(player(101, datetime.date(1985, 5, 1)))
+    active[gamedata.P_SEASONS], retired[gamedata.P_SEASONS] = 7, 256 - 9       # the game stores a retiree's 9 as -9
+    path = tmp_path / 'X.PYR'
+    path.write_bytes(pyr_bytes([bytes(active), bytes(retired)]))
+    got = gamedata.players(str(path))
+    assert (got[100]['seasons'], got[101]['seasons']) == (7, 9)
