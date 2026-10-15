@@ -280,15 +280,28 @@ def test_connect_is_read_only():
             ro.close()
 
 
-REAL_DB = Path('/mnt/nvme/tlrb2/lahman/lahmansbaseballdb.sqlite')
+REAL_DBS = [
+    pytest.param(Path('/mnt/nvme/bbpro98/lahman2025/lahman2025.sqlite'), 'lahman2025',
+                 id='lahman2025'),
+    pytest.param(Path('/mnt/nvme/tlrb2/lahman/lahmansbaseballdb.sqlite'), 'reference',
+                 id='reference'),
+]
 
 
-@pytest.mark.skipif(not REAL_DB.exists(), reason='Lahman database not present')
-def test_real_database_schema():
-    """The synthetic schema above must match the real one: run every reader once against it."""
-    real = lahdb.connect(REAL_DB)
+@pytest.mark.parametrize('real_db, tag', REAL_DBS)
+def test_real_database_schema(real_db, tag):
+    """The synthetic schema above must match the real one: run every reader once against it.
+
+    real_db is the SABR 2025 release (what build.py reads) or the older edition load_csv uses
+    as its schema reference. Both must satisfy every assertion: the 2025 edition adds the
+    Negro Leagues 1920 to 1948, but lahdb.teams filters to lahdb.MLB_LEAGUES, so a 1927 MLB
+    query still returns the 16 major-league clubs. The 2025-only case asserts the year range.
+    """
+    if not real_db.exists():
+        pytest.skip('Lahman database not present: %s' % real_db)
+    real = lahdb.connect(real_db)
     try:
-        t = lahdb.teams(real, 1927)
+        t = lahdb.teams(real, 1927)  # 16 teams in both editions: MLB_LEAGUES excludes the Negro Leagues
         assert len(t) == 16 and {x['rank'] for x in t} == set(range(1, 9))
         assert lahdb.managers(real, 1927)['NYA']['playerID'] == 'huggimi01'
         assert 'ruthba01' in lahdb.roster(real, 1927)['NYA']
@@ -298,5 +311,7 @@ def test_real_database_schema():
         assert lahdb.pitching(real, before=1927)['ruthba01']['W'] == 92
         assert 'OF' in lahdb.fielding(real, year=1927)['ruthba01']
         assert lahdb.seasons_before(real, 1927)['ruthba01'] == 13
+        if tag == 'lahman2025':  # 2025-only: the 2025 release reaches the 2025 season
+            assert lahdb.year_range(real)[1] == 2025
     finally:
         real.close()
