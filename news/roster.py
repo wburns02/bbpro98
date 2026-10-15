@@ -128,9 +128,9 @@ def move(windows, pid, src, dst, players, year):
         raise SwapError('%s is not a known player' % pid)
     ws, wd = windows[src], windows[dst]
     if pid not in ws[:ACTIVE] and pid not in [p[0] for p in _pairs(ws)]:
-        raise SwapError('%d is not on the roster of team %d' % (pid, src))
+        raise SwapError('%s is not on the roster of team %s' % (pid, src))
     if pid in wd:
-        raise SwapError('%d is already on team %d' % (pid, dst))
+        raise SwapError('%s is already on team %s' % (pid, dst))
     out = {tid: list(w) for tid, w in windows.items()}
     _leave(out[src], pid, players, year)
     _join(out[dst], pid, players, year)
@@ -145,7 +145,7 @@ def problems(windows, players):
     for tid in sorted(windows):
         for v in sorted({v for v in windows[tid] if 100 <= v <= 9999}):
             if owner.setdefault(v, tid) != tid:
-                out.append('%d is on team %d and team %d' % (v, owner[v], tid))
+                out.append('%d is on team %s and team %s' % (v, owner[v], tid))
     for tid in sorted(windows):
         w = windows[tid]
         active = set(w[:ACTIVE])
@@ -156,14 +156,14 @@ def problems(windows, players):
         known = [v for v in w[:ACTIVE] if v in players]
         pitchers = sum(1 for v in known if _pitcher(players, v))
         if len(known) - pitchers < MIN_HITTERS:
-            out.append('team %d has %d active hitters, needs %d' % (tid, len(known) - pitchers, MIN_HITTERS))
+            out.append('team %s has %d active hitters, needs %d' % (tid, len(known) - pitchers, MIN_HITTERS))
         if pitchers < MIN_PITCHERS:
-            out.append('team %d has %d active pitchers, needs %d' % (tid, pitchers, MIN_PITCHERS))
+            out.append('team %s has %d active pitchers, needs %d' % (tid, pitchers, MIN_PITCHERS))
     return out
 
 
 def _missing(tid, name, ids, active):
-    return ['%d is in the %s of team %d but not on its active roster' % (v, name, tid)
+    return ['%d is in the %s of team %s but not on its active roster' % (v, name, tid)
             for v in sorted({v for v in ids if v not in (0, NONE) and v not in active})]
 
 
@@ -212,13 +212,14 @@ def _number(v):
 def due(moves_doc, assoc, ledger):
     """The indexes of moves_doc['moves'] that are due and not in the ledger: not an index of ledger['done'], and the
     "from" team has played at least ceil(at * its scheduled games) games. Never due: a move whose "from" team has no
-    scheduled game or is not an int, or whose "at" is not a number. ledger may be None. at * games is rounded to 6
+    scheduled game, or whose "at" is not a number. ledger may be None. at * games is rounded to 6
     places before the ceil so float noise (0.07 * 100) does not add a game."""
     done = (ledger or {}).get('done') or {}
     counts = _counts(assoc)
     out = []
     for i, m in enumerate(moves_doc.get('moves') or []):
-        if str(i) in done or not isinstance(m, dict) or not _number(m.get('at')) or type(m.get('from')) is not int:
+        if str(i) in done or not isinstance(m, dict) or not _number(m.get('at')) \
+                or not isinstance(m.get('from'), (int, str)):
             continue
         scheduled, played = counts.get(m.get('from'), (0, 0))
         if scheduled and played >= math.ceil(round(m['at'] * scheduled, 6)):

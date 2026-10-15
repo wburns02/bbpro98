@@ -12,28 +12,37 @@ def _league_teams(con, year, leagues):
     marks = ','.join('?' * len(leagues))
     out = set()
     for table in ('appearances', 'teams'):         # constants, never caller input
-        if 'lgid' in {r[1].lower() for r in con.execute('PRAGMA table_info(%s)' % table)}:
+        if _has_lgid(con, table):
             out.update(r[0] for r in con.execute(
                 'SELECT DISTINCT teamID FROM %s WHERE yearID = ? AND lgID IN (%s)' % (table, marks),
                 (year,) + tuple(leagues)))
     return out
 
 
+def _has_lgid(con, table):
+    return 'lgid' in {r[1].lower() for r in con.execute('PRAGMA table_info(%s)' % table)}   # constants only
+
+
 def stints(con, year, leagues):
     """{playerID: [teamID, ...]} for the players of year with two or more distinct teams in leagues, each list in stint
     order: a team sits at the lowest stint number Batting or Pitching gives it (a missing number counts as 1; ties go to
-    teamID). A team that is in no league of leagues does not count, so a player split between a major and a minor
-    club has one team and is left out. Players come in playerID order."""
-    in_lg = _league_teams(con, year, leagues)
+    teamID). Rows count when their own lgID is in leagues (Batting and Pitching carry it in Lahman); without that column
+    a team counts when appearances or teams put it in leagues. So a player split between a major and a minor club has
+    one team and is left out. Players come in playerID order."""
+    marks = ','.join('?' * len(leagues))
+    by_row = _has_lgid(con, 'batting') and _has_lgid(con, 'pitching')
+    cond = ' AND lgID IN (%s)' % marks if by_row else ''
+    args = ((year,) + tuple(leagues)) if by_row else (year,)
     rows = con.execute('''
         SELECT playerID, teamID, MIN(COALESCE(stint, 1)) FROM (
-            SELECT playerID, teamID, stint FROM batting WHERE yearID = ?
+            SELECT playerID, teamID, stint FROM batting WHERE yearID = ?%s
             UNION ALL
-            SELECT playerID, teamID, stint FROM pitching WHERE yearID = ?)
-        GROUP BY playerID, teamID''', (year, year)).fetchall()
+            SELECT playerID, teamID, stint FROM pitching WHERE yearID = ?%s)
+        GROUP BY playerID, teamID''' % (cond, cond), args + args).fetchall()
+    in_lg = None if by_row else _league_teams(con, year, leagues)
     seen = {}
     for pid, team, stint in rows:
-        if team in in_lg:
+        if in_lg is None or team in in_lg:
             seen.setdefault(pid, []).append((stint, team))
     return {pid: [team for _, team in sorted(v)] for pid, v in sorted(seen.items()) if len(v) >= 2}
 

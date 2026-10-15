@@ -15,7 +15,8 @@ players; real teams that do not fit, and roster overflow, go to the free-agent p
 
 With --moves a player who changed teams that season starts with his first club (not the one he played most games
 for), and the real midseason moves are written to <install>/Assn/<NAME>.MOV for news/roster.py to apply as the
-season is played (moves.py). Without it no .MOV is written and nothing else changes.
+season is played (moves.py). Without it no .MOV is written and nothing else changes (a .MOV left by an earlier
+--moves build of the same name is renamed to .MOV.old so its moves are never applied to the new rosters).
 
 Game files (templates, the install's MLBPA96E.PYR, _DEFAULT.ASN and _DEFAULT.PYR) are read at build time and never copied into
 the repository.
@@ -784,7 +785,9 @@ def build(year, install, db=DB, name=None, log=print, leagues=lahdb.MLB_LEAGUES,
         write_moves(install, name, doc)
         log('moves: %d written, %d dropped' % (written, dropped))
     elif os.path.lexists(mov_path):
-        log('warning: %s is left from an earlier --moves build and does not match this one' % mov_path)
+        # an earlier --moves build's list would be applied to this association's different rosters: set it aside
+        os.replace(mov_path, mov_path + '.old')
+        log('moved %s aside to %s.old: it was left from an earlier --moves build' % (mov_path, mov_path))
     log('wrote %s: %d players (%d free agents), %d stat lines' % (name, len(new_recs), len(free_ids), len(lines)))
     return out
 
