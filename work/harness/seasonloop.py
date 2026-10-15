@@ -467,6 +467,39 @@ def demographics(assn_dir, stem, year):
     return gamedata.demographics(_find(assn_dir, stem + '.ASN'), _find(assn_dir, stem + '.PYR'), pyf, year)
 
 
+def champion(asn_path):
+    """The season's champion from the files on disk, for one run.log line. Never raises: a log line must not stop a
+    run. No bracket yet ('season', 'champion': None); a bracket gives complete, runner_up and the World Series score
+    with the champion's wins first (the series order follows b['champion']). A torn or odd file can raise more than
+    OSError and ValueError from the parsers (assn_row catches the same set), so the whole read is guarded."""
+    try:
+        b = gamedata.postseason(asn_path)
+        a = gamedata.association(asn_path)
+        year = a['season_year']
+
+        def name(tid):
+            t = a['teams'].get(tid)
+            return t['name'] if t else 'team %d' % tid
+
+        if b is None:
+            return {'season': year, 'champion': None}
+        out = {'season': year, 'complete': b['complete'], 'champion': None, 'runner_up': None, 'series': None}
+        tid = b['champion']
+        if tid is None:
+            return out
+        out['champion'] = name(tid)
+        rounds = b.get('rounds') or []
+        if len(rounds) > 2 and rounds[2]['series']:
+            s = rounds[2]['series'][0]
+            if tid in s['teams']:
+                i = s['teams'].index(tid)
+                out['runner_up'] = name(s['teams'][1 - i])
+                out['series'] = '%d-%d' % (s['wins'][i], s['wins'][1 - i])
+        return out
+    except (OSError, ValueError, KeyError, IndexError, TypeError, AttributeError, struct.error) as e:
+        return {'season': None, 'champion': None, 'error': str(e) or type(e).__name__}
+
+
 def seasons(h, shots, stem, n, limit, year):
     """Play n seasons with an offseason before each and after the last, measuring the league after every offseason.
     True when every season played all its games and every offseason reached opening day."""
@@ -480,6 +513,7 @@ def seasons(h, shots, stem, n, limit, year):
         asn_path = os.path.join(assn, stem + '.ASN')
         if not (season(h, shots, stem, limit) and postseason(h, shots, t_end, asn=asn_path)):
             return False
+        say(**dict(champion(asn_path), at='mid'))
     asn_path = os.path.join(assn, stem + '.ASN')
     for k in range(n + 1):
         if not offseason(h, shots, t_end):
@@ -493,6 +527,7 @@ def seasons(h, shots, stem, n, limit, year):
         if not (season(h, shots, stem, limit) and postseason(h, shots, t_end, asn=asn_path)):
             return False
         _snap(h, assn, stem, f'{shots}/complete_{k}')   # the season-complete state, before the rollover ages anyone
+        say(**dict(champion(asn_path), at=k))
     return True
 
 
