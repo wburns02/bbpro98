@@ -169,7 +169,7 @@ Records with recno=0 in various blocks contain filenames:
 - File block directory structure: HIGH (plaintext filenames confirmed)
 - Record format (fafa markers): HIGH (matches Stats DAT format)
 - Payload encoding: LOW (structure unknown, no decoding key found)
-- Team name locations: VERY LOW (not yet found)
+- Team name locations: HIGH (city/name at t record offset 0x12, nickname at 0x23; see docs/lanes/bbnickname.md)
 
 ---
 ## CORRECTION AND VERIFIED FINDINGS (Claude, 2026-10-06, re-run by hand; supersedes anything above that conflicts)

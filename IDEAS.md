@@ -13,7 +13,8 @@ division champions), at /news/<ASSN>/preview and /awards. Lahman-built teams sho
 Scouting reports (news/scout.py): one per team per association, ratings on the 20-80 scale plus last season's line,
 at /news/<ASSN>/team/<tid> with the graded roster; at most 3 model reports per watcher scan so a backfill never
 starves box-score capture.
-Still open from the list below: rookie bios, AI GM, contracts.
+Still open from the list below: rookie bios. Shipped since: AI GM (news/aigm.py, preseason computer-team trades) and
+the contract and salary system (news/contracts.py, payroll pages in news/server.py).
 
 Goal: use z-ai/glm-5.3-flash through the Hive API to add AI features to FPS Baseball Pro '98.
 
@@ -40,9 +41,9 @@ Open questions
 Dependencies: none left. Stats DAT, ASN, box scores (H files) and play-by-play (game.bko, tapes) all have codecs in work/.
 
 ## Import real historical data from Lahman (captured 2026-10-06, DONE 2026-10-08: work/lahman/, every season 1871-2019)
-Will: import real historical data from Lahman's database into the game. Not to be actioned now.
+Will: import real historical data from Lahman's database into the game.
 Notes: handoff says Lahman files were downloaded on the Mac and a rating-model fit exists (contact~AVG, power~HR, speed~SB, endurance~GS). Write path options: PYR (starting ratings, round-trip writer pyr_io.py exists) for rosters/ratings, and Stats DAT (format now decoded, see work/NOTES_stats_format.md) for historical stat lines. Open questions: which seasons, how to map Lahman playerID to game ids 100+i, and whether the game accepts more than the 1997 roster size.
 
 ## Click into active/retired players from the Career data screen (captured 2026-10-06, DONE 2026-10-08: src-latest/mods/playercard.c)
-Will: be able to click a player in the Career data screen (active and retired) and open their detail. Not to be actioned now.
+Will: be able to click a player in the Career data screen (active and retired) and open their detail.
 Related to the panel-widening work in BBShell.dll (stats grid hit-testing).

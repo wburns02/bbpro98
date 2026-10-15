@@ -67,12 +67,14 @@ All files passed byte-identical comparison, confirming the PYR format is fully u
 
 ## mlbpa97.DAT Format (Stats Container)
 
-**Status: NO WRITER EXISTS**
+**Status: WRITER EXISTS**
 
 Reader exists: `/home/will/bbpro98/work/parse_stats.py` + `lib.py` filter
-Writer: NONE (not yet implemented)
+Writer: work/ctree.py do_apply() (record and B-tree edits in place), used by work/lahman/build.py to write the Stats
+DAT of built seasons; exercised by work/lahman/tests/test_ctree_write.py
 
-Action: Cannot test round-trip until a writer is implemented. Current reader is read-only and has been verified against game screen output (NOTES_stats_format.md, 2026-10-06).
+Action: Writer exists (work/ctree.py do_apply, tested by work/lahman/tests/test_ctree_write.py). Reader verified
+against game screen output (NOTES_stats_format.md, 2026-10-06).
 
 ---
 
