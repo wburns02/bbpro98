@@ -480,8 +480,11 @@ def write_outputs(install, name, blobs, force=False, log=print):
     try:
         for ext in WRITE_ORDER:
             tmp = out[ext] + '.tmp'
+            # O_EXCL and O_NOFOLLOW: the hosted game's sandbox can write Assn/, so a .tmp already there (a planted
+            # symlink above all) is refused, never written through or removed.
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0), 0o666)
             made.append(tmp)
-            with open(tmp, 'wb') as fh:
+            with os.fdopen(fd, 'wb') as fh:
                 fh.write(blobs[ext])
                 fh.flush()
                 os.fsync(fh.fileno())

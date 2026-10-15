@@ -229,3 +229,18 @@ def test_a_wrong_size_record_raises_value_error(tmp_path, size):
         RT.pyr_bytes(header, recs + [bytes(size)])
     with pytest.raises(ValueError):
         RT.write_pyr(str(tmp_path / 'x.PYR'), header, recs + [bytes(size)])
+
+
+def test_a_planted_tmp_symlink_is_refused_not_written_through(tmp_path):
+    install = tmp_path / 'install'
+    (install / 'Assn').mkdir(parents=True)
+    (install / 'Stats').mkdir()
+    victim = tmp_path / 'victim.txt'
+    victim.write_bytes(b'keep me')
+    os.symlink(str(victim), str(install / 'Stats' / '16L1927.DAT.tmp'))
+    blobs = {'ASN': b'a', 'PYR': b'p', 'PYF': b'f', 'DAT': b'd'}
+    with pytest.raises(FileExistsError):
+        B.write_outputs(str(install), '16L1927', blobs, log=lambda *a: None)
+    assert victim.read_bytes() == b'keep me'
+    assert os.path.islink(str(install / 'Stats' / '16L1927.DAT.tmp'))
+    assert sorted(os.listdir(str(install / 'Assn'))) == []
