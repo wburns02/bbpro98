@@ -1,10 +1,10 @@
 """Read-only status of a harness lane's in-game run: is it working or stalled?
 
-    python3 work/harness/lanestat.py --lane 2 [--secs 5] [--shot PATH | --no-shot]
+    python3 work/harness/lanestat.py [--lane 2] [--secs 5] [--shot PATH | --no-shot] [--watch SECS] [--heartbeat SECS]
 
 Prints one JSON line: the lane's game pids, their CPU ticks over --secs seconds, the newest write in the
 work copy's Assn and Stats, the last non-periodic bbtrace.log line with its age, what the screen shows,
-and a verdict ('no_game', 'working', 'stale_paint', 'idle'). Takes no input, signals no process, writes nothing
+and a verdict ('no_game', 'working', 'stale_paint', 'idle'). Takes no input, touches no process, writes nothing
 inside the work copy (the shot lands in a new tempfile.mkstemp file unless --shot says otherwise), attaches no
 debugger. Judge a stall from this line, not by attaching a debugger (the attach thread faults under wow64).
 """
@@ -102,22 +102,16 @@ def verdict(dticks, write_age, trace_age, scr):
     return 'stale_paint' if scr == 'busy' else 'idle'
 
 
-def main(argv=None):
-    ap = argparse.ArgumentParser(description='read-only status of an in-game lane')
-    ap.add_argument('--lane', default='1', choices=('1', '2'))
-    ap.add_argument('--secs', type=float, default=5, help='seconds between the two tick reads')
-    ap.add_argument('--shot', default=None, help='where to put the screenshot (default a scratch file)')
-    ap.add_argument('--no-shot', action='store_true')
-    a = ap.parse_args(argv)
-
-    os.environ['BBLANE'] = a.lane
+def status(lane, secs=5.0, shot=None, no_shot=False):
+    """The dict main prints. Sets BBLANE, imports ingame inside, takes and reads the shot the same way."""
+    os.environ['BBLANE'] = lane
     import ingame
 
     pids = ingame.game_pids()
     dticks = None
     if pids:
         first = {p: ticks(p) or 0 for p in pids}
-        time.sleep(a.secs)
+        time.sleep(secs)
         dticks = sum(max(0, (ticks(p) or 0) - first[p]) for p in pids)
 
     path, mtime = newest([os.path.join(ingame.WORK, 'Assn'), os.path.join(ingame.WORK, 'Stats')])
@@ -128,22 +122,77 @@ def main(argv=None):
     tage = trace_age(tline)
 
     scr = None
-    if not a.no_shot:
-        png = a.shot
+    if not no_shot:
+        png = shot
         if not png:     # a fresh mode-600 file, never a guessable name in a shared directory
-            fd, png = tempfile.mkstemp(prefix=f'lanestat_lane{a.lane}_', suffix='.png')
+            fd, png = tempfile.mkstemp(prefix=f'lanestat_lane{lane}_', suffix='.png')
             os.close(fd)
         try:
             ingame.shot(png)
             scr = screen(png)
         finally:
-            if not a.shot:
+            if not shot:
                 os.unlink(png)
 
-    print(json.dumps({'lane': a.lane, 'pids': pids, 'dticks': dticks,
-                      'newest': {'path': path, 'age_s': write_age},
-                      'trace': {'line': tline, 'age_s': tage},
-                      'screen': scr, 'verdict': verdict(dticks, write_age, tage, scr)}))
+    return {'lane': lane, 'pids': pids, 'dticks': dticks,
+            'newest': {'path': path, 'age_s': write_age},
+            'trace': {'line': tline, 'age_s': tage},
+            'screen': scr, 'verdict': verdict(dticks, write_age, tage, scr)}
+
+
+def watch(lane, every, secs=5.0, no_shot=False, heartbeat=600.0, status_fn=None, out=print,
+          clock=time.time, sleep=time.sleep, limit=None):
+    """Print one JSON line each time the verdict or the newest write changes (else on a heartbeat). KeyboardInterrupt
+    stops the loop quietly; limit (tests) stops it after that many status calls. Returns 0."""
+    if status_fn is None:
+        status_fn = status
+    last, last_at = None, clock()
+    calls = 0
+    try:
+        while True:
+            s = status_fn(lane, secs, None, no_shot)
+            calls += 1
+            key = (s['verdict'], s['newest']['path'])
+            if last is None:
+                why = 'first'
+            elif key != last[0]:
+                why = 'change'
+            elif clock() - last_at >= heartbeat:
+                why = 'heartbeat'
+            else:
+                why = None
+            if why is not None:
+                out(json.dumps(dict(s, t=round(clock(), 1), why=why)))
+                last, last_at = (key, why), clock()
+            if limit is not None and calls >= limit:
+                return 0
+            sleep(every)
+    except KeyboardInterrupt:
+        return 0
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description='read-only status of an in-game lane')
+    ap.add_argument('--lane', default='1', choices=('1', '2'))
+    ap.add_argument('--secs', type=float, default=5, help='seconds between the two tick reads')
+    ap.add_argument('--shot', default=None, help='where to put the screenshot (default a scratch file)')
+    ap.add_argument('--no-shot', action='store_true')
+    ap.add_argument('--watch', type=float, default=None, metavar='SECS',
+                    help='poll and print a line on every verdict or newest-write change')
+    ap.add_argument('--heartbeat', type=float, default=600.0, metavar='SECS',
+                    help='with --watch, print a line after this many unchanged seconds')
+    a = ap.parse_args(argv)
+
+    if a.watch is not None:
+        if a.watch <= 0:
+            ap.error('--watch needs a positive interval of seconds')
+        if a.shot is not None:
+            ap.error('--watch writes many shots: only the default scratch file or --no-shot')
+        if a.heartbeat <= 0:
+            ap.error('--heartbeat needs a positive interval of seconds')
+        return watch(a.lane, a.watch, a.secs, a.no_shot, a.heartbeat)
+
+    print(json.dumps(status(a.lane, a.secs, a.shot, a.no_shot)))
     return 0
 
 
