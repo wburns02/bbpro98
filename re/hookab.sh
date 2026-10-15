@@ -28,6 +28,7 @@ for s in ('mods', 'steal', 'seed', name):
 if mode != 'off':
     c['mods'] = {'load': 'mods\\%s.dll' % name}
     c[name] = {'mode': mode, **({'pct': '100'} if name == 'steal' else {}), **dict(x.split('=', 1) for x in kv.split())}
+c['trace'] = {'max_mb': '0'}     # the MOD counts need the whole trace; no rotation
 with open(p, 'w') as fh: c.write(fh)
 P
 cp $W/bbfix.ini "$OUT/bbfix.ini"

@@ -103,5 +103,5 @@ while day < N:
         shot(f'stuck_day{day+1}'); break
     day += 1
 # collect
-subprocess.run(['bash', '-c', f'W=/mnt/nvme/bbpro98/work_install; cp -a "$W/Assn" "$W/Stats" "$W"/bbtrace.log "{OUT}/" 2>/dev/null; true'])
+subprocess.run(['bash', '-c', f'W=/mnt/nvme/bbpro98/work_install; cp -a "$W/Assn" "$W/Stats" "$W"/bbtrace*.log "{OUT}/" 2>/dev/null; true'])
 print('collected to', OUT)

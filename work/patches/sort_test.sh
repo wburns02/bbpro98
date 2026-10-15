@@ -7,4 +7,4 @@ w $2 386; bash xc2.sh click $2 386; sleep 3; bash xc2.sh shot "$1s"
 python3 -c "
 from PIL import Image
 Image.open('/home/will/$1s.png').crop((330,380,930,520)).resize((1200,280)).save('/home/will/$1c.png')"
-grep -a "CRASH" /mnt/nvme/bbpro98/work_install/bbtrace.log | tail -2
+cat /mnt/nvme/bbpro98/work_install/bbtrace.1.log /mnt/nvme/bbpro98/work_install/bbtrace.log 2>/dev/null | grep -a "CRASH" | tail -2
