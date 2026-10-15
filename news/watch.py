@@ -12,6 +12,7 @@ Data layout (server.py reads it):
     <data>/<ASSN>/feed/<MM>-<DD>.json                  one column per played date
     <data>/<ASSN>/preview.json, awards.json            season preview (once), season awards (once all games are played)
     <data>/<ASSN>/scout/<tid>.json                     one scouting report per team (once)
+    <data>/<ASSN>/rookies/<YEAR>.json, ids.json        a season's rookie class (once); the snapshot it is diffed against
     <data>/<ASSN>/moves/log.json, notes/<n>.json       roster moves and milestones, newest last; a note per notable one
     <data>/<ASSN>/moves/last.json                      the snapshot the next scan diffs against
     <data>/<ASSN>/contracts.json                       contracts and payrolls, priced from news/salary_table.json
@@ -43,6 +44,7 @@ import hive      # noqa: E402
 import moves     # noqa: E402
 import recap     # noqa: E402
 import replay    # noqa: E402
+import rookies   # noqa: E402
 import scout     # noqa: E402
 import season    # noqa: E402
 import teamnames  # noqa: E402
@@ -130,6 +132,7 @@ class Watcher:
         self.scouting_open = set()      # stems with teams still waiting for a scouting report
         self.real_seasons = {}  # (year, leagues) -> replay.real(): the database is read once per season
         self.off_season = set() # stems whose season_year is not the year their name gives: logged once
+        self.rookies_due = set()    # stems that rolled into a new season whose rookie class is not written yet
         self.names = teamnames.load(os.path.join(data_dir, 'teamnames.json'))   # full Lahman names; {} without it
         try:    # the salary table the contracts are priced from; without it the contracts piece is skipped
             self.table = contracts.load_table(DEFAULT_TABLE if salary_table is None else salary_table)
@@ -173,7 +176,8 @@ class Watcher:
         names = gamedata.names(pyr) if pyr else {}
         dat = gamedata.find(stats_dir, stem + '.DAT')
         season = gamedata.season_lines(dat) if dat else {'bat': {}, 'pit': {}}
-        self.rollover(stem, out, assoc)
+        if self.rollover(stem, out, assoc) is not None:
+            self.rookies_due.add(stem)
         self.capture(stem)
         self.columns(out, assoc, names, season)      # first: a few calls a day, and the page leads with them
         self.recaps(stem, out, assoc, names, stats_dir)
@@ -190,6 +194,7 @@ class Watcher:
         self.moves(out, assoc, pyr, dat)
         self.contracts_piece(out, assoc, pyr, dat)
         self.replay_piece(out, assoc, names, season)
+        self.rookie_class(out, assoc, pyr)
 
     def rollover(self, stem, out, assoc):
         """A career association plays many seasons under one stem. When meta.json holds the last season's year and the
@@ -358,6 +363,35 @@ class Watcher:
                             roster=scout.roster(assoc, tid, players, year), created=now_iso()))
             self.log('%s scout %s (%s)' % (stem, team['abbrev'], piece['source']))
         self.scouting_open.discard(stem)
+
+    def rookie_class(self, out, assoc, pyr):
+        """The rookie class (rookies.py), written once per season. rookies/ids.json holds the players of the season last
+        seen. Without it the PYR is read once as the baseline, and no class is written. At a rollover (the stem is in
+        rookies_due, kept until this succeeds) the players new since that snapshot are the class, written to
+        rookies/<season_year>.json unless that file exists, and the snapshot becomes the new season's. Other passes do
+        not read the PYR. Nothing is written for an empty PYR, which would make every player of the next season new."""
+        stem = os.path.basename(out)
+        if pyr is None:
+            return
+        path = os.path.join(out, 'rookies', 'ids.json')
+        prev = read_json(path)
+        if prev is not None and stem not in self.rookies_due:
+            return
+        players = gamedata.players(pyr)
+        if not players:
+            return
+        year = year_of(assoc.get('season_year'))
+        dest = os.path.join(out, 'rookies', '%s.json' % year)
+        pids = rookies.newcomers(players, prev) if stem in self.rookies_due else []
+        if pids and year is not None and not os.path.exists(dest):
+            facts = rookies.class_facts(assoc, players, pids, year)
+            piece = _llm_or_template(rookies.write, facts, self.budget, self.complete)
+            if piece is None:
+                piece = dict(rookies.template(facts), source='template', reason='off')
+            write_json(dest, dict(piece, kind='rookies', season=year, facts=facts, created=now_iso()))
+            self.log('%s rookie class %d: %d players (%s)' % (stem, year, len(pids), piece['source']))
+        write_json(path, rookies.snapshot(players))
+        self.rookies_due.discard(stem)
 
     def moves(self, out, assoc, pyr, dat):
         """Roster moves and milestones since the last scan (moves.py). The current snapshot is diffed against last.json;
