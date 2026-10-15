@@ -17,6 +17,7 @@ Data layout (server.py reads it):
     <data>/<ASSN>/moves/last.json                      the snapshot the next scan diffs against
     <data>/<ASSN>/contracts.json                       contracts and payrolls, priced from news/salary_table.json
     <data>/<ASSN>/hof.json, hof/<YEAR>-<PID>.json      the Hall of Fame (once a season year) and an induction story each
+    <data>/<ASSN>/records.json                         the record book and its bar (records.py)
     <data>/<ASSN>/replay.json                          the season against its Lahman namesake (with --db; replay.py)
     <data>/<ASSN>/past/<YEAR>/                         the last seasons' news, moved there at each rollover
 
@@ -48,6 +49,7 @@ import hof       # noqa: E402
 import hive      # noqa: E402
 import moves     # noqa: E402
 import recap     # noqa: E402
+import records   # noqa: E402
 import replay    # noqa: E402
 import rookies   # noqa: E402
 import scout     # noqa: E402
@@ -126,6 +128,23 @@ def through(assoc, month, day):
     games = [g if (g['month'], g['day']) <= (month, day) else dict(g, played=False, away_runs=0, home_runs=0)
              for g in assoc['games']]
     return dict(assoc, games=games)
+
+
+def identities(pyr_path):
+    """{pid: (first, last, born)} for every named player (id from 100) of a PYR file: the two name fields as the game
+    stores them and the birth date, None when the serial is not a date. history.lahman_id matches on these."""
+    out = {}
+    for rec in gamedata._records(pyr_path):
+        pid = rec[0] | rec[1] << 8
+        first, last = gamedata.cstr(rec[30:47]).strip(), gamedata.cstr(rec[47:64]).strip()
+        if pid < 100 or not (first or last):
+            continue
+        try:
+            born = datetime.date.fromordinal(struct.unpack_from('<I', rec, gamedata.P_BORN)[0] - 365)
+        except (ValueError, OverflowError):
+            born = None
+        out[pid] = (first, last, born)
+    return out
 
 
 def _llm_or_template(write, facts, budget, complete):
@@ -224,6 +243,7 @@ class Watcher:
         self.postseason_piece(out, assoc, asn_path)
         self.history_piece(assoc, stem, dat)
         self.hof_piece(out, assoc, stem, pyr)
+        self.records_piece(out, assoc, names, pyr)
         self.moves(out, assoc, pyr, dat)
         self.contracts_piece(out, assoc, pyr, dat)
         self.replay_piece(out, assoc, names, season)
@@ -498,6 +518,57 @@ class Watcher:
             self.hof_open.discard(stem)
         if changed:
             write_json(os.path.join(out, 'hof.json'), doc)
+    def records_piece(self, out, assoc, names, pyr):
+        """The record book (records.py) in records.json: the best single seasons and careers of the archived seasons
+        and the bar a chase is measured against (the best Lahman season before the association's start year, or a
+        simulated season that beat it). Rebuilt only when the set of archived years differs from the 'years' the file
+        holds, which the first pass without a file also counts as; a pass in between lists one folder and reads
+        nothing. Needs the PYR (the names). The Lahman database is --db, else history.find_db; without one, or when it
+        cannot be read (logged), the book is simulated seasons only. Nothing is written while no season is archived
+        and there is no bar either. A failure is logged and does not stop the other pieces."""
+        stem = os.path.basename(out)
+        if pyr is None:
+            return
+        try:
+            years = records.archived_years(self.data, stem)
+            path = os.path.join(out, 'records.json')
+            prev = read_json(path)
+            if prev is not None and prev.get('years') == years:
+                return
+            season_year = year_of(assoc.get('season_year'))
+            start = history.start_year(stem, season_year)
+            played = records.playable(records.read_archives(self.data, stem), stem)
+            games = records.schedule_length(assoc) or None
+            lahman, real = {}, {}
+            db = self.db if self.db and os.path.isfile(self.db) else history.find_db()
+            if db and start is not None:
+                try:
+                    conn = history.open_db(db)
+                    try:
+                        lahman = records.lahman_bar(conn, start, games)
+                        if played:      # careers are only worth the lookups once a season is archived
+                            people = identities(pyr)
+                            real = records.real_careers(conn, {p: people[p] for p in names if p in people}, start)
+                    finally:
+                        conn.close()
+                except sqlite3.Error as e:
+                    self.log('%s records: %s' % (stem, e))
+                    lahman, real = {}, {}
+            doc = records.document(stem, now_iso(), years, played, names, real, lahman, games, start)
+            if not played and not doc['bar']:
+                return
+            write_json(path, doc)
+            self.log('%s records through %d (%d years archived)' % (stem, doc['through'], len(years)))
+        except Exception as e:      # the record book is extra: a bad file or database must not stop the pieces after it
+            self.log('%s records: %s: %s' % (stem, type(e).__name__, e))
+
+    def chase_lines(self, out, assoc, names, season):
+        """records.chase for this season's lines against the bar in records.json: [] without the file or its 'bar'."""
+        bars = (read_json(os.path.join(out, 'records.json')) or {}).get('bar')
+        if not isinstance(bars, dict):
+            return []
+        team_of = {pid: tid for tid, t in assoc['teams'].items() for pid in t['roster']}
+        return records.chase(season, names, team_of, records.team_games(assoc), records.schedule_length(assoc), bars)
 
     def contracts_piece(self, out, assoc, pyr, dat):
         """The contracts and payrolls (contracts.py), after moves: each rostered player's contract, ticked down at each
@@ -845,7 +916,10 @@ class Watcher:
             if story['source'] == 'glm':
                 self.capture(stem)      # a model call takes seconds; grab what the game wrote meanwhile
 
-    def columns(self, out, assoc, names, season, asn_path=None):
+    def columns(self, out, assoc, names, season, asn_path=None, chase=None):
+        """One 'Around the league' column per played date (and per postseason date). The last regular season date's
+        facts carry the season lines and the chase lines (facts['chase']): chase, or when it is None the lines
+        chase_lines finds against records.json. Earlier dates have no 'chase' key."""
         days = sorted({(g['month'], g['day']) for g in assoc['games'] if g['played']})
         bracket, sched = _postseason(asn_path) if asn_path is not None else (None, [])
         post_days = sorted({(g['month'], g['day']) for g in sched if g.get('played') and 'month' in g and 'day' in g}
@@ -856,7 +930,10 @@ class Watcher:
             dest = os.path.join(out, 'feed', '%02d-%02d.json' % (month, day))
             old = read_json(dest)
             last = (month, day) == days[-1]
-            facts = feed.day_facts(through(assoc, month, day), season if last else empty, names, month, day)
+            if last and chase is None:
+                chase = self.chase_lines(out, assoc, names, season)
+            facts = feed.day_facts(through(assoc, month, day), season if last else empty, names, month, day,
+                                   chase if last else None)
             if old and old.get('facts', {}).get('results') == facts['results']:
                 continue            # written, and no game of that date has been added since
             column = None

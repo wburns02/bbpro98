@@ -100,9 +100,10 @@ def leaders(season, names, teams_played):
     return out
 
 
-def day_facts(assoc, season, names, month, day):
+def day_facts(assoc, season, names, month, day, chase=None):
     """What the 'Around the league' column may say about one date: its results, each division's leader, the streaks
-    of four or more games, and the season leaders (season to date)."""
+    of four or more games, and the season leaders (season to date). chase (records.chase's lines, possibly empty) is
+    added as facts['chase'] when it is not None; the key is absent otherwise."""
     teams = assoc['teams']
     played = sum(1 for g in assoc['games'] if g['played'])
     teams_played = played * 2 / len(teams) if teams else 0.0
@@ -112,7 +113,7 @@ def day_facts(assoc, season, names, month, day):
         if int(s[1:]) >= 4:
             long.append((-int(s[1:]), teams[tid]['name'], s))
     lead = leaders(season, names, teams_played)
-    return {
+    facts = {
         'association': assoc['name'],
         'date': recap.date_text(month, day),
         'results': day_results(assoc, month, day),
@@ -122,15 +123,23 @@ def day_facts(assoc, season, names, month, day):
         'streaks': [{'team': name, 'streak': s} for _, name, s in sorted(long)[:5]],
         'leaders': {k: lead[k][:3] for k in ('hr', 'avg', 'w', 'era')},
     }
+    if chase is not None:
+        facts['chase'] = list(chase)
+    return facts
 
 
 SYSTEM = ("You are a newspaper baseball writer covering the association's season. Write the 'Around the league' "
           "column for one date: 100 to 170 words on that day's results and the division leaders. " + recap.RULES)
 
 
+CHASE_RULE = (" The facts include 'chase', lines about players on pace for a season record. End the column with a "
+              "last paragraph that starts with 'Record watch: ' and gives those lines as they are written.")
+
+
 def prompt(facts):
-    """(system, user) for the 'Around the league' column."""
-    return SYSTEM, recap.facts_message(facts)
+    """(system, user) for the 'Around the league' column. The system text asks for the Record watch paragraph only
+    when the facts have chase lines."""
+    return SYSTEM + (CHASE_RULE if facts.get('chase') else ''), recap.facts_message(facts)
 
 
 def _scores(facts):
@@ -148,14 +157,16 @@ def _scores(facts):
 
 
 def template(facts):
-    """The day's results, then the division leaders, as two plain paragraphs; every number in it passes numbers_ok."""
+    """The day's results, then the division leaders, as two plain paragraphs, then a 'Record watch: ' paragraph of the
+    chase lines when the facts have any; every number in it passes numbers_ok."""
     scores = _scores(facts)
     leaders = []
     for d in facts['division_leaders']:
         group = ' '.join(x for x in (d['league'], d['division']) if x) or 'league'
         leaders.append('%s leads the %s at %s.' % (d['team'], group, d['record']))
+    watch = ['Record watch: ' + ' '.join(facts['chase'])] if facts.get('chase') else []
     return {'headline': 'Scores and standings' if facts['results'] else 'An off day',     # the page's kicker has the date
-            'body': '\n'.join(' '.join(p) for p in (scores, leaders) if p)}
+            'body': '\n'.join(' '.join(p) for p in (scores, leaders, watch) if p)}
 
 
 def write(facts, budget, complete, attempts=2):

@@ -42,6 +42,11 @@ SIGNINGS = 20       # newest contract events on the payroll page
 CONTRACT_STATUS = {'pre': 'Pre-arb', 'arb': 'Arbitration', 'fa': 'Free agent contract'}
 STAT_WORDS = {'hr': 'home run', 'h': 'hit', 'sb': 'stolen base', 'w': 'win', 'sv': 'save', 'so_p': 'strikeout'}
 REPLAY_STATS = ('HR', 'AVG', 'RBI', 'SB', 'W', 'SV', 'SO', 'ERA')
+RECORD_STATS = (('hr', 'Home runs'), ('h', 'Hits'), ('rbi', 'RBI'), ('r', 'Runs'), ('sb', 'Stolen bases'),
+                ('bb', 'Walks'), ('avg', 'Batting average'), ('w', 'Wins'), ('so', 'Strikeouts'), ('sv', 'Saves'),
+                ('era', 'ERA'))
+RECORD_ROWS = 10    # rows a record table shows
+RECORD_SOURCES = {'lahman': 'real', 'sim': 'this league'}
 BYLINES = {'glm': 'Staff writer', 'template': 'Wire report'}
 HTML_TYPE = 'text/html; charset=utf-8'
 JSON_TYPE = 'application/json'
@@ -443,7 +448,8 @@ def _association(data_dir, assn, qs):
     name = _text(meta.get('name')) or assn
     folder, home = data_dir / assn, '/news/%s/' % assn
     moves = _moves_box(data_dir, assn) if page == 1 else ''
-    season = (_season_links(folder, home, _rookie_years(data_dir, assn), _read_obj(folder / 'hof.json') is not None)
+    season = (_season_links(folder, home, _rookie_years(data_dir, assn), _read_obj(folder / 'hof.json') is not None,
+                            _read_obj(folder / 'records.json') is not None)
               if page == 1 else '')
     past = _past_box(data_dir, assn) if page == 1 else ''
     replay = _replay_link(folder, home) if page == 1 else ''
@@ -870,14 +876,16 @@ def _rookie_years(data_dir, assn):
     return sorted((int(m.group(1)) for m in found if m and (folder / m.group(0)).is_file()), reverse=True)
 
 
-def _season_links(folder, home, rookie_years=(), hall=False):
+def _season_links(folder, home, rookie_years=(), hall=False, records=False):
     """The Season box for the side column: postseason above awards above preview, each only when its file exists, then
-    a link per year in rookie_years and, when hall is true, one to the Hall of Fame (the current front page passes
-    them; a past season's does not). '' for none."""
+    the Record book link when records is true, a link per year in rookie_years and, when hall is true, one to the Hall
+    of Fame (the current front page passes them; a past season's does not). '' for none."""
     links = ['<li><a href="%s%s">%s</a></li>' % (esc(home), which, label)
              for which, label in (('postseason', 'Postseason'), ('awards', 'Season awards'),
                                   ('preview', 'Season preview'))
              if _season_file(folder, which) is not None]
+    if records:
+        links.append('<li><a href="%srecords">Record book</a></li>' % esc(home))
     links += ['<li><a href="%srookies/%04d">%04d rookie class</a></li>' % (esc(home), y, y)
               for y in rookie_years]
     if hall:
@@ -918,6 +926,84 @@ def _team(folder, assn, tid, home):
     if rec is None or rec.get('kind') != 'scout':
         return _not_found()
     return _team_page(assn, tid, rec, home)
+
+
+def _record_value(stat, value):
+    """A record's value as a table prints it: .395 for avg, 1.01 for era, the count for the rest; '' when it is not a
+    number a page can print (_is_num)."""
+    if not _is_num(value):
+        return ''
+    if stat == 'avg':
+        return _pct_text(value)
+    return '%.2f' % value if stat == 'era' else value
+
+
+def _record_tables(group, season):
+    """One small table per stat of RECORD_STATS that has rows, in the record book's order: rank, name, year (seasons for
+    a career), value and, for a single season, team. group is records.json's 'season' or 'career'. '' for none."""
+    group = _d(group)
+    tables = []
+    for stat, label in RECORD_STATS:
+        rows = _dicts(group.get(stat))[:RECORD_ROWS]
+        if not rows:
+            continue
+        if season:
+            body = [[i, r.get('name'), r.get('year'), _record_value(stat, r.get('value')), r.get('team')]
+                    for i, r in enumerate(rows, 1)]
+            tables.append(_table(label, ('Rank', 'Player', 'Year', 'Value', 'Team'), body, text=(1, 4)))
+        else:
+            body = [[i, r.get('name'), r.get('seasons'), _record_value(stat, r.get('value'))]
+                    for i, r in enumerate(rows, 1)]
+            tables.append(_table(label, ('Rank', 'Player', 'Seasons', 'Value'), body, text=(1,)))
+    return ''.join(tables)
+
+
+def _bar_html(bar):
+    """The bar table: each stat's record to beat, its holder and year, and whether it is a real season or this league's
+    own. '' when no stat has one."""
+    bar = _d(bar)
+    rows = []
+    for stat, label in RECORD_STATS:
+        b = _d(bar.get(stat))
+        if b:
+            rows.append([label, _record_value(stat, b.get('value')), b.get('name'), b.get('year'),
+                         RECORD_SOURCES.get(b.get('source'), '') if isinstance(b.get('source'), str) else ''])
+    if not rows:
+        return ''
+    table = _table('Record to beat', ('Stat', 'Value', 'Holder', 'Year', 'Source'), rows, text=(0, 2, 4))
+    return '<section><h2>The bar</h2>%s</section>' % table
+
+
+def _chase_html(folder):
+    """The Chase box: the lines the newest column's facts carry in 'chase' (players on pace for a season record).
+    '' when the newest column has none, as in the postseason."""
+    lines = _strings(_d(_d(_latest_feed(folder)).get('facts')).get('chase'))
+    if not lines:
+        return ''
+    return '<section><h2>Chase</h2><ul class="moves">%s</ul></section>' % ''.join('<li>%s</li>' % esc(x) for x in lines)
+
+
+def _records(data_dir, assn):
+    """The record book page: the chase box, the best single seasons and careers, then the bar. 404 without the
+    association's meta.json. Without records.json, or with empty tables, it says the book fills in after the first
+    simulated season."""
+    meta = _read_obj(data_dir / assn / 'meta.json')
+    if meta is None:
+        return _not_found()
+    name = _text(meta.get('name')) or assn
+    folder = data_dir / assn
+    doc = _d(_read_obj(folder / 'records.json'))
+    season, career = _record_tables(doc.get('season'), True), _record_tables(doc.get('career'), False)
+    through = _int(doc, 'through')
+    parts = [_masthead('Record book', 'through %d' % through if through > 0 else ''),
+             _league_nav(assn, {'association': name}), _chase_html(folder)]
+    if season or career:
+        parts.append('<section><h2>Single season</h2>%s</section>' % (season or '<p class="empty">None yet.</p>'))
+        parts.append('<section><h2>Career</h2>%s</section>' % (career or '<p class="empty">None yet.</p>'))
+    else:
+        parts.append('<p class="empty">The record book fills in after the first simulated season.</p>')
+    parts.append(_bar_html(doc.get('bar')))
+    return _page_reply(200, '%s · Record book' % name, ''.join(parts))
 
 
 def _rookies_page(assn, year, rec, home=None):
@@ -1379,6 +1465,8 @@ def route(data_dir, target):
         return _hof_page(data_dir, assn)
     if len(rest) == 3 and rest[1] == 'hof' and HOF_RE.fullmatch(rest[2]):
         return _hof_story(data_dir, assn, rest[2])
+    if len(rest) == 2 and rest[1] == 'records':
+        return _records(data_dir, assn)
     if len(rest) == 2 and rest[1] == 'payroll':
         return _payroll(data_dir, assn)
     if len(rest) == 3 and rest[1] == 'payroll' and TID_RE.fullmatch(rest[2]) and str(int(rest[2])) == rest[2]:
