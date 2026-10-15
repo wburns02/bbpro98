@@ -3,7 +3,9 @@
 
     python3 work/lahman/build.py --year 1927 --install /mnt/nvme/bbpro98/work_install
 
-Writes <install>/Assn/<NAME>.ASN/.PYR/.PYF and <install>/Stats/<NAME>.DAT, NAME = <teams>L<year> (16L1927).
+Writes <install>/Assn/<NAME>.ASN/.PYR/.PYF and <install>/Stats/<NAME>.DAT, NAME = <teams>L<year> (16L1927). It
+never replaces an existing association unless --force is given (a copy is kept under <install>/build-backup), never
+writes a reserved name or through a symlink, and writes the ASN last so an ASN on disk means the other three are there.
 
 Starts from a structure template the game itself made (Create New Association, one per league shape, see
 structure.SHAPES) and replaces its content: real teams, managers, parks and weather cities; rosters with lineups,
@@ -20,6 +22,7 @@ import datetime
 import glob
 import json
 import os
+import shutil
 import struct
 import sys
 
@@ -86,6 +89,9 @@ ACTIVE, RESERVE = 25, 15
 # rotation before it builds the batting order and takes position players for it when pitchers run out; a team left
 # with fewer than eight fielders gets a 0 in its order and LINEUP.DLL dereferences it (crash at LINEUP+0x116e0).
 MIN_HIT, MIN_PIT = 9, 10
+# Names of the game's own associations: a build never writes them, whatever --force says.
+RESERVED = ('MLBPA96E', 'MLBPA97', '_DEFAULT')
+WRITE_ORDER = ('DAT', 'PYF', 'PYR', 'ASN')       # the ASN last: an ASN on disk means the other three are there
 
 
 # ---------------------------------------------------------------- Lahman extras (read-only SQL)
@@ -440,7 +446,55 @@ def shift_year(born_serial, years):
         return RT.serial(d.replace(year=d.year + years, day=28))
 
 
-def build(year, install, db=DB, name=None, log=print, leagues=lahdb.MLB_LEAGUES):
+def write_outputs(install, name, blobs, force=False, log=print):
+    """Writes blobs ({'ASN', 'PYR', 'PYF', 'DAT': bytes}) as <install>/Assn/<name>.ASN/.PYR/.PYF and
+    <install>/Stats/<name>.DAT and returns {ext: path}. Refuses (SystemExit, nothing written) a reserved name, a
+    symlink at any target, and an existing target unless force, which first copies the existing ones to
+    <install>/build-backup/<NAME>-<stamp>. Each file goes to <path>.tmp and is renamed into place, DAT, PYF, PYR, ASN."""
+    if name.upper() in RESERVED:
+        raise SystemExit('refusing to write %s: a reserved association name' % name)
+    out = {'ASN': os.path.join(install, 'Assn', name + '.ASN'), 'PYR': os.path.join(install, 'Assn', name + '.PYR'),
+           'PYF': os.path.join(install, 'Assn', name + '.PYF'), 'DAT': os.path.join(install, 'Stats', name + '.DAT')}
+    for ext in out:
+        if os.path.islink(out[ext]):
+            raise SystemExit('refusing to write %s: it is a symlink' % out[ext])
+    present = [out[ext] for ext in ('ASN', 'PYR', 'PYF', 'DAT') if os.path.lexists(out[ext])]
+    if present and not force:
+        raise SystemExit('%s already exists; pass --force to replace it (a copy is kept)' % present[0])
+    if present:
+        root = os.path.join(install, 'build-backup')
+        stamp = '%s-%s' % (name.upper(), datetime.datetime.now().strftime('%Y%m%dT%H%M%S'))
+        os.makedirs(root, exist_ok=True)
+        folder, n = os.path.join(root, stamp), 1
+        while True:
+            try:
+                os.mkdir(folder)
+                break
+            except FileExistsError:
+                n += 1
+                folder = os.path.join(root, '%s-%d' % (stamp, n))
+        for path in present:
+            shutil.copy2(path, folder)
+        log('kept a copy of the existing %s files in %s' % (name, folder))
+    made = []
+    try:
+        for ext in WRITE_ORDER:
+            tmp = out[ext] + '.tmp'
+            made.append(tmp)
+            with open(tmp, 'wb') as fh:
+                fh.write(blobs[ext])
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp, out[ext])
+    except BaseException:
+        for tmp in made:
+            if os.path.lexists(tmp):
+                os.remove(tmp)
+        raise
+    return out
+
+
+def build(year, install, db=DB, name=None, log=print, leagues=lahdb.MLB_LEAGUES, force=False):
     con = lahdb.connect(db)
     teams = lahdb.teams(con, year, leagues)
     if not teams:
@@ -656,16 +710,11 @@ def build(year, install, db=DB, name=None, log=print, leagues=lahdb.MLB_LEAGUES)
 
     # ---- write
     name = name or '%d%s%d' % (len(slots), 'L' if set(leagues) <= set(lahdb.MLB_LEAGUES) else 'N', year)
-    out = {'ASN': os.path.join(install, 'Assn', name + '.ASN'), 'PYR': os.path.join(install, 'Assn', name + '.PYR'),
-           'PYF': os.path.join(install, 'Assn', name + '.PYF'), 'DAT': os.path.join(install, 'Stats', name + '.DAT')}
-    with open(out['ASN'], 'wb') as fh:
-        fh.write(asn.build())
-    RT.write_pyr(out['PYR'], hdr, new_recs)
-    with open(out['PYF'], 'wb') as fh:
-        fh.write(b'PPD:' + struct.pack('<Ih', 2 + 2 * len(free_ids), len(free_ids)) +
-                 struct.pack('<%dH' % len(free_ids), *free_ids))
-    with open(out['DAT'], 'wb') as fh:
-        fh.write(dat_out)
+    blobs = {'ASN': asn.build(), 'PYR': RT.pyr_bytes(hdr, new_recs),
+             'PYF': b'PPD:' + struct.pack('<Ih', 2 + 2 * len(free_ids), len(free_ids)) +
+                    struct.pack('<%dH' % len(free_ids), *free_ids),
+             'DAT': dat_out}
+    out = write_outputs(install, name, blobs, force, log)
     log('wrote %s: %d players (%d free agents), %d stat lines' % (name, len(new_recs), len(free_ids), len(lines)))
     return out
 
@@ -677,10 +726,14 @@ def main(argv=None):
     ap.add_argument('--install', required=True, help='game directory holding Assn/ and Stats/')
     ap.add_argument('--db', default=DB)
     ap.add_argument('--name', help='file name (max 8 chars), default <teams>L<year>')
+    ap.add_argument('--force', action='store_true',
+                    help='replace an existing association; a copy is kept under <install>/build-backup')
     ap.add_argument('--templates', help='directory of minted structure templates (default %s)' % TEMPLATES)
     ap.add_argument('--leagues', default=','.join(lahdb.MLB_LEAGUES),
                     help='comma-separated Lahman lgIDs to build (default the majors; e.g. NN2,NAL for 1937-48)')
     a = ap.parse_args(argv)
+    if a.name and a.name.upper() in RESERVED:
+        ap.error('--name: %s is a reserved association name' % a.name)
     leagues = tuple(x for x in a.leagues.upper().split(',') if x)
     known = lahdb.MLB_LEAGUES + lahdb.NEGRO_LEAGUES
     if not leagues or any(x not in known for x in leagues):
@@ -705,7 +758,7 @@ def main(argv=None):
         if str(a.year) not in tbl:
             print('warning: %s has no %d; League News will show 16-letter team names until work/lahman/teamnames.py is rerun'
                   % (teamnames.OUT, a.year))
-    build(a.year, a.install, a.db, a.name, leagues=leagues)
+    build(a.year, a.install, a.db, a.name, leagues=leagues, force=a.force)
     return 0
 
 

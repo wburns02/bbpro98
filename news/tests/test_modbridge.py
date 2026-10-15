@@ -138,8 +138,20 @@ def serve_pages(monkeypatch, pages):
     return seen
 
 
-def fake_build(monkeypatch, game, returncode=0, stdout='', stderr='', write=True, timeout=False):
-    """Replaces subprocess.run with a build that writes 16L1927.ASN into the game (when write). Returns the calls made."""
+def write_season(game, stem='16L1927', partial=False):
+    """Writes a built season into the game: the ASN, PYR and PYF in Assn/ and the DAT in Stats/ (only the ASN when
+    partial, as a build that stopped part way leaves it)."""
+    (game / 'Assn' / (stem + '.ASN')).write_bytes(b'asn')
+    if not partial:
+        (game / 'Stats').mkdir(exist_ok=True)
+        (game / 'Assn' / (stem + '.PYR')).write_bytes(b'pyr')
+        (game / 'Assn' / (stem + '.PYF')).write_bytes(b'pyf')
+        (game / 'Stats' / (stem + '.DAT')).write_bytes(b'dat')
+
+
+def fake_build(monkeypatch, game, returncode=0, stdout='', stderr='', write=True, timeout=False, partial=False):
+    """Replaces subprocess.run with a build that writes 16L1927 into the game (when write; only its ASN when partial).
+    Returns the calls made."""
     calls = []
 
     def run(cmd, **kw):
@@ -147,7 +159,7 @@ def fake_build(monkeypatch, game, returncode=0, stdout='', stderr='', write=True
         if timeout:
             raise subprocess.TimeoutExpired(cmd, kw['timeout'])
         if write:
-            (game / 'Assn' / '16L1927.ASN').write_bytes(b'asn')
+            write_season(game, partial=partial)
         return subprocess.CompletedProcess(cmd, returncode, stdout=stdout, stderr=stderr)
 
     monkeypatch.setattr(subprocess, 'run', run)
@@ -430,7 +442,7 @@ def test_build_negro_leagues_passes_the_leagues_and_finds_the_n_stem(bridge, sit
 
     def run(cmd, **kw):
         calls.append(cmd)
-        (site[0] / 'Assn' / '16N1942.ASN').write_bytes(b'asn')
+        write_season(site[0], '16N1942')
         return subprocess.CompletedProcess(cmd, 0, stdout='ok\n', stderr='')
 
     monkeypatch.setattr(subprocess, 'run', run)
@@ -462,7 +474,9 @@ def test_year_ranges_reads_the_database(tmp_path):
 def test_build_reports_a_season_already_in_the_game(bridge, site, monkeypatch, name):
     ctx, spool = bridge
     game = site[0]
-    (game / 'Assn' / name).write_bytes(b'asn')
+    stem = name.split('.')[0]
+    write_season(game, stem)
+    (game / 'Assn' / (stem + '.ASN')).rename(game / 'Assn' / name)
     calls = fake_build(monkeypatch, game)
     head, body = ask(ctx, spool, 'op=build\nyear=1927')
     assert head == {'status': 'ok', 'existed': '1', 'stem': '16L1927', 'label': '1927 Major Leagues'}
@@ -702,6 +716,49 @@ def test_make_spool_never_creates_through_a_symlinked_mods(tmp_path):
     os.remove(game / 'Mods')
     modbridge.make_spool(str(game))
     assert modbridge.spool_ok(str(game))
+
+
+def test_build_that_wrote_only_the_asn_is_a_failed_build(bridge, site, monkeypatch):
+    ctx, spool = bridge
+    fake_build(monkeypatch, site[0], partial=True, stdout='done\n')
+    head, body = ask(ctx, spool, 'op=build\nyear=1927')
+    assert head == {'status': 'error'} and body == 'The build failed.\n\ndone'
+    assert not modbridge._BUILD.locked()
+
+
+@pytest.mark.parametrize('missing', ['Assn/16L1927.PYR', 'Assn/16L1927.PYF', 'Stats/16L1927.DAT'])
+def test_season_skips_an_asn_without_its_other_files(site, missing):
+    game = site[0]
+    write_season(game)
+    assert modbridge._season(str(game), 1927) == ('16L1927', str(game / 'Assn' / '16L1927.ASN'))
+    (game / missing).unlink()
+    assert modbridge._season(str(game), 1927) == (None, None)
+    assert modbridge._leftovers(str(game), 1927)
+
+
+@pytest.mark.parametrize('linked', ['Assn/16L1927.PYR', 'Assn/16L1927.PYF', 'Stats/16L1927.DAT'])
+def test_season_skips_an_asn_whose_other_file_is_a_symlink(site, tmp_path, linked):
+    game = site[0]
+    write_season(game)
+    (game / linked).unlink()
+    (game / linked).symlink_to(tmp_path / 'elsewhere')
+    (tmp_path / 'elsewhere').write_bytes(b'x')
+    assert modbridge._season(str(game), 1927) == (None, None)
+
+
+def test_season_without_a_stats_folder_finds_nothing(site):
+    game = site[0]
+    write_season(game)
+    (game / 'Stats' / '16L1927.DAT').unlink()
+    (game / 'Stats').rmdir()
+    assert modbridge._season(str(game), 1927) == (None, None)
+
+
+def test_season_finds_the_complete_one_past_an_incomplete_one(site):
+    game = site[0]
+    write_season(game, '15L1927', partial=True)
+    write_season(game, '16L1927')
+    assert modbridge._season(str(game), 1927) == ('16L1927', str(game / 'Assn' / '16L1927.ASN'))
 
 
 def test_build_refuses_over_leftover_or_planted_season_files(bridge, site, monkeypatch, tmp_path):

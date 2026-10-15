@@ -77,14 +77,20 @@ def read_pyr(path):
     return d[:REC], recs
 
 
-def write_pyr(path, header, recs):
+def pyr_bytes(header, recs):
     t, _ = cipher((header[0], header[1]))
+    out = [bytes(header)]
+    for r in recs:
+        if len(r) != REC:
+            raise ValueError('record of %d bytes' % len(r))
+        out.append(bytes(t[b] for b in r))
+    return b''.join(out)
+
+
+def write_pyr(path, header, recs):
+    data = pyr_bytes(header, recs)
     with open(path, 'wb') as fh:
-        fh.write(header)
-        for r in recs:
-            if len(r) != REC:
-                raise ValueError('record of %d bytes' % len(r))
-            fh.write(bytes(t[b] for b in r))
+        fh.write(data)
 
 
 def cstr(b):
