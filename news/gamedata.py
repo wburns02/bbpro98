@@ -194,6 +194,61 @@ def association(asn_path):
     return {'name': name, 'season_year': season_year, 'teams': teams, 'games': games}
 
 
+PO_STATE = 1                                    # po payload: 2 = the postseason is complete
+PO_BEST = 2                                     # po payload: best-of bytes for rounds 1..3 (p[2], p[3], p[4])
+PO_SERIES = {1: (19, 39, 87, 107), 2: (59, 127), 3: (223,)}     # series block offsets by round, league 1 then league 2
+PO_MIN = 243                                    # the shortest po payload that holds every block
+PO_FLAG = 0x80                                  # in a run byte: set = the score is team 2's, clear = team 1's
+PO_GAMES = 7                                    # most games one series records
+
+
+def _po_series(p, b):
+    """One series block at offset b as a dict, None when the block is unused, ValueError when it cannot be right."""
+    best = p[b]
+    if best == 0:
+        return None
+    winner, t1, t2, w1, w2 = p[b + 1:b + 6]
+    if not (1 <= t1 <= MAX_TEAM and 1 <= t2 <= MAX_TEAM) or t1 == t2:
+        raise ValueError('team ids')
+    if w1 > best // 2 + 1 or w2 > best // 2 + 1 or w1 + w2 > PO_GAMES:
+        raise ValueError('wins')
+    if winner and winner not in (t1, t2):
+        raise ValueError('winner')
+    games = []
+    for g in range(w1 + w2):
+        away, home = p[b + 6 + g], p[b + 13 + g]
+        games.append({'away': t2 if away & PO_FLAG else t1, 'home': t2 if home & PO_FLAG else t1,
+                      'away_runs': away & ~PO_FLAG, 'home_runs': home & ~PO_FLAG})
+    return {'best_of': best, 'teams': [t1, t2], 'wins': [w1, w2], 'winner': winner or None,
+            'home': games[0]['home'] if games else None, 'games': games}
+
+
+def postseason(asn_path):
+    """The postseason bracket of one ASN file (the po member), or None when there is none or it is not a shape this
+    reads. 'current' is True when the schedule still holds postseason games (after a rollover po keeps last season's
+    bracket and the postseason schedule records are gone)."""
+    with open(asn_path, 'rb') as fh:
+        mem = _members(fh.read())
+    recs = mem.get('po', [])
+    if not recs:
+        return None
+    p = recs[0][1]
+    if len(p) < PO_MIN or p[PO_BEST] == 0:
+        return None
+    rounds = []
+    for rnd, offsets in PO_SERIES.items():
+        try:
+            series = [s for s in (_po_series(p, b) for b in offsets) if s]
+        except ValueError:
+            return None
+        rounds.append({'round': rnd, 'series': series})
+    complete = p[PO_STATE] == 2
+    final = rounds[2]['series']
+    return {'complete': complete, 'current': any(len(s) >= 16 and s[15] == 1 for _, s in mem.get('s', [])),
+            'best_of': [p[PO_BEST], p[PO_BEST + 1], p[PO_BEST + 2]],
+            'champion': final[0]['winner'] if complete and final else None, 'rounds': rounds}
+
+
 BAT_KEYS = ('ab', 'h', '2b', '3b', 'hr', 'rbi', 'bb', 'so', 'r', 'sb')
 PIT_KEYS = ('outs', 'h', 'r', 'er', 'bb', 'so', 'hr', 'w', 'l', 'sv')
 
