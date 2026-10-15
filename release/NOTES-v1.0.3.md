@@ -74,6 +74,10 @@ its text; they do not replace it.
 - install_live.sh and revert_live.sh check every file first and stage the copies before swapping them in, so a
   failed copy leaves the old install whole; revert refuses while the live game runs. The Lahman CSV loader keeps text
   cells as written and stops on a row with the wrong number of fields.
+- The patch tools (bytepatch, narrow_cols, patch_ext, mods_button) and the codecs write through a temp file and a
+  rename, so a crash mid-write never leaves a half-written game file. The codec command lines print a one-line error
+  on a bad file instead of a traceback. bbfix refuses a [mods] load= entry that points outside the game folder, the
+  Mods menu caps the counts a bridge page sends, and aging.dll skips an overlong focus.txt line whole.
 
 ## Known limits
 
