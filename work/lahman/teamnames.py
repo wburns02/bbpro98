@@ -2,6 +2,7 @@
 """Full team names for the news sidecar, from the Lahman database.
 
     python3 work/lahman/teamnames.py [--db DB] [--out /mnt/nvme/bbpro98/teamnames.json]
+    python3 work/lahman/teamnames.py --check /mnt/nvme/bbpro98/teamnames.json
 
 build.py stores a team's name cut to the game's 16 characters ('Balt. Orioles', 'New Haven Elm Ci'). This writes
 {year: {teamID: [full, short]}}, short being exactly what build.team_name stores, so news/teamnames.py can put the
@@ -32,12 +33,47 @@ def table(con):
     return out
 
 
-def main():
+def missing_years(tbl, con):
+    """Years with rows in con's teams table that str(year) is not a key of tbl, sorted."""
+    db_years = {str(year) for year, in con.execute('SELECT DISTINCT yearID FROM teams')}
+    return sorted(int(y) for y in db_years if y not in tbl)
+
+
+def ranges(years):
+    """[1871, 1872, 1875, 1999] -> '1871-1872, 1875, 1999'."""
+    out, i = [], 0
+    while i < len(years):
+        j = i
+        while j + 1 < len(years) and years[j + 1] == years[j] + 1:
+            j += 1
+        out.append(str(years[i]) if j == i else '%d-%d' % (years[i], years[j]))
+        i = j + 1
+    return ', '.join(out)
+
+
+def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     ap.add_argument('--db', default=DB)
     ap.add_argument('--out', default=OUT)
-    a = ap.parse_args()
-    t = table(lahdb.connect(a.db))
+    ap.add_argument('--check', help='report Lahman years PATH lacks instead of writing it')
+    a = ap.parse_args(argv)
+    con = lahdb.connect(a.db)
+    if a.check:
+        try:
+            with open(a.check, encoding='utf-8') as fh:
+                tbl = json.load(fh)
+        except (OSError, ValueError):
+            tbl = {}
+        if not isinstance(tbl, dict):
+            tbl = {}
+        missing = missing_years(tbl, con)
+        if missing:
+            print('teamnames: %s lacks %d Lahman years: %s' % (a.check, len(missing), ranges(missing)))
+            raise SystemExit(1)
+        rows = list(con.execute('SELECT MIN(yearID), MAX(yearID) FROM teams'))
+        print('teamnames: %s covers every Lahman year (%s-%s)' % (a.check, rows[0][0], rows[0][1]))
+        return 0
+    t = table(con)
     tmp = a.out + '.tmp'
     with open(tmp, 'w', encoding='utf-8') as fh:
         json.dump(t, fh, indent=0, sort_keys=True)
