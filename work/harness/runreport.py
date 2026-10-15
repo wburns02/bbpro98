@@ -75,6 +75,9 @@ def summary(lines):
             'first': first, 'last': last}
 
 
+ROW = '%9s  %8s  %8s  %5s  %4s  %4s  %4s  %7s  %7s'
+
+
 def _cell(v):
     return '-' if v is None else str(v)
 
@@ -82,12 +85,15 @@ def _cell(v):
 def render(s):
     out = []
     out.append('Demographics')
-    out.append('year       rostered  mean age  step  le25  ge33    fa  retired  players')
+    if not s.get('demographics'):
+        out.append('none')
+    else:
+        out.append(ROW % ('year', 'rostered', 'mean age', 'step', 'le25', 'ge33', 'fa', 'retired', 'players'))
     for r in s.get('demographics', []):
         age = '-' if not is_num(r.get('mean_age')) else '%.2f' % r['mean_age']
         step = r.get('step')
         step = '-' if step is None else ('%+.2f' % step)
-        out.append('%9s  %8s  %8s  %5s  %4s  %4s  %4s  %7s  %7s' % (
+        out.append(ROW % (
             _cell(r.get('year')), _cell(r.get('rostered')), age, step,
             _cell(r.get('le25')), _cell(r.get('ge33')), _cell(r.get('fa')),
             _cell(r.get('retired')), _cell(r.get('players'))))

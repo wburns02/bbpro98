@@ -133,6 +133,14 @@ def test_champion_error_row_renders_the_error():
     assert 'error: torn' in runreport.render(s)
 
 
+def test_empty_log_prints_none_under_every_section():
+    r = runreport.render(runreport.summary(runreport.parse('== start 01:00:00')))
+    lines = r.splitlines()
+    for head in ('Demographics', 'Champions', 'Seasons', 'Verdicts', 'Postseason'):
+        assert lines[lines.index(head) + 1] == 'none'
+    assert 'Stops: 0' in r and 'Span: - to -' in r
+
+
 def test_bool_is_not_number():
     s = runreport.summary(runreport.parse(
         '{"demographics": 1, "mean_age": true, "t": "00:00:01"}'))
