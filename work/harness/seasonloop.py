@@ -48,6 +48,7 @@ SCHED_BOX = (335, 295, 470, 322)              # 'League Sch' of the schedule's t
 CHAMP_BOX = (330, 470, 950, 750)              # body of the World Series champions photo (f_champ.png)
 POST_HELD = 6                                 # still looks 20 s apart that bring the postseason wait to reopen the sim
 BUSY_STILL = 12                               # still busy looks (4 min, the ASN unchanged) that mark the update box stale
+CHAMP_HELD = 6                                # champion looks still up after a Return before one more Return is sent
 
 
 def _diff(png, ref, box):
@@ -254,7 +255,7 @@ def postseason(h, shots, t_end, max_sims=8, asn=None):
     look(h, a)
     if asn is not None:
         others = _other_mtimes(asn)
-    held, sims, champ, stale, stamp = 0, 0, False, 0, None
+    held, sims, champ, stale, stamp, champ_held, n = 0, 0, False, 0, None, 0, 0
     while time.time() < t_end:
         if notice(a) == 'complete':
             print(json.dumps({'postseason': 'complete', 'sims': sims}), flush=True)
@@ -279,6 +280,7 @@ def postseason(h, shots, t_end, max_sims=8, asn=None):
                 h.x('key', 'Return'); time.sleep(4)
                 stale = 0
                 look(h, a)
+            champ_held = 0
             continue
         stale = 0
         if on_champ(a) and not champ:
@@ -287,11 +289,23 @@ def postseason(h, shots, t_end, max_sims=8, asn=None):
             shutil.copyfile(a, f'{shots}/champion.png')
             h.x('key', 'Return'); time.sleep(4)
             held = 0
+            champ_held = 1                 # the look that showed the photo when the Return was sent
             look(h, a)
+            if on_champ(a):                # the extra look right after the Return is a champion look too
+                champ_held += 1
             continue
         if champ and on_champ(a):
             held = 0
+            champ_held += 1
+            if champ_held == CHAMP_HELD and n < 3:
+                # The photo is still up CHAMP_HELD looks after the last Return: the game ignored it. One more
+                # Return, at most 3 times; after that keep waiting as before.
+                n += 1
+                h.x('key', 'Return'); time.sleep(4)
+                print(json.dumps({'postseason': 'champion_retry', 'n': n}), flush=True)
+                champ_held = 0
             continue
+        champ_held = 0
         if held < POST_HELD or notice(a) == 'complete':
             continue
         if champ:
