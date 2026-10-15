@@ -894,12 +894,14 @@ def _team_page(assn, tid, rec, home=None):
     """A team's scouting report in the story layout, then its roster graded: hitters, then pitchers."""
     roster = _d(rec.get('roster'))
     hitters = [[h.get('name'), h.get('pos'), h.get('hand'), h.get('age'), h.get('contact'), h.get('power'),
-                h.get('speed'), h.get('fielding')] for h in _dicts(roster.get('hitters'))]
+                h.get('speed'), h.get('fielding'), h.get('arc')] for h in _dicts(roster.get('hitters'))]
     pitchers = [[p.get('name'), p.get('hand'), p.get('age'), p.get('control'), p.get('strikeout'), p.get('stamina'),
-                 p.get('fielding')] for p in _dicts(roster.get('pitchers'))]
+                 p.get('fielding'), p.get('arc')] for p in _dicts(roster.get('pitchers'))]
     tables = [
-        _table('Hitters', ('Player', 'Pos', 'B/T', 'Age', 'Contact', 'Power', 'Speed', 'Field'), hitters, text=3),
-        _table('Pitchers', ('Player', 'B/T', 'Age', 'Control', 'Strikeout', 'Stamina', 'Field'), pitchers, text=2),
+        _table('Hitters', ('Player', 'Pos', 'B/T', 'Age', 'Contact', 'Power', 'Speed', 'Field', 'Aging'), hitters,
+               text=(0, 1, 2, 8)),
+        _table('Pitchers', ('Player', 'B/T', 'Age', 'Control', 'Strikeout', 'Stamina', 'Field', 'Aging'), pitchers,
+               text=(0, 1, 7)),
     ]
     return _story_layout(assn, rec, 'Scouting report', tables, home)
 

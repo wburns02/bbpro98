@@ -28,6 +28,7 @@
                        drop=31:10,32:15,...        age:tenths of a percent of peak lost per season
                        weight=100,90,120,80,20,90,50,90   percent per class: contact, power, speed, arm, hold,
                                                           endurance, control, pitches and fielding
+                       arc=on|off   arc_years=3 (0..6)   arc_size=30 (0..60)   per-player career arc (v4)
                        base=29:1,30:4,...          retirement age:percent, ages past the last entry use the last value
                        q=70:35,62:60,52:100,44:160,0:220   ability floor:percent factor, highest floor first
 
@@ -50,12 +51,19 @@
    leaving a roster averaged about 33.5 and those joining 24.4, so a flat mean needs about 145 departures a season
    instead of 125. A cohort projection on run6's observed departure rates put the old curve at 28.9 and rising and the
    new one at 28.1 to 28.6 over twelve seasons. run7, in game from the same 2028 snapshot: 28.70, 28.71, 28.65 (run6
-   28.70, 28.80, 28.93), 148 and 158 retirements a season, smallest roster 41, fewest pitchers 19. */
+   28.70, 28.80, 28.93), 148 and 158 retirements a season, smallest roster 41, fewest pitchers 19.
+
+   v4 (2026-10-15, decline only): career arcs. arc_trait (arc.h, hash of pid and birth, the same in news/arc.py) gives
+   each player a shift of -arc_years..+arc_years and a size of 100-arc_size..100+arc_size percent, uniform, so the
+   league mean stays flat. The drop tables are read at age-shift (a late bloomer declines later) and the decline
+   amount is scaled by size percent, after rel_mult and before the var roll. No rolls are consumed; arc=off restores
+   v3 exactly. A focused class still only gains. Retirement is unchanged. */
 #include <windows.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "../bbmod.h"
+#include "arc.h"
 
 #define MAXAGE 60
 #define SHELL "BBShell.dll"
@@ -66,6 +74,8 @@ static int drop_t[MAXAGE + 1], base_pct[MAXAGE + 1], weight[8];
 static int drop_grp[3][MAXAGE + 1];             /* 0 bat, 1 run, 2 pit */
 static int rel_mult, rel_end, var_pct, focus_gain, focus_cost;
 static long varied[2], relief[2], focused[2], focus_pts[2];
+static int arc_on, arc_years, arc_size;
+static long arcs[2], late[2], early[2];
 
 #define MAXFOCUS 2000
 enum { F_CONTACT = 1, F_POWER, F_SPEED, F_CONTROL, F_STUFF, F_DEFENSE };
@@ -113,8 +123,8 @@ static void report(const char *when) {
     char line[900];
     for (int w = 0; w < 2; w++) {
         api->log("aging %s %s: aged=%ld declined=%ld peak points lost=%ld relievers=%ld varied=%ld focused=%ld "
-                 "focus points=%ld", when, w ? "fa" : "roster", aged[w], declined[w], peak_lost[w], relief[w],
-                 varied[w], focused[w], focus_pts[w]);
+                 "focus points=%ld arcs=%ld late=%ld early=%ld", when, w ? "fa" : "roster", aged[w], declined[w],
+                 peak_lost[w], relief[w], varied[w], focused[w], focus_pts[w], arcs[w], late[w], early[w]);
         int n = _snprintf(line, sizeof line, "retire %s %s: seen=%ld retired=%ld by age (retired/seen)", when,
                           w ? "fa" : "roster", seen[w], retired[w]);
         for (int a = 18; a <= MAXAGE && n < (int)sizeof line - 24; a++)
@@ -189,10 +199,18 @@ static void decline(void *self, uint32_t *today, int fa) {
     if (!decline_on || !rec) return;
     load_focus();
     int a = clamp_age(age_of(rec, today)), fk = nfocus ? focus_of(rec) : 0;
-    int pitcher = 0, k;
+    int pitcher = 0, k, size = 100;
+    if (arc_on) {
+        int shift = arc_trait(*(uint16_t *)rec, *(uint32_t *)(rec + 0x1c), arc_years, arc_size, &size);
+        a = clamp_age(a - shift);
+        arcs[fa]++;
+        if (shift > 0) late[fa]++;
+        else if (shift < 0) early[fa]++;
+    }
     for (k = 7; k < 14; k++) if (rec[0x4c + k]) pitcher = 1;
     long scale = 100;                                              /* percent */
     if (pitcher && rec[0x4c + 5] < rel_end) { scale = scale * rel_mult / 100; relief[fa]++; }
+    if (size != 100) scale = scale * size / 100;
     if (var_pct) { scale = scale * (100 + (long)var_pct * (2 * roll() - 101) / 100) / 100; varied[fa]++; }
     if (scale < 0) scale = 0;
     int any = 0;
@@ -286,11 +304,19 @@ static int by_age_table(const char *key, const char *def, int *table) {
 BB_EXPORT int bbmod_init(const BBModAPI *a) {
     api = a;
     if (a->version != BBMOD_API_VERSION) return 1;
-    char d[16], r[16], buf[400];
+    char d[16], r[16], ar[16], buf[400];
     a->ini_str("aging", "decline", "on", d, sizeof d);
     a->ini_str("aging", "retire", "curve", r, sizeof r);
+    a->ini_str("aging", "arc", "on", ar, sizeof ar);
     decline_on = !lstrcmpiA(d, "on");
     retire_curve = !lstrcmpiA(r, "curve");
+    arc_on = !lstrcmpiA(ar, "on");
+    arc_years = a->ini_int("aging", "arc_years", 3);
+    if (arc_years < 0) arc_years = 0;
+    if (arc_years > 6) arc_years = 6;
+    arc_size = a->ini_int("aging", "arc_size", 30);
+    if (arc_size < 0) arc_size = 0;
+    if (arc_size > 60) arc_size = 60;
     fa_mult = a->ini_int("aging", "fa_mult", 180);
     probe = a->ini_int("aging", "probe", 0);
     if (!by_age_table("drop", "31:10,32:15,33:20,34:25,35:30,36:35,37:40,38:45,39:50,40:55,41:60", drop_t)) return 3;
@@ -325,9 +351,9 @@ BB_EXPORT int bbmod_init(const BBModAPI *a) {
         a->redirect_call(SHELL, 0x680718a5, 0x68055670, (void *)h_ret_fa, (void **)&orig_ret_fa) < 0) return 2;
     a->log("aging: decline=%s retire=%s fa_mult=%d probe=%d drop[33]=%d drop[38]=%d bat[33]=%d run[33]=%d pit[33]=%d "
            "rel_mult=%d rel_end=%d var=%d focus_gain=%d focus_cost=%d base[30]=%d base[35]=%d base[40]=%d q-bands=%d "
-           "registered", d, r, fa_mult, probe, drop_t[33], drop_t[38], drop_grp[0][33], drop_grp[1][33],
-           drop_grp[2][33], rel_mult, rel_end, var_pct, focus_gain, focus_cost, base_pct[30], base_pct[35],
-           base_pct[40], nq);
+           "arc=%s arc_years=%d arc_size=%d registered", d, r, fa_mult, probe, drop_t[33], drop_t[38],
+           drop_grp[0][33], drop_grp[1][33], drop_grp[2][33], rel_mult, rel_end, var_pct, focus_gain, focus_cost,
+           base_pct[30], base_pct[35], base_pct[40], nq, ar, arc_years, arc_size);
     return 0;
 }
 

@@ -5,6 +5,7 @@ reached only through the complete() callable the caller passes in. Prompt rules 
 """
 import re
 
+import arc
 import feed
 import recap
 import season
@@ -49,24 +50,28 @@ def _position_rank(pos):
     return POSITION_ORDER.index(pos) if pos in POSITION_ORDER else len(POSITION_ORDER)
 
 
-def roster(assoc, tid, players, year):
+def roster(assoc, tid, players, year, births=None):
     """The team's whole roster for its page: {'hitters': [...], 'pitchers': [...]}. Hitters in position order, then name;
     pitchers best first by their control, strikeout and stamina grades, then name. Players not in `players` are
-    skipped."""
+    skipped. births is {pid: birth serial} (focus.births): each row's 'arc' is arc.player_hint for it, or None without
+    births, for a player not in it, or when scouts cannot read the arc yet."""
     hitters, pitchers = [], []
     for pid in season._players(assoc).get(tid, []):
         if pid not in players:
             continue
         p = players[pid]
         age = _age(p['born'], year)
+        hint = arc.player_hint(pid, births.get(pid), year) if births is not None else None
         if p['pos'] == 'P':
             pitchers.append({'pid': pid, 'name': p['name'], 'hand': _hand(p), 'age': age,
                              'control': grade(p['control']), 'strikeout': grade(p['strikeout']),
-                             'stamina': grade(p['stamina']), 'fielding': grade(p['fielding'])})
+                             'stamina': grade(p['stamina']), 'fielding': grade(p['fielding']),
+                             'arc': hint})
         else:
             hitters.append({'pid': pid, 'name': p['name'], 'pos': p['pos'], 'hand': _hand(p), 'age': age,
                             'contact': grade(p['contact']), 'power': grade(p['power']),
-                            'speed': grade(p['speed']), 'fielding': grade(p['fielding'])})
+                            'speed': grade(p['speed']), 'fielding': grade(p['fielding']),
+                            'arc': hint})
     hitters.sort(key=lambda h: (_position_rank(h['pos']), h['name']))
     pitchers.sort(key=lambda r: (-(r['control'] + r['strikeout'] + r['stamina']), r['name']))
     return {'hitters': hitters, 'pitchers': pitchers}
