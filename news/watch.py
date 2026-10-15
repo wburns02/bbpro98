@@ -421,10 +421,12 @@ class Watcher:
         self.scouting(out, assoc, pyr, dat)
 
     def postseason_piece(self, out, assoc, asn_path):
-        """The postseason page's file (bracket.py), template only. The ASN's bracket is this season's while its games
-        are on the schedule (written to <out>), else it is last season's, still there after a rollover (written to
-        past/<year - 1>/, and only when that folder exists). Nothing is written before a game is played or when the
-        file already holds the same facts, so a new game rewrites it and a quiet pass does not."""
+        """The postseason page's file (bracket.py): a template while the bracket is being played, and once it is
+        complete with a champion, the model's wrap (bracket.write) with the template as the fallback. The ASN's bracket
+        is this season's while its games are on the schedule (written to <out>), else it is last season's, still there
+        after a rollover (written to past/<year - 1>/, and only when that folder exists). Nothing is written before a
+        game is played or when the file already holds the same facts, so a new game rewrites it and a quiet pass does
+        not (one ask of the model, whatever it came back with)."""
         try:
             b = gamedata.postseason(asn_path)
         except Exception:   # OSError, ValueError, or a file it cannot index (torn): the other pieces still run
@@ -439,9 +441,16 @@ class Watcher:
         path = os.path.join(dest, 'postseason.json')
         if not bracket.played(f) or (read_json(path) or {}).get('facts') == f:
             return
-        write_json(path, dict(bracket.template(f), kind='postseason', source='template', facts=f, created=now_iso()))
-        self.log('%s postseason %d (%d games)' % (os.path.basename(out), target,
-                                                   sum(len(s['games']) for r in f['rounds'] for s in r['series'])))
+        if f['complete'] and f['champion']:
+            story = _llm_or_template(bracket.write, f, self.budget, self.complete)
+            if story is None:
+                story = dict(bracket.template(f), source='template', reason='off')
+        else:
+            story = dict(bracket.template(f), source='template')
+        write_json(path, dict(story, kind='postseason', facts=f, created=now_iso()))
+        self.log('%s postseason %d (%d games) (%s)' % (
+            os.path.basename(out), target,
+            sum(len(s['games']) for r in f['rounds'] for s in r['series']), story['source']))
 
     def scouting(self, out, assoc, pyr, dat):
         """One scouting report per team, written once: the team's best hitters and pitchers graded from the PYR ratings,
