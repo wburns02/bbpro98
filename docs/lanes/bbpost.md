@@ -101,11 +101,11 @@ All seven B series decoded this way (wins as team 1 to team 2, games as `s` reco
 The champion is the World Series block's winner (po 224 = 13, Seattle), repeated at po 222 = 13. The series score is
 po 227 and 228: 4 and 3.
 
-**The game's own champion screen disagrees with its file.** It read "capture the World Series by beating the Phila.
-Phillies by a score of 4 games to 2". The file and the seven `s` records agree on 4 to 3: Philadelphia won games 1, 2
-and 5, and Seattle won 3, 4, 6 and 7 (`B s 0#2446: month=11 day=1 ... away=18 ar=3 home=13 hr=4`, `0#2447: month=11
-day=2 ... ar=3 ... hr=5`). Guess: the screen's loser-wins argument is computed as games minus 5, or it is read before
-game 7 is counted. In either case a story should take the score from `po`, not from the screen text.
+The game's champion screen agrees: "capture the World Series by edging the Phila. Phillies by a score of 4 games to
+3" (out3/champion.png). The seven `s` records agree too: Philadelphia won games 1, 2 and 5, and Seattle won 3, 4, 6
+and 7 (`B s 0#2446: month=11 day=1 ... away=18 ar=3 home=13 hr=4`, `0#2447: month=11 day=2 ... ar=3 ... hr=5`). A
+second season on the same association (2026, out4/roll_0) decodes the same way: the New York Yankees over San Diego 4
+to 3, champion byte 3, matching that run's screen ("edging the San Diego Padres by a score of 4 games to 3").
 
 The pennant and champion bytes must not be trusted before the series ends. In A, before any postseason game, po 86
 (league 2 pennant) and po 222 (champion) both already hold 25 (Diamondbacks), and po 18 holds 13. B overwrote 86 with
@@ -156,7 +156,7 @@ The parser can be built now for this shape: two leagues, four teams each, rounds
 - Other bracket shapes: a 28-team MLBPA97 association, one league, or more playoff teams. Only one snapshot shape was
   read, so the league header's first 3 bytes and the 147..214 block are guesses. Check one MLBPA97 ASN before the
   parser trusts the fixed offsets: refuse a shape whose header bytes differ from 2, 3, 4 instead of guessing.
-- Why the champion screen says 4 to 2 for a 4 to 3 series. Check whether the stock string's arguments come from po
-  227/228 (BBShell's champion handler, near champtext's patch site).
+- Whether the champion screen's series score and verb ("edging" at 4 to 3) come from po 227 and 228 (BBShell's
+  champion handler, near champtext's patch site).
 - What po 6 (63 in A, 85 in B) and po 7..9 hold. Guess: a day counter.
 - Whether the box score files (Stats/30L2025.H*) and the DAT carry postseason lines.
