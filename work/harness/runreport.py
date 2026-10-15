@@ -11,7 +11,6 @@ def parse(text):
         return []
     out = []
     for line in text.splitlines():
-        line = line.strip()
         if not line.startswith('{'):
             continue
         try:
