@@ -133,6 +133,7 @@ class Watcher:
         self.real_seasons = {}  # (year, leagues) -> replay.real(): the database is read once per season
         self.off_season = set() # stems whose season_year is not the year their name gives: logged once
         self.rookies_due = set()    # stems that rolled into a new season whose rookie class is not written yet
+        self.league_cache = {}  # stem -> (key, league()'s value): the PYR is read again only when a file or the year changes
         self.names = teamnames.load(os.path.join(data_dir, 'teamnames.json'))   # full Lahman names; {} without it
         try:    # the salary table the contracts are priced from; without it the contracts piece is skipped
             self.table = contracts.load_table(DEFAULT_TABLE if salary_table is None else salary_table)
@@ -189,13 +190,38 @@ class Watcher:
             'assn': stem, 'name': assoc['name'], 'season_year': year_of(assoc.get('season_year')),
             'updated': now_iso(), 'last_day': list(last) if last else None,
             'standings': feed.standings(assoc), 'leaders': feed.leaders(season, names, teams_played),
-            'played': sum(1 for g in assoc['games'] if g['played']), 'stories': story_count(out)})
+            'played': sum(1 for g in assoc['games'] if g['played']), 'stories': story_count(out),
+            'league': self.league(stem, asn_path, pyr, year_of(assoc.get('season_year')))})
         self.season_pieces(out, assoc, names, dat, pyr)
         self.history_piece(assoc, stem, dat)
         self.moves(out, assoc, pyr, dat)
         self.contracts_piece(out, assoc, pyr, dat)
         self.replay_piece(out, assoc, names, season)
         self.rookie_class(out, assoc, pyr)
+
+    def league(self, stem, asn_path, pyr_path, year):
+        """The league's age make-up for meta.json: {'year', 'rostered', 'mean_age', 'le25', 'ge33', 'fa'}, or None
+        without a PYR or a season year, or when gamedata.demographics() cannot read the files. Cached per stem on the
+        year and the (mtime, size) of the ASN, PYR and PYF, a bad file included, so a pass that changed none of them
+        reads nothing."""
+        if pyr_path is None or year is None:
+            return None
+        pyf = gamedata.find(os.path.join(self.game, 'Assn'), stem + '.PYF')
+        try:
+            stats = [os.stat(p) if p else None for p in (asn_path, pyr_path, pyf)]
+        except OSError:
+            return None
+        key = (year,) + tuple((st.st_mtime_ns, st.st_size) if st else None for st in stats)
+        cached = self.league_cache.get(stem)
+        if cached and cached[0] == key:
+            return cached[1]
+        try:
+            d = gamedata.demographics(asn_path, pyr_path, pyf, year)
+            value = {k: d[k] for k in ('year', 'rostered', 'mean_age', 'le25', 'ge33', 'fa')}
+        except (OSError, ValueError):
+            value = None
+        self.league_cache[stem] = (key, value)
+        return value
 
     def rollover(self, stem, out, assoc):
         """A career association plays many seasons under one stem. When meta.json holds the last season's year and the
