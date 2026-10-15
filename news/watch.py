@@ -194,7 +194,7 @@ class Watcher:
             self.rookies_due.add(stem)
         self.rewind(stem, out, assoc)
         self.capture(stem)
-        self.columns(out, assoc, names, season)      # first: a few calls a day, and the page leads with them
+        self.columns(out, assoc, names, season, asn_path)      # first: a few calls a day, and the page leads with them
         self.recaps(stem, out, assoc, names, stats_dir, asn_path)
         played = sum(1 for g in assoc['games'] if g['played'])
         teams_played = played * 2 / len(assoc['teams']) if assoc['teams'] else 0.0
@@ -656,9 +656,12 @@ class Watcher:
             if story['source'] == 'glm':
                 self.capture(stem)      # a model call takes seconds; grab what the game wrote meanwhile
 
-    def columns(self, out, assoc, names, season):
+    def columns(self, out, assoc, names, season, asn_path=None):
         days = sorted({(g['month'], g['day']) for g in assoc['games'] if g['played']})
-        recent = set(days[-LLM_DAYS:])
+        bracket, sched = _postseason(asn_path) if asn_path is not None else (None, [])
+        post_days = sorted({(g['month'], g['day']) for g in sched if g.get('played') and 'month' in g and 'day' in g}
+                           - set(days))
+        recent = set(sorted(days + post_days)[-LLM_DAYS:])
         empty = {'bat': {}, 'pit': {}}
         for month, day in days:
             dest = os.path.join(out, 'feed', '%02d-%02d.json' % (month, day))
@@ -672,6 +675,20 @@ class Watcher:
                 column = _llm_or_template(feed.write, facts, self.budget, self.complete)
             if column is None:
                 column = dict(feed.template(facts), source='template', reason='backfill' if self.complete else 'off')
+            write_json(dest, dict(column, month=month, day=day, date=facts['date'], facts=facts, created=now_iso()))
+            self.log('column %s %s (%s)' % (os.path.basename(out), facts['date'], column['source']))
+        for month, day in post_days:
+            dest = os.path.join(out, 'feed', '%02d-%02d.json' % (month, day))
+            old = read_json(dest)
+            facts = feed.post_day_facts(assoc, bracket, sched, month, day)
+            if old and old.get('facts', {}).get('results') == facts['results']:
+                continue
+            column = None
+            if (month, day) in recent:
+                column = _llm_or_template(feed.post_write, facts, self.budget, self.complete)
+            if column is None:
+                column = dict(feed.post_template(facts), source='template',
+                              reason='backfill' if self.complete else 'off')
             write_json(dest, dict(column, month=month, day=day, date=facts['date'], facts=facts, created=now_iso()))
             self.log('column %s %s (%s)' % (os.path.basename(out), facts['date'], column['source']))
 
