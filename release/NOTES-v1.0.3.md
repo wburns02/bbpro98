@@ -78,6 +78,9 @@ its text; they do not replace it.
   rename, so a crash mid-write never leaves a half-written game file. The codec command lines print a one-line error
   on a bad file instead of a traceback. bbfix refuses a [mods] load= entry that points outside the game folder, the
   Mods menu caps the counts a bridge page sends, and aging.dll skips an overlong focus.txt line whole.
+- When bbtrace.log cannot be renamed to bbtrace.1.log (the old file locked or read-only), bbfix keeps appending to
+  the current log and stops rotating instead of emptying it. The card's mouse wheel caps a burst at 10 notches per
+  tick. The harness stops a running game before it backs up the files a plan replaces.
 
 ## Known limits
 
