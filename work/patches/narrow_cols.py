@@ -2,6 +2,7 @@
 """Same-size geometry edit of the Statistics screen columns in SHELL.VOL (DIAL.REQ block 13).
 usage: narrow_cols.py SHELL.VOL [namew] [colw]   (asserts; refuses if already patched)"""
 import os,sys; sys.path.insert(0,os.path.dirname(os.path.abspath(__file__))); import liveguard
+sys.path.insert(0,os.path.dirname(os.path.dirname(os.path.abspath(__file__)))); from atomicfile import write_atomic
 import sys, struct
 f=sys.argv[1]; namew=int(sys.argv[2],0) if len(sys.argv)>2 else 0x60; colw=int(sys.argv[3],0) if len(sys.argv)>3 else 0x2a
 d=bytearray(open(f,'rb').read())
@@ -16,4 +17,4 @@ for n in range(8):
     x=x0+n*colw
     i=pat(bytes([4,8,0x0b+n,0])+struct.pack('<H',0xd7+49*n)+b'\x6e\x00\x32\x00'); d[i+4:i+6]=struct.pack('<H',x); d[i+8:i+10]=struct.pack('<H',colw)
     i=pat(bytes([0x13,4,0x15+n,0])+struct.pack('<H',0xd7+49*n)+b'\x60\x00\x32\x00'); d[i+4:i+6]=struct.pack('<H',x); d[i+8:i+10]=struct.pack('<H',colw)
-open(f,'wb').write(d); print('ok')
+write_atomic(f, bytes(d)); print('ok')

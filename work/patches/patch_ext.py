@@ -2,6 +2,7 @@
 """Extension-columns code patch for BBShell.dll (League Statistics screen). usage: patch_ext.py DLL [--ids b0,b1,b2,b3:p0,p1,p2,p3]
 Requires the widened SHELL.VOL (build_wide_vol.py --bodybase 0x30 --hdrbase 0x1d). Asserts original bytes; refuses if already patched."""
 import os,sys; sys.path.insert(0,os.path.dirname(os.path.abspath(__file__))); import liveguard
+sys.path.insert(0,os.path.dirname(os.path.dirname(os.path.abspath(__file__)))); from atomicfile import write_atomic
 import sys, struct
 f=sys.argv[1]
 bat=[49,50,57,52]; pit=[262,251,276,277]
@@ -70,4 +71,4 @@ pe=struct.unpack('<I',d[0x3c:0x40])[0]; oh=struct.unpack('<H',d[pe+20:pe+22])[0]
 so=pe+24+oh   # first section header = .text
 assert d[so:so+5]==b'.text'
 vs=struct.unpack('<I',d[so+8:so+12])[0]; assert vs in (0x7f46a,0x7f600); d[so+8:so+12]=struct.pack('<I',0x7f600)
-open(f,'wb').write(d); print('patched',f,bat,pit)
+write_atomic(f, bytes(d)); print('patched',f,bat,pit)
