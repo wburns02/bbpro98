@@ -30,6 +30,7 @@
    (polling loops) is not logged again. Flat targets (T[].flat: positioning, find_fielder, whose helpers loop thousands
    of times) keep each probed call's Y and X events but log nothing between them, nor inside FUN_6801a4b1.
    Records are written when the call returns, so a nested target's record comes before its caller's. */
+#include <stddef.h>
 #include <windows.h>
 #include "../bbmod.h"
 #include "simtrace_probes.h"
@@ -125,7 +126,8 @@ T0(14) T1(15) T0(16) T0(17) T0(18) T0(19) T0(20) T1(21) T0(22) T0(23) T0(24) T0(
 T2(26)
 /* xoff: up to 4 int fields of *this outside the 0x100-byte snapshot that the function reads directly, copied to Rec.xf;
    poff: offset of the 0x20 bytes of *this copied to Rec.post after the call (the function's outputs); pva: when set, a
-   FastSim VA whose 0x20 bytes are copied instead (positioning writes the global alignment object 0x680c8f98) */
+   FastSim VA whose 0x20 bytes are copied instead (positioning writes the global alignment object 0x680c8f98; the copy
+   starts at its mode byte, +9) */
 static const struct { uint32_t va; int args, n; uint32_t xoff[4], poff; void *h; void **o; const char *what; uint32_t pva, flat; } T[] = {
     {0x68052bd5, 1, 6, {0}, 0, (void *)h0, (void **)&o0, "steal chance (this runner object, base 2/3)"},
     {0x68036d52, 0, 6, {0x34ce}, 0, (void *)h1, (void **)&o1, "pickoff chance"},
@@ -248,6 +250,7 @@ BB_EXPORT int bbmod_init(const BBModAPI *a) {
     for (unsigned i = 0; i < sizeof T / sizeof *T; i++)
         if (a->detour("FastSim.dll", T[i].va, pro[i], T[i].n, T[i].h, T[i].o) < 0) {
             a->log("simtrace: detour %08x (%s) failed", T[i].va, T[i].what);
+            CloseHandle(out); out = INVALID_HANDLE_VALUE;   /* the detours already in place then only pass through */
             return 2;
         }
     if (a->detour("FastSim.dll", 0x68003170, P6[0], 6, (void *)h_pb, (void **)&o_pb) < 0 ||
@@ -262,12 +265,12 @@ BB_EXPORT int bbmod_init(const BBModAPI *a) {
         a->detour("FastSim.dll", 0x6803deec, P6[0], 6, (void *)h_fset, (void **)&o_fset) < 0 ||
         a->detour("FastSim.dll", 0x6801a4b1, P6[0], 6, (void *)h_al, (void **)&o_al) < 0) {
         a->log("simtrace: probe detour failed");
-        return 2;
+        CloseHandle(out); out = INVALID_HANDLE_VALUE; return 2;
     }
     for (unsigned i = 0; i < sizeof XP / sizeof *XP; i++)
         if (a->detour("FastSim.dll", XP[i].va, XP[i].pro, XP[i].len, xh[i], &xo[i]) < 0) {
             a->log("simtrace: getter probe %u (%08x) failed", i, XP[i].va);
-            return 2;
+            CloseHandle(out); out = INVALID_HANDLE_VALUE; return 2;
         }
     a->log("simtrace: file=%s max=%ld, %u targets registered", f, maxrecs, (unsigned)(sizeof T / sizeof *T));
     return 0;
