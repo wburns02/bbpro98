@@ -236,3 +236,10 @@ def test_revoke_with_unwritable_file_still_signs_out(tmp_path):
     g = gate.Gate('4321', SECRET, now=Clock(), revoked_path=str(tmp_path / 'no' / 'such' / 'dir'))
     tok = g.token()
     assert g.revoke(tok) and not g.valid(tok)
+
+
+def test_new_pin_voids_device_cookies():
+    c = Clock()
+    dev = gate.Gate('4321', SECRET, now=c).device_token()
+    assert gate.Gate('4321', SECRET, now=c).device(dev)
+    assert gate.Gate('8765', SECRET, now=c).device(dev) is None

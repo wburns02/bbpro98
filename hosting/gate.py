@@ -17,7 +17,7 @@ CF-Connecting-IP) and in total: past GLOBAL_FAILS wrong PINs in an hour, a login
 signed in before carries a signed device cookie (bbdev, Path=/gate, a year) and has a pool of its own instead
 (DEVICE_FAILS an hour for that one cookie), so strangers guessing from many addresses cannot lock the owner out, a
 copied device cookie buys at most DEVICE_FAILS guesses an hour, and it can only use up its own pool, never another
-browser's; the per-visitor limit applies to both.
+browser's; the per-visitor limit applies to both. Device cookies are bound to the PIN: a new PIN voids them all.
 """
 import argparse
 import hashlib
@@ -100,9 +100,14 @@ class Gate:
         exp = str(int(self.now()) + MAX_AGE)
         return exp + '.' + self._sign('', exp)
 
+    def _device_kind(self):
+        # Bound to the PIN: changing the PIN voids every device cookie, so one minted while someone knew the old PIN
+        # buys no guesses at the new one.
+        return 'dev:%s:' % hashlib.sha256(self.pin).hexdigest()
+
     def device_token(self):
         exp = str(int(self.now()) + DEVICE_AGE)
-        return exp + '.' + self._sign('dev:', exp)
+        return exp + '.' + self._sign(self._device_kind(), exp)
 
     def valid(self, tok):
         sig = self._check('', tok)
@@ -114,7 +119,7 @@ class Gate:
     def device(self, tok):
         """The id (signature) of a device cookie this gate signed and that has not expired, else None: a browser that
         signed in before. Only a correct PIN mints one, so the per-device table is bounded by real sign-ins."""
-        return self._check('dev:', tok)
+        return self._check(self._device_kind(), tok)
 
     def _load_revoked(self):
         try:
