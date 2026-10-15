@@ -1,7 +1,9 @@
 """seasonloop's offseason pieces: demographics() on a synthetic association (association() stubbed, a real enciphered
 PYR and .pyf), and notice() on the reference screenshots when they are present."""
 import datetime
+import json
 import os
+import re
 import struct
 import sys
 
@@ -11,6 +13,14 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import seasonloop  # noqa: E402
 import league      # noqa: E402 (work/ is on the path once gamedata is imported)
+
+
+def _lines(out):
+    """Every printed line, JSON-parsed with the 't' timestamp removed."""
+    lines = [json.loads(line) for line in out.splitlines() if line.strip()]
+    for line in lines:
+        line.pop('t', None)
+    return lines
 
 
 def player(pid, born, first='Pat', last='Doe', pos=2):
@@ -117,25 +127,37 @@ def test_season_stops_when_the_sim_wrote_another_association(tmp_path, monkeypat
         os.utime(assn / 'OTHER.ASN', ns=(st.st_atime_ns, st.st_mtime_ns + 10 ** 9))
     h = _quiet_sim(monkeypatch, tmp_path, touch_other)
     assert seasonloop.season(h, str(tmp_path), 'TEST', 3600) is False
-    assert '"wrong_association": true' in capsys.readouterr().out
+    assert {'season': 'TEST', 'done': False, 'wrong_association': True} in _lines(capsys.readouterr().out)
 
 
 def test_season_without_another_write_is_not_called_wrong(tmp_path, monkeypatch, capsys):
     h = _quiet_sim(monkeypatch, tmp_path, lambda assn: None)
     assert seasonloop.season(h, str(tmp_path), 'TEST', 3600) is False      # stuck: MAX_STOPS, never a game played
     out = capsys.readouterr().out
-    assert 'wrong_association' not in out and '"stop": 1' in out
+    lines = _lines(out)
+    assert all(l.get('wrong_association') is None for l in lines)
+    assert any(l.get('stop') == 1 for l in lines)
 
 
 class _Poster:
     """A tiny fake screen for sim/postseason tests: every look() hands the png the next screen name from a list
     (the last one repeats), and _diff/notice read it back. A fake clock keeps the sleep calls harmless."""
-    def __init__(self, screens):
+    def __init__(self, screens, faces=None):
         self.screens = list(screens)
-        self.faces = {}             # png path: the screen it currently shows
+        self.faces = faces if faces is not None else {}
+        # every png the test names gets an explicit face up front (one that matches no reference):
+        # an unnamed look then reads its name and shows a deterministic 'other' screen, not None.
+        for png in ('_poll.png', '_poll_prev.png'):
+            if png not in self.faces:
+                self.faces[png] = 'unreferenced-%s' % png
 
     def next(self):
-        return self.screens.pop(0) if self.screens else (self.faces and list(self.faces.values())[-1])
+        if self.screens:
+            return self.screens.pop(0)
+        face = self.faces.get('_poll.png')
+        if face is None and self.faces:
+            face = list(self.faces.values())[-1]
+        return face
 
 
 def _stub_screen(monkeypatch, mock):
@@ -174,7 +196,7 @@ def test_sim_refused_off_the_schedule_with_zero_clicks(tmp_path, monkeypatch, ca
     assert seasonloop.sim(h, str(tmp_path)) is False
     assert h.clicks == [] and h.keys == []
     assert (tmp_path / 'sim_refused.png').exists()
-    assert '{"sim": "refused"}' in capsys.readouterr().out
+    assert {'sim': 'refused'} in _lines(capsys.readouterr().out)
 
 
 def test_sim_from_assn_data_presses_ctrl_k_then_clicks(tmp_path, monkeypatch):
@@ -199,7 +221,7 @@ def test_postseason_busy_screen_never_sims_then_complete(tmp_path, monkeypatch, 
     h = _H(tmp_path)
     assert seasonloop.postseason(h, str(tmp_path), ENDLESS) is True
     assert h.clicks == [] and h.keys == []
-    assert '{"postseason": "complete"' in capsys.readouterr().out
+    assert {'postseason': 'complete', 'sims': 0} in _lines(capsys.readouterr().out)
 
 
 def test_postseason_champion_screen_sends_return_never_sims(tmp_path, monkeypatch, capsys):
@@ -208,8 +230,9 @@ def test_postseason_champion_screen_sends_return_never_sims(tmp_path, monkeypatc
     h = _H(tmp_path)
     assert seasonloop.postseason(h, str(tmp_path), ENDLESS) is True
     assert h.keys == [('key', 'Return')] and h.clicks == []
-    out = capsys.readouterr().out
-    assert '{"postseason": "champion"}' in out and '"postseason": "sim"' not in out
+    lines = _lines(capsys.readouterr().out)
+    assert {'postseason': 'champion'} in lines
+    assert all(l.get('postseason') != 'sim' for l in lines)
 
 
 def test_postseason_champion_screen_gets_one_retry_after_champ_held_looks(tmp_path, monkeypatch, capsys):
@@ -217,8 +240,9 @@ def test_postseason_champion_screen_gets_one_retry_after_champ_held_looks(tmp_pa
     h = _H(tmp_path)
     assert seasonloop.postseason(h, str(tmp_path), ENDLESS) is True
     assert h.keys == [('key', 'Return')] * 2 and h.clicks == []
-    out = capsys.readouterr().out
-    assert '{"postseason": "champion_retry", "n": 1}' in out and '"postseason": "sim"' not in out
+    lines = _lines(capsys.readouterr().out)
+    assert {'postseason': 'champion_retry', 'n': 1} in lines
+    assert all(l.get('postseason') != 'sim' for l in lines)
 
 
 def test_postseason_champion_screen_retries_at_most_three_times(tmp_path, monkeypatch, capsys):
@@ -226,10 +250,11 @@ def test_postseason_champion_screen_retries_at_most_three_times(tmp_path, monkey
     h = _H(tmp_path)
     assert seasonloop.postseason(h, str(tmp_path), ENDLESS) is True
     assert h.keys == [('key', 'Return')] * 4 and h.clicks == []      # 1 + 3 retries, never more
-    out = capsys.readouterr().out
-    assert out.count('"champion_retry"') == 3
-    assert '{"postseason": "champion_retry", "n": 3}' in out and '"n": 4' not in out
-    assert '"postseason": "sim"' not in out
+    lines = _lines(capsys.readouterr().out)
+    assert sum(1 for l in lines if l.get('postseason') == 'champion_retry') == 3
+    assert {'postseason': 'champion_retry', 'n': 3} in lines
+    assert all(l.get('n') != 4 for l in lines)
+    assert all(l.get('postseason') != 'sim' for l in lines)
 
 
 def test_postseason_a_busy_look_resets_the_champion_retry_count(tmp_path, monkeypatch, capsys):
@@ -239,8 +264,9 @@ def test_postseason_a_busy_look_resets_the_champion_retry_count(tmp_path, monkey
     h = _H(tmp_path)
     assert seasonloop.postseason(h, str(tmp_path), ENDLESS) is True
     assert h.keys == [('key', 'Return')] and h.clicks == []
-    out = capsys.readouterr().out
-    assert '"champion_retry"' not in out and '"postseason": "sim"' not in out
+    lines = _lines(capsys.readouterr().out)
+    assert all(l.get('postseason') != 'champion_retry' for l in lines)
+    assert all(l.get('postseason') != 'sim' for l in lines)
 
 
 def test_postseason_wrong_association_stops_before_any_input(tmp_path, monkeypatch, capsys):
@@ -253,9 +279,9 @@ def test_postseason_wrong_association_stops_before_any_input(tmp_path, monkeypat
         return {} if len(calls) == 1 else {'OTHER.ASN': 1}      # changes after the entry snapshot
     monkeypatch.setattr(seasonloop, '_other_mtimes', mtimes)
     assert seasonloop.postseason(h, str(tmp_path), ENDLESS, asn='X.ASN') is False
-    out = capsys.readouterr().out
-    assert '{"postseason": "wrong_association"}' in out
-    assert '"postseason": "sim"' not in out
+    lines = _lines(capsys.readouterr().out)
+    assert {'postseason': 'wrong_association'} in lines
+    assert all(l.get('postseason') != 'sim' for l in lines)
     assert h.keys == [] and h.clicks == []
 
 
@@ -267,7 +293,7 @@ def test_postseason_stale_update_box_gets_one_return(tmp_path, monkeypatch, caps
     h = _H(tmp_path)
     assert seasonloop.postseason(h, str(tmp_path), ENDLESS, asn=str(asn)) is True
     assert h.keys == [('key', 'Return')] and h.clicks == []
-    assert '{"postseason": "stale_update_box"}' in capsys.readouterr().out
+    assert {'postseason': 'stale_update_box'} in _lines(capsys.readouterr().out)
     assert (tmp_path / 'stale_post.png').exists()
 
 
@@ -285,7 +311,7 @@ def test_postseason_busy_box_with_the_asn_still_written_is_left_alone(tmp_path, 
     h = _H(tmp_path)
     assert seasonloop.postseason(h, str(tmp_path), ENDLESS, asn=str(asn)) is True
     assert h.keys == [] and h.clicks == []
-    assert 'stale_update_box' not in capsys.readouterr().out
+    assert all(l.get('postseason') != 'stale_update_box' for l in _lines(capsys.readouterr().out))
 
 
 def test_postseason_after_the_champion_a_still_screen_stops_without_a_sim(tmp_path, monkeypatch, capsys):
@@ -295,7 +321,9 @@ def test_postseason_after_the_champion_a_still_screen_stops_without_a_sim(tmp_pa
     assert seasonloop.postseason(h, str(tmp_path), ENDLESS) is False
     assert h.keys == [('key', 'Return')] and h.clicks == []
     out = capsys.readouterr().out
-    assert '"postseason": "champion_idle"' in out and '"postseason": "sim"' not in out
+    lines = _lines(out)
+    assert any(l.get('postseason') == 'champion_idle' for l in lines)
+    assert all(l.get('postseason') != 'sim' for l in lines)
     assert (tmp_path / 'post_champ_idle.png').exists()
 
 
@@ -345,7 +373,9 @@ def test_postseason_after_the_champion_reopens_the_association_and_returns_on_it
     assert h.keys == [('key', 'Return'), ('key', 'ctrl+l')]
     assert h.clicks == [(575, seasonloop.LIST_Y + seasonloop.LIST_DY), (735, 538)]
     out = capsys.readouterr().out
-    assert '"reopened": true' in out and '"postseason": "sim"' not in out
+    lines = _lines(out)
+    assert any(l.get('reopened') is True for l in lines)
+    assert all(l.get('postseason') != 'sim' for l in lines)
 
 
 def test_postseason_reopen_without_the_notice_stops_with_champion_idle(tmp_path, monkeypatch, capsys):
@@ -354,7 +384,7 @@ def test_postseason_reopen_without_the_notice_stops_with_champion_idle(tmp_path,
     _reopen_screen(monkeypatch, h, 'assn')
     assert seasonloop.postseason(h, str(tmp_path), ENDLESS, asn=str(assn / '30L2025.ASN')) is False
     assert h.keys == [('key', 'Return'), ('key', 'ctrl+l')] and len(h.clicks) == 2
-    assert '"postseason": "champion_idle"' in capsys.readouterr().out
+    assert any(l.get('postseason') == 'champion_idle' for l in _lines(capsys.readouterr().out))
     assert (tmp_path / 'post_reopen.png').exists()
 
 
@@ -366,4 +396,68 @@ def test_postseason_reopen_sends_nothing_for_a_row_past_the_list(tmp_path, monke
     _reopen_screen(monkeypatch, h, 'complete')
     assert seasonloop.postseason(h, str(tmp_path), ENDLESS, asn=str(assn / 'ZZ.ASN')) is False
     assert h.keys == [('key', 'Return')] and h.clicks == []
-    assert '"postseason": "champion_idle"' in capsys.readouterr().out
+    assert any(l.get('postseason') == 'champion_idle' for l in _lines(capsys.readouterr().out))
+
+
+def test_every_line_has_a_t_timestamp(tmp_path, monkeypatch, capsys):
+    mock = _stub_screen(monkeypatch, _Poster(['champ', 'champ', 'champ', 'complete']))
+    h = _H(tmp_path)
+    assert seasonloop.postseason(h, str(tmp_path), ENDLESS) is True
+    out = capsys.readouterr().out
+    assert out.strip()
+    lines = out.splitlines()
+    for line in lines:
+        obj = json.loads(line)
+        keys = list(obj)
+        assert keys[-1] == 't'
+        assert re.fullmatch(r'\d\d:\d\d:\d\d', obj['t'])
+
+
+def _offseason_screen(monkeypatch, h):
+    """A spring notice, then Association Data once spring has run (the return path of offseason())."""
+    mock = _Poster(['spring', 'assn', 'assn', 'assn'], faces={})
+
+    def look(h_, png):
+        mock.faces[png] = mock.next()
+        Image.new('L', (4, 4)).save(png)
+    monkeypatch.setattr(seasonloop, 'look', look)
+    monkeypatch.setattr(seasonloop, '_same', lambda a, b: mock.faces.get(a) == mock.faces.get(b))
+    monkeypatch.setattr(seasonloop, '_diff',
+                        lambda png, ref, box: 0.0 if mock.faces.get(png) == _REF_SCREEN.get(ref) else 100.0)
+
+    def notice(png):
+        face = mock.faces.get(png)
+        return face if face in ('complete', 'spring') else None
+    monkeypatch.setattr(seasonloop, 'notice', notice)
+    monkeypatch.setattr(seasonloop, 'settle', lambda *a, **k: None)
+    monkeypatch.setattr(seasonloop.time, 'sleep', lambda s: None)
+    return mock
+
+
+@pytest.fixture
+def _fake_time(monkeypatch):
+    """seasonloop.time.time advanced 300 s per call: with PROGRESS 600, every second pass prints a waiting line."""
+    tick = [0]
+    def clock():
+        tick[0] += 300
+        return tick[0]
+    monkeypatch.setattr(seasonloop.time, 'time', clock)
+    return tick
+
+
+def test_postseason_a_long_busy_wait_prints_a_waiting_line(tmp_path, monkeypatch, capsys, _fake_time):
+    _stub_screen(monkeypatch, _Poster(['busy'] * (seasonloop.POST_HELD + 4) + ['complete']))
+    h = _H(tmp_path)
+    assert seasonloop.postseason(h, str(tmp_path), ENDLESS) is True
+    lines = _lines(capsys.readouterr().out)
+    waiting = [l for l in lines if l.get('postseason') == 'waiting']
+    assert waiting and waiting[0]['screen'] == 'busy'
+
+
+def test_offseason_a_long_wait_prints_a_waiting_line(tmp_path, monkeypatch, capsys, _fake_time):
+    h = _H(tmp_path)
+    _offseason_screen(monkeypatch, h)
+    assert seasonloop.offseason(h, str(tmp_path), 10 ** 6) is True
+    lines = _lines(capsys.readouterr().out)
+    waiting = [l for l in lines if l.get('offseason') == 'waiting']
+    assert waiting and waiting[-1].get('notice') is None and waiting[-1].get('sprung') is True

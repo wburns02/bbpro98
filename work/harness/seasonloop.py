@@ -34,6 +34,11 @@ from PIL import Image, ImageChops, ImageStat
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'news'))
 import gamedata  # noqa: E402
 
+def say(**fields):
+    """One run.log line: the fields JSON-encoded with 't' (the clock time) as the last key."""
+    print(json.dumps(dict(fields, t=time.strftime('%H:%M:%S'))), flush=True)
+
+
 REFS = '/mnt/nvme/bbpro98/harness_refs'      # game screenshots (Sierra's art), kept out of the repo
 DRAFT_BOX = (465, 465, 815, 535)              # (left, top, right, bottom) of the draft notice body
 TITLE_BOX = (335, 295, 420, 322)              # 'Associat' of the title bar; the rest is the association's name
@@ -169,7 +174,7 @@ def sim(h, shots):
         look(h, png)
     if not on_sched(png):
         shutil.copyfile(png, f'{shots}/sim_refused.png')
-        print(json.dumps({'sim': 'refused'}), flush=True)
+        say(**{'sim': 'refused'})
         return False
     h.click(595, 330); time.sleep(2)      # Action
     h.click(615, 346); time.sleep(4)      # Simulate...
@@ -194,11 +199,11 @@ def season(h, shots, stem, limit):
     while time.time() < t_end:
         n, total = played(asn)
         if total and n == total:
-            print(json.dumps({'season': stem, 'done': True, 'played': n, 'rounds': rnd, 'stops': stops}), flush=True)
+            say(season=stem, done=True, played=n, rounds=rnd, stops=stops)
             return True
         if rnd == 1 and n == start and _other_mtimes(asn) != others:
             # A wrong row in the association list opens another league, and the sim plays that one instead.
-            print(json.dumps({'season': stem, 'done': False, 'wrong_association': True}), flush=True)
+            say(season=stem, done=False, wrong_association=True)
             return False
         rnd += 1
         if not sim(h, shots):                 # refused off the schedule: treat the round as a stop
@@ -211,7 +216,7 @@ def season(h, shots, stem, limit):
                 if cur is not None and cur != last:
                     last, quiet_since = cur, time.time()
                 if time.time() - shown >= PROGRESS:
-                    print(json.dumps({'round': rnd, 'progress': last, 'of': total}), flush=True)
+                    say(round=rnd, progress=last, of=total)
                     shown = time.time()
             cur, total = played(asn)
         if total and cur == total:            # season over: the loop top reports it; nothing on screen to answer
@@ -221,7 +226,7 @@ def season(h, shots, stem, limit):
         look(h, png)
         if _diff(png, 'f_draft.png', DRAFT_BOX) < 15.0:
             ok = run_draft(h, shots)
-            print(json.dumps({'round': rnd, 'played': last, 'draft': ok}), flush=True)
+            say(round=rnd, played=last, draft=ok)
             if not ok:
                 look(h, f'{shots}/stuck_draft.png')
                 return False
@@ -230,17 +235,17 @@ def season(h, shots, stem, limit):
         if total and cur == total:
             continue
         if on_assn_data(png):                 # the sim ended back on Association Data: return to the schedule
-            print(json.dumps({'round': rnd, 'played': cur, 'assn_data': True}), flush=True)
+            say(round=rnd, played=cur, assn_data=True)
             h.x('key', 'ctrl+k'); time.sleep(6)
             if cur != n:
                 continue
         stops += 1
         look(h, f'{shots}/stop_{stops}.png')
-        print(json.dumps({'round': rnd, 'played': last, 'of': total, 'stop': stops}), flush=True)
+        say(round=rnd, played=last, of=total, stop=stops)
         if stops > MAX_STOPS:
             return False
         h.x('key', 'Return'); time.sleep(4)
-    print(json.dumps({'season': stem, 'done': False, 'timeout': True}), flush=True)
+    say(season=stem, done=False, timeout=True)
     return False
 
 
@@ -287,14 +292,15 @@ def postseason(h, shots, t_end, max_sims=8, asn=None):
     if asn is not None:
         others = _other_mtimes(asn)
     held, sims, champ, stale, stamp, champ_held, n = 0, 0, False, 0, None, 0, 0
+    shown = time.time()
     while time.time() < t_end:
         if notice(a) == 'complete':
-            print(json.dumps({'postseason': 'complete', 'sims': sims}), flush=True)
+            say(postseason='complete', sims=sims)
             return True
         time.sleep(20)
         look(h, b)
         if asn is not None and _other_mtimes(asn) != others:
-            print(json.dumps({'postseason': 'wrong_association'}), flush=True)
+            say(postseason='wrong_association')
             return False
         held = held + 1 if _same(a, b) else 0
         os.replace(b, a)
@@ -302,21 +308,25 @@ def postseason(h, shots, t_end, max_sims=8, asn=None):
             # Under Wine the update box can stay painted over the idle schedule after the update ends (2025 run,
             # October 6: an hour with no input). An update writes the ASN within seconds, so a box that holds still
             # BUSY_STILL looks with the ASN unchanged is a stale paint; Return repaints it, as in season()'s stops.
+            if time.time() - shown >= PROGRESS:
+                say(postseason='waiting', screen='busy', held=held, stale=stale, sims=sims)
+                shown = time.time()
             now = os.stat(asn).st_mtime_ns if asn is not None and os.path.exists(asn) else None
             stale = stale + 1 if held and now == stamp else 0
             stamp, held = now, 0
             if stale >= BUSY_STILL:
                 shutil.copyfile(a, f'{shots}/stale_post.png')
-                print(json.dumps({'postseason': 'stale_update_box'}), flush=True)
+                say(postseason='stale_update_box')
                 h.x('key', 'Return'); time.sleep(4)
                 stale = 0
                 look(h, a)
+                shown = time.time()
             champ_held = 0
             continue
         stale = 0
         if on_champ(a) and not champ:
             champ = True
-            print(json.dumps({'postseason': 'champion'}), flush=True)
+            say(postseason='champion')
             shutil.copyfile(a, f'{shots}/champion.png')
             h.x('key', 'Return'); time.sleep(4)
             held = 0
@@ -333,7 +343,7 @@ def postseason(h, shots, t_end, max_sims=8, asn=None):
                 # Return, at most 3 times; after that keep waiting as before.
                 n += 1
                 h.x('key', 'Return'); time.sleep(4)
-                print(json.dumps({'postseason': 'champion_retry', 'n': n}), flush=True)
+                say(postseason='champion_retry', n=n)
                 champ_held = 0
             continue
         champ_held = 0
@@ -348,10 +358,10 @@ def postseason(h, shots, t_end, max_sims=8, asn=None):
             if asn is not None and reopen(h, os.path.splitext(os.path.basename(asn))[0]):
                 look(h, a)
                 if notice(a) == 'complete':
-                    print(json.dumps({'postseason': 'complete', 'sims': sims, 'reopened': True}), flush=True)
+                    say(postseason='complete', sims=sims, reopened=True)
                     return True
                 shutil.copyfile(a, f'{shots}/post_reopen.png')
-            print(json.dumps({'postseason': 'champion_idle', 'sims': sims}), flush=True)
+            say(postseason='champion_idle', sims=sims)
             return False
         if sims >= max_sims:
             break
@@ -361,12 +371,13 @@ def postseason(h, shots, t_end, max_sims=8, asn=None):
         elif _diff(a, 'f_sched.png', SCHED_BOX) >= 20.0:
             shutil.copyfile(a, f'{shots}/post_stop_{sims}.png')
             h.x('key', 'Return'); time.sleep(4)
-        print(json.dumps({'postseason': 'sim', 'n': sims}), flush=True)
+        say(postseason='sim', n=sims)
         sim(h, shots)
         held = 0
         look(h, a)
+        shown = time.time()
     look(h, f'{shots}/stuck_post.png')
-    print(json.dumps({'postseason': 'stuck', 'sims': sims}), flush=True)
+    say(postseason='stuck', sims=sims)
     return False
 
 
@@ -374,12 +385,16 @@ def offseason(h, shots, t_end):
     """From the season-complete notice to opening day: Start New Season, the free agent draft, spring training. True
     once spring training has run and Association Data shows no notice."""
     sprung, stray = False, 0
+    shown = time.time()
     png, prev = f'{shots}/_poll.png', f'{shots}/_poll_prev.png'
     while time.time() < t_end:
         if os.path.exists(png):
             os.replace(png, prev)
         look(h, png)
         kind = notice(png)
+        if time.time() - shown >= PROGRESS:
+            say(offseason='waiting', notice=kind, sprung=sprung, stray=stray)
+            shown = time.time()
         if kind == 'complete':
             h.click(643, 556); time.sleep(2)
             assoc_item(h, 456); time.sleep(10)          # Start New Season
@@ -409,7 +424,7 @@ def offseason(h, shots, t_end):
             if _diff(png, 'f_assn.png', TITLE_BOX) >= 20.0 and _diff(png, 'f_sched.png', SCHED_BOX) >= 20.0:
                 h.x('key', 'Return')
             time.sleep(10)
-        print(json.dumps({'offseason': kind, 'sprung': sprung}), flush=True)
+        say(offseason=kind, sprung=sprung)
     look(h, f'{shots}/stuck_offseason.png')
     return False
 
@@ -463,7 +478,7 @@ def seasons(h, shots, stem, n, limit, year):
     """Play n seasons with an offseason before each and after the last, measuring the league after every offseason.
     True when every season played all its games and every offseason reached opening day."""
     assn = os.path.join(h.WORK, 'Assn')
-    print(json.dumps({'demographics': 'loaded', **demographics(assn, stem, year - 1)}), flush=True)
+    say(**{'demographics': 'loaded', **demographics(assn, stem, year - 1)})
     t_end = time.time() + (n + 1) * limit
     png = f'{shots}/_poll.png'
     look(h, png)
@@ -478,7 +493,7 @@ def seasons(h, shots, stem, n, limit, year):
             return False
         h.x('key', 'ctrl+s'); time.sleep(8)
         _snap(h, assn, stem, f'{shots}/roll_{k}')
-        print(json.dumps({'demographics': k, **demographics(assn, stem, year + k)}), flush=True)
+        say(**{'demographics': k, **demographics(assn, stem, year + k)})
         if k == n:
             return True
         h.x('key', 'ctrl+k'); time.sleep(6)
