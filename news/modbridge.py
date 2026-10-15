@@ -1275,6 +1275,8 @@ def _card_image(ctx, fonts, stem, pid, tab, page):
 # after aigm.validate passes, with a copy of it first. Everything here runs under _GM_LOCK.
 GM_FILE = 'gm.json'
 OPEN_TEXT = '%s is open in the game. Go back to the main menu, then try again.'
+BAD_LEDGER_TEXT = ('The trade record (%s/gm.json in the news data folder) cannot be read, so trades may already have '
+                   'run this season. Move that file aside to run them again.')
 _GM_LOCK = threading.Lock()
 
 
@@ -1309,6 +1311,18 @@ def _ledger_for(ctx, stem, year):
 _GM_INTS = ('a', 'b', 'a_gives', 'b_gives')
 _GM_NAMES = ('a_name', 'b_name', 'a_gives_name', 'b_gives_name')
 _GM_STATUS = ('open', 'accepted', 'rejected', 'stale')
+
+
+def _ledger_blocks_run(ctx, stem, year):
+    """True when a gm.json is there that _ledger_for cannot use and that is not plainly another season's: unreadable,
+    torn, hand-edited or of another kind. Trades may already have run from it, so a run must not plan them again over
+    an ASN that already holds them. A readable ledger of another season is the normal case and may be replaced."""
+    path = os.path.join(ctx.data, stem, GM_FILE)
+    if not os.path.lexists(path):
+        return False
+    led = watch.read_json(path)
+    return not (led is not None and led.get('kind') == 'gm' and type(led.get('season_year')) is int
+                and led['season_year'] != year)
 
 
 def _entry_ok(e, proposal=False):
@@ -1415,6 +1429,8 @@ def _gm_run(ctx, stem):
             return _gm_reply(ctx, lg, 409, 'The season has started.')
         if _ledger_for(ctx, lg.stem, lg.year) is not None:
             return _gm_reply(ctx, lg, 409, 'Trades already ran this season.')
+        if _ledger_blocks_run(ctx, lg.stem, lg.year):
+            return _gm_reply(ctx, lg, 409, BAD_LEDGER_TEXT % lg.stem)
         if _held(ctx, lg):
             return _gm_reply(ctx, lg, 409, OPEN_TEXT % lg.label)
         old = _read_bytes(lg.asn)

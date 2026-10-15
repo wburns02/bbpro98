@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import aigm        # noqa: E402
 import create      # noqa: E402
 import gamedata    # noqa: E402
+import modbridge   # noqa: E402
 from tests.test_modbridge import NAMES, ask, bridge, serve_pages, site   # noqa: E402,F401
 
 GM = '/news/gm/TEST77'
@@ -337,3 +338,22 @@ def test_ledger_entry_shapes_are_checked():
     assert not modbridge._entry_ok(dict(good, b_drops=1.5))
     assert not modbridge._entry_ok({k: v for k, v in good.items() if k != 'a_name'})
     assert not modbridge._entry_ok([good])
+
+
+@pytest.mark.parametrize('text', ['{"kind": "gm", "season_year": 1977, "trades": [{"a": 1}], "proposals": []}',
+                                  '{"kind": "gm", "season_year": 1977, "tr', '[1, 2]', '{"kind": "other"}',
+                                  '{"kind": "gm", "season_year": "1976"}', ''])
+def test_an_unusable_ledger_refuses_the_run_and_writes_nothing(gm, text):
+    ledger_file(gm).parent.mkdir(parents=True, exist_ok=True)
+    ledger_file(gm).write_text(text)
+    head, body = page(gm.ctx, gm.spool, GM + '/run')
+    assert head['http'] == '409'
+    assert body.split('\n')[0] == modbridge.BAD_LEDGER_TEXT % 'TEST77'
+    assert_nothing_written(gm)
+    assert ledger_file(gm).read_text() == text
+
+
+def test_a_readable_older_seasons_ledger_still_lets_the_run_go(gm):
+    write_ledger(gm, season=1976, trades=[], proposals=[])
+    head, _ = page(gm.ctx, gm.spool, GM + '/run')
+    assert head['http'] == '200' and ledger_of(gm)['season_year'] == 1977
