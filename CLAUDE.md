@@ -39,7 +39,14 @@ Public repo (MIT) of tools and research for FPS Baseball Pro '98. Python codecs 
   pointer before every screenshot (seasonloop.look) and judge the season by games played, not by the screen.
   The stale box also sits over the idle postseason schedule; postseason() answers it with Return after BUSY_STILL.
 - Never attach winedbg to a lane's running game to see where it waits: under wow64 the attach thread faults, the
-  crash handler takes the process, and the run is lost. Judge a stall by CPU ticks, Assn mtimes and bbtrace.
+  crash handler takes the process, and the run is lost. Judge a stall by CPU ticks, Assn mtimes and bbtrace:
+  `python3 work/harness/lanestat.py --lane 2 --no-shot` prints all three and a verdict, read only.
+- bbtrace.log rotates to bbtrace.1.log (one old file kept) once it passes bbfix.ini `[trace] max_mb` (default 64,
+  0 = never). Anything that reads a whole run's trace (MOD counts, CRASH greps, collected logs) reads bbtrace.1.log
+  then bbtrace.log, or sets max_mb=0 for its run (re/hookab.sh does).
+- After the champion screen ('... capture the World Series') the game never offers the sim again and may sit on a
+  still screen with no notice. Reopening the association (ctrl+l, its row, Open) shows the season-complete notice
+  that starts the offseason (seasonloop.reopen); never sim or click around to wake it.
 - An in-game season step (seasonloop.season, a plan step that sims) must open the League Schedule (ctrl+k from
   Association Data) before Action > Simulate...; from Association Data that click opens Reset Teams instead and the
   run sims nothing. A full season takes 60 to 90 minutes: never run it through `capped` (its 1800 s timeout kills the sim
