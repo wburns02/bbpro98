@@ -6,8 +6,6 @@ import shutil
 import subprocess
 from pathlib import Path
 
-import pytest
-
 REPO = Path(__file__).resolve().parents[2]
 DEPLOY = REPO / 'hosting' / 'deploy.sh'
 
@@ -84,11 +82,8 @@ def test_work_walk_not_vacuous(tmp_path):
 
 
 def test_news_data_files_shipped():
-    try:
-        tracked = subprocess.run(['git', 'ls-files', 'news'], cwd=REPO, check=True,
-                                 capture_output=True, text=True).stdout.splitlines()
-    except (FileNotFoundError, subprocess.CalledProcessError) as exc:
-        pytest.skip('git ls-files unavailable: %s' % exc)
+    tracked = subprocess.run(['git', 'ls-files', 'news'], cwd=REPO, check=True,
+                             capture_output=True, text=True).stdout.splitlines()
     names = []
     for rel in tracked:
         base = Path(rel).name
