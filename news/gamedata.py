@@ -19,7 +19,7 @@ P_BORN = 0x1a           # u32 birth serial: the date is datetime.date.fromordina
 P_BATS = 0x41           # 1 L, 2 R, 3 S (BATS)
 P_THROWS = 0x42         # 1 L, 2 R (THROWS)
 P_POS = 0x44            # 1..9: the position in POSITIONS
-P_SEASONS = 0x40        # service seasons: how long the league has seen the player (news/fog.py)
+P_SEASONS = 0x40        # service seasons, s8: negated when the player retires (news/fog.py reads the magnitude)
 P_CUR = 0x5d            # the current ratings block, bytes 0..99
 P_STRIKEOUT = 0x76
 P_PEAK = 0x46           # the peak ratings block, the same 23 entries as the current block (P_CUR) 0x17 bytes earlier
@@ -97,7 +97,8 @@ def _born(serial):
 def players(pyr_path):
     """{player id: {'name', 'pos', 'bats', 'throws', 'born', 'contact', 'power', 'speed', 'stamina', 'control',
     'strikeout', 'fielding', 'seasons'}} from a PYR file. 'born' is the birth year or None; 'fielding' is the rating at
-    the player's own position or None; 'seasons' is the service count (byte 0x40)."""
+    the player's own position or None; 'seasons' is the service count (byte 0x40, a signed byte
+    the game negates at retirement; the magnitude is kept)."""
     out = {}
     for p in _records(pyr_path):
         pid = p[0] | p[1] << 8
@@ -111,7 +112,8 @@ def players(pyr_path):
             'throws': THROWS.get(p[P_THROWS], ''), 'born': _born(struct.unpack_from('<I', p, P_BORN)[0]),
             'contact': p[P_CUR + R_CONTACT], 'power': p[P_CUR + R_POWER], 'speed': p[P_CUR + R_SPEED],
             'stamina': p[P_CUR + R_STAMINA], 'control': p[P_CUR + R_CONTROL], 'strikeout': p[P_STRIKEOUT],
-            'fielding': p[P_CUR + R_FIELD + pos - 1] if known else None, 'seasons': p[P_SEASONS],
+            'fielding': p[P_CUR + R_FIELD + pos - 1] if known else None,
+            'seasons': abs(struct.unpack_from('<b', p, P_SEASONS)[0]),
         }
     return out
 
