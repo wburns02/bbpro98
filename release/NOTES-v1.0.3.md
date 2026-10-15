@@ -84,6 +84,9 @@ its text; they do not replace it.
 - patch_ext.py refuses a BBShell.dll too short to hold its code cave instead of writing past the end.
 - work/patch_widen.py is retired (it now refuses to run): it wrote the live install directly and its offsets patch
   the Hall of Fame screen. bbfix [widen] does the widening.
+- The pitchtrace and simtrace research mods close their trace file when a hook fails to install, so the hooks already
+  in place stop recording; simtrace.c builds on its own. The player card's stats reader ignores a stat block the file
+  does not have instead of matching a record with an unset member.
 
 ## Known limits
 
