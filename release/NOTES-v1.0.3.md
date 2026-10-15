@@ -40,6 +40,10 @@ its text; they do not replace it.
   standings.
 - Once the World Series is over, the postseason page leads with a written wrap of the whole postseason (the model
   when one is set up, else the template).
+- Roster moves are logged once even when a watcher pass stops partway (a note file that could not be written); the
+  missing move notes are written on a later pass.
+- The watcher keeps watching when one pass fails (the error is logged), and a day page's previous and next links
+  skip days whose file cannot be read.
 
 ## For people running the source
 
@@ -54,6 +58,9 @@ its text; they do not replace it.
   age, champions, seasons, verdict counts and stops (`--json` for the raw summary). It also counts the offseason
   steps and the sim outcomes (refused, draft ok, draft failed).
 - Developer scripts (hookab, simdays, sort_test, play_logged) were hardened.
+- Hosting: the PIN gate exempts a browser that signed in before (a signed device cookie, bound to the PIN) from the
+  sitewide wrong-PIN limit, so guessing from many addresses cannot lock the owner out, and signing out revokes the
+  sign-in so a copied cookie stops working. deploy.sh stops when a copy fails instead of reporting nothing changed.
 
 ## Known limits
 
