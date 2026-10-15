@@ -226,3 +226,32 @@ def test_postseason_wrong_association_stops_before_any_input(tmp_path, monkeypat
     assert '{"postseason": "wrong_association"}' in out
     assert '"postseason": "sim"' not in out
     assert h.keys == [] and h.clicks == []
+
+
+def test_postseason_stale_update_box_gets_one_return(tmp_path, monkeypatch, capsys):
+    # the box holds still BUSY_STILL looks with the ASN unchanged: a stale paint, answered once with Return
+    mock = _stub_screen(monkeypatch, _Poster(['busy'] * (seasonloop.BUSY_STILL + 2) + ['complete']))
+    asn = tmp_path / 'X.ASN'
+    asn.write_bytes(b'x')
+    h = _H(tmp_path)
+    assert seasonloop.postseason(h, str(tmp_path), ENDLESS, asn=str(asn)) is True
+    assert h.keys == [('key', 'Return')] and h.clicks == []
+    assert '{"postseason": "stale_update_box"}' in capsys.readouterr().out
+    assert (tmp_path / 'stale_post.png').exists()
+
+
+def test_postseason_busy_box_with_the_asn_still_written_is_left_alone(tmp_path, monkeypatch, capsys):
+    mock = _stub_screen(monkeypatch, _Poster(['busy'] * (seasonloop.BUSY_STILL * 2) + ['complete']))
+    asn = tmp_path / 'X.ASN'
+    asn.write_bytes(b'x')
+    look = seasonloop.look
+
+    def writing(h, png):            # the game is really updating: the ASN changes between looks
+        st = os.stat(asn)
+        os.utime(asn, ns=(st.st_atime_ns, st.st_mtime_ns + 1000))
+        look(h, png)
+    monkeypatch.setattr(seasonloop, 'look', writing)
+    h = _H(tmp_path)
+    assert seasonloop.postseason(h, str(tmp_path), ENDLESS, asn=str(asn)) is True
+    assert h.keys == [] and h.clicks == []
+    assert 'stale_update_box' not in capsys.readouterr().out

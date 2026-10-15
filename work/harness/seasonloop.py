@@ -47,6 +47,7 @@ NOTICES = {'complete': 'f_complete.png', 'fa': 'f_fa.png', 'spring': 'f_spring.p
 SCHED_BOX = (335, 295, 470, 322)              # 'League Sch' of the schedule's title bar (f_sched.png)
 CHAMP_BOX = (330, 470, 950, 750)              # body of the World Series champions photo (f_champ.png)
 POST_HELD = 6                                 # still looks 20 s apart that bring the postseason wait to reopen the sim
+BUSY_STILL = 12                               # still busy looks (4 min, the ASN unchanged) that mark the update box stale
 
 
 def _diff(png, ref, box):
@@ -243,7 +244,8 @@ def season(h, shots, stem, limit):
 
 def postseason(h, shots, t_end, max_sims=8, asn=None):
     """After the last regular-season game: wait for the season-complete notice while the playoffs play, reopening the
-    sim only after POST_HELD unchanged looks. A busy look ('Updating association data') is progress and never sims;
+    sim only after POST_HELD unchanged looks. A busy look ('Updating association data') is progress and never sims,
+    unless it holds still BUSY_STILL looks (a stale paint over the idle game: one Return);
     a champion look ('Led by Coach ..., the ... capture the World Series') is answered with Return and never sims;
     a refused sim counts as one of max_sims. When asn is given, any other association file changing stops it with
     wrong_association and no more input."""
@@ -251,7 +253,7 @@ def postseason(h, shots, t_end, max_sims=8, asn=None):
     look(h, a)
     if asn is not None:
         others = _other_mtimes(asn)
-    held, sims, champ = 0, 0, False
+    held, sims, champ, stale, stamp = 0, 0, False, 0, None
     while time.time() < t_end:
         if notice(a) == 'complete':
             print(json.dumps({'postseason': 'complete', 'sims': sims}), flush=True)
@@ -264,8 +266,20 @@ def postseason(h, shots, t_end, max_sims=8, asn=None):
         held = held + 1 if _same(a, b) else 0
         os.replace(b, a)
         if busy(a):
-            held = 0
+            # Under Wine the update box can stay painted over the idle schedule after the update ends (2025 run,
+            # October 6: an hour with no input). An update writes the ASN within seconds, so a box that holds still
+            # BUSY_STILL looks with the ASN unchanged is a stale paint; Return repaints it, as in season()'s stops.
+            now = os.stat(asn).st_mtime_ns if asn is not None and os.path.exists(asn) else None
+            stale = stale + 1 if held and now == stamp else 0
+            stamp, held = now, 0
+            if stale >= BUSY_STILL:
+                shutil.copyfile(a, f'{shots}/stale_post.png')
+                print(json.dumps({'postseason': 'stale_update_box'}), flush=True)
+                h.x('key', 'Return'); time.sleep(4)
+                stale = 0
+                look(h, a)
             continue
+        stale = 0
         if on_champ(a) and not champ:
             champ = True
             print(json.dumps({'postseason': 'champion'}), flush=True)
