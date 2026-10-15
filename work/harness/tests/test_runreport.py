@@ -117,6 +117,22 @@ def test_render_damaged_rows_dashes():
     assert 'no champion yet' in r
 
 
+def test_step_after_a_damaged_row_is_none():
+    s = runreport.summary(runreport.parse('\n'.join([
+        '{"demographics": 0, "mean_age": 28.0, "t": "00:00:01"}',
+        '{"demographics": 1, "mean_age": "x", "t": "00:00:02"}',
+        '{"demographics": 2, "mean_age": 28.5, "t": "00:00:03"}',
+        '{"demographics": 3, "mean_age": 28.75, "t": "00:00:04"}',
+    ])))
+    assert [r['step'] for r in s['demographics']] == [None, None, None, 0.25]
+
+
+def test_champion_error_row_renders_the_error():
+    s = runreport.summary(runreport.parse(
+        '{"season": null, "champion": null, "error": "torn", "at": 1, "t": "00:00:01"}'))
+    assert 'error: torn' in runreport.render(s)
+
+
 def test_bool_is_not_number():
     s = runreport.summary(runreport.parse(
         '{"demographics": 1, "mean_age": true, "t": "00:00:01"}'))

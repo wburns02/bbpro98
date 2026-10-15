@@ -49,8 +49,7 @@ def summary(lines):
                 row['step'] = round(row['mean_age'] - prev_age, 2)
             else:
                 row['step'] = None
-            if is_num(row['mean_age']):
-                prev_age = row['mean_age']
+            prev_age = row['mean_age']
             demo.append(row)
         if 'at' in obj and 'champion' in obj:
             champions.append({key: obj.get(key) for key in
@@ -98,7 +97,7 @@ def render(s):
     if not rows:
         out.append('none')
     for r in rows:
-        if r.get('error') is not None and r.get('champion') is None:
+        if r.get('error') is not None:
             out.append('%s error: %s' % (_cell(r.get('season')), _cell(r.get('error'))))
         elif r.get('champion') is None:
             out.append('%s no champion yet' % _cell(r.get('season')))
