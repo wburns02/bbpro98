@@ -111,3 +111,35 @@ def test_no_duplicates_index_stays_unique(tmp_path, ref):
                        ).fetchone()[0].startswith('CREATE UNIQUE INDEX')
     assert not any('not unique' in s for s in logs)
 
+
+
+def test_text_columns_keep_the_cell_as_written(tmp_path, ref):
+    files = dict(CSV, **{'AwardsPlayers.csv': 'playerID,awardID,yearID,lgID,tie,notes\n'
+                                               'smithjo01,MVP,2025,AL,,007\n'
+                                               'gibsojo01,Gold Glove,1942,NN2,,1.0\n'})
+    out = tmp_path / 'g.sqlite'
+    L.load(release(tmp_path, files), ref, out, log=lambda s: None)
+    con = sqlite3.connect(str(out))
+    assert dict(con.execute('SELECT playerID, notes FROM awardsplayers')) == {'smithjo01': '007', 'gibsojo01': '1.0'}
+    assert con.execute('SELECT typeof(yearID) FROM awardsplayers').fetchone() == ('integer',)
+
+
+@pytest.mark.parametrize('cell', ['nan', 'inf', '-Infinity', '1_000'])
+def test_numeric_columns_never_turn_words_into_numbers(cell):
+    assert L._value(cell) == cell
+    assert L._value(' 12 ') == 12 and L._value('2.5') == 2.5 and L._value('') is None
+
+
+def test_a_short_or_long_row_names_the_file_and_line(tmp_path, ref):
+    for n, bad in enumerate(('playerID,yearID,teamID,G\nsmithjo01,2025,NYA,150\ngibsojo01,1942\n',
+                             'playerID,yearID,teamID,G\nsmithjo01,2025,NYA,150,9\n')):
+        d = tmp_path / str(n)
+        d.mkdir()
+        with pytest.raises(SystemExit, match=r'Batting.csv line \d+: \d fields, header has 4'):
+            L.load(release(d, dict(CSV, **{'Batting.csv': bad})), ref, d / 'h.sqlite', log=lambda s: None)
+        assert not (d / 'h.sqlite').exists()
+
+
+def test_an_empty_csv_is_a_clear_error(tmp_path, ref):
+    with pytest.raises(SystemExit, match='Teams.csv: empty file'):
+        L.load(release(tmp_path, dict(CSV, **{'Teams.csv': ''})), ref, tmp_path / 'i.sqlite', log=lambda s: None)
