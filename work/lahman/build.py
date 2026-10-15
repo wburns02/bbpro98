@@ -18,6 +18,7 @@ import argparse
 from collections import ChainMap
 import datetime
 import glob
+import json
 import os
 import struct
 import sys
@@ -692,6 +693,18 @@ def main(argv=None):
         ap.error('--name: up to 8 letters/digits')
     if a.templates:
         TEMPLATES = a.templates
+    from lahman import teamnames
+    if os.path.exists(teamnames.OUT):
+        try:
+            with open(teamnames.OUT, encoding='utf-8') as fh:
+                tbl = json.load(fh)
+        except (OSError, ValueError):
+            tbl = {}
+        if not isinstance(tbl, dict):
+            tbl = {}
+        if str(a.year) not in tbl:
+            print('warning: %s has no %d; League News will show 16-letter team names until work/lahman/teamnames.py is rerun'
+                  % (teamnames.OUT, a.year))
     build(a.year, a.install, a.db, a.name, leagues=leagues)
     return 0
 
