@@ -18,6 +18,8 @@ its text; they do not replace it.
   second Ctrl+C during shutdown ends them at once.
 - Past seasons: at the rollover the watcher archives the season's news, and each league has a page per past season.
   The player card's News tab reads those archived seasons too.
+  If the archive move fails partway (a locked file), the next pass finishes it into the same past season folder
+  instead of leaving the season split in two.
 - When the watcher has stories for only some of the games played (the game keeps box scores for seven sim days, so
   a watcher that is not running through a long sim misses games), the front page says so: "Stories for N of M
   games played."
