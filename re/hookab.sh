@@ -5,8 +5,6 @@
 # env: MODNAME=steal (mod file mods\$MODNAME.dll and its ini section [$MODNAME] mode=MODE), MODKV="k=v k2=v2" extra keys
 set -u
 ARM=$1 MODE=$2 DAYS=$3
-[[ $ARM =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]*$ ]] || { echo "bad ARM"; exit 8; }
-[[ $DAYS =~ ^[0-9]+$ ]] || { echo "bad DAYS"; exit 8; }
 SP=/tmp/claude-1000/-home-will/8d342f9f-a447-4453-8414-200a2f7813d7/scratchpad
 FIX=${4:-$SP/bbfix_new.dll} MOD=${5:-$SP/steal.dll}
 W=/mnt/nvme/bbpro98/work_install BASE=/mnt/nvme/bbpro98/re/asnseq/day10 OUT=/mnt/nvme/bbpro98/re/hookab/$ARM
@@ -21,20 +19,15 @@ rm -rf "$OUT"; mkdir -p "$OUT"
 for d in Assn Stats; do find "$W/$d" -mindepth 1 -delete; cp -a "$BASE/$d/." "$W/$d/"; done
 MODNAME=${MODNAME:-steal}; [[ $MODNAME =~ ^[a-z0-9_]+$ ]] || { echo "bad MODNAME"; exit 8; }
 mkdir -p $W/mods; cp "$MOD" $W/mods/$MODNAME.dll; cp "$FIX" $W/bbfix.dll
-python3 - "$W/bbfix.ini" "$MODE" "$MODNAME" "${MODKV:-}" <<'P' || exit 8
-import re, sys, configparser
+python3 - "$W/bbfix.ini" "$MODE" "$MODNAME" "${MODKV:-}" <<'P'
+import sys, configparser
 p, mode, name, kv = sys.argv[1:5]
-pairs = [x.split('=', 1) for x in kv.split()]
-if not re.fullmatch(r'[a-z]+', mode) or any(len(x) != 2 or not re.fullmatch(r'[A-Za-z0-9_]+', x[0])
-                                            or not re.fullmatch(r'[A-Za-z0-9_.,:-]*', x[1]) for x in pairs):
-    sys.exit('bad MODE or MODKV (k=v pairs, k [A-Za-z0-9_], v [A-Za-z0-9_.,:-])')
 c = configparser.ConfigParser(); c.optionxform = str; c.read(p)
 for s in ('mods', 'steal', 'seed', name):
     if c.has_section(s): c.remove_section(s)
 if mode != 'off':
     c['mods'] = {'load': 'mods\\%s.dll' % name}
-    c[name] = {'mode': mode, **({'pct': '100'} if name == 'steal' else {}), **dict(pairs)}
-c['trace'] = {'max_mb': '0'}     # the MOD counts need the whole trace; no rotation
+    c[name] = {'mode': mode, **({'pct': '100'} if name == 'steal' else {}), **dict(x.split('=', 1) for x in kv.split())}
 with open(p, 'w') as fh: c.write(fh)
 P
 cp $W/bbfix.ini "$OUT/bbfix.ini"
