@@ -16,7 +16,15 @@ static HANDLE tr; static CRITICAL_SECTION trcs;
 static char tr_path[MAX_PATH]; static unsigned long long tr_max, tr_n; static int tr_rot;   // [trace] max_mb: bbtrace.log -> bbtrace.1.log past tr_max bytes (0 = no limit)
 static void tr_rotate(const SYSTEMTIME *st) {   // caller holds trcs
     char old[MAX_PATH], h[160]; DWORD w; size_t l=strlen(tr_path);
-    CloseHandle(tr); snprintf(old,sizeof old,"%.*s.1.log",(int)(l>4?l-4:l),tr_path); MoveFileExA(tr_path,old,MOVEFILE_REPLACE_EXISTING);
+    CloseHandle(tr); snprintf(old,sizeof old,"%.*s.1.log",(int)(l>4?l-4:l),tr_path);
+    if(!MoveFileExA(tr_path,old,MOVEFILE_REPLACE_EXISTING)){   // keep appending to the current file, never empty it
+        DWORD e=GetLastError();
+        tr=CreateFileA(tr_path,FILE_APPEND_DATA,FILE_SHARE_READ|FILE_SHARE_WRITE,0,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,0);
+        if(tr==INVALID_HANDLE_VALUE){ tr=0; return; }
+        tr_max=0;
+        int n=snprintf(h,sizeof h,"%02d:%02d:%02d.%03d [%04lx] TRACE  rotation off: rename to bbtrace.1.log failed (%lu)\n",st->wHour,st->wMinute,st->wSecond,st->wMilliseconds,GetCurrentThreadId(),e);
+        WriteFile(tr,h,n,&w,0); tr_n+=n; return;
+    }
     tr=CreateFileA(tr_path,GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,0,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,0);
     if(tr==INVALID_HANDLE_VALUE){ tr=0; return; }
     tr_n=0; tr_rot++;
@@ -219,7 +227,9 @@ static void stack_walk(const uint32_t *sp,char *w,int k,int cap){ char c[96]; in
         char p[MAX_PATH]; GetModuleFileNameA(m,p,MAX_PATH); if(_strnicmp(p,"C:\\Sierra",9)||!_stricmp(strrchr(p,'\\')+1,"bbfix.dll")) continue;
         if(!looks_like_ret(v)) continue; k+=snprintf(w+k,cap-k," %s(va %08x)",modname((void*)(uintptr_t)v,c,96),v); found++; } }
 static void text_trace(const char *api,const char *s,int n,void *ret){
-    if(!tx_on||!s||IsBadReadPtr(s,1)) return; char b[160]; if(n<0) n=(int)strnlen(s,150); if(n>150) n=150; memcpy(b,s,n); b[n]=0;
+    if(!tx_on||!s||IsBadReadPtr(s,1)) return; char b[160]; int cap=n<0||n>150?150:n, j=0;   // byte by byte: the string may end near an unmapped page
+    while(j<cap && !IsBadReadPtr(s+j,1) && (n>=0||s[j])) { b[j]=s[j]; j++; }
+    n=j; b[n]=0;
     if(tx_match[0] && !strstr(b,tx_match)) return; if(tx_cnt++>3000) return;
     char c[96],w[700]; int k=snprintf(w,sizeof w,"TEXT   %s '%s' ret=%s stack:",api,b,modname(ret,c,96));
     stack_walk((uint32_t*)__builtin_frame_address(0),w,k,sizeof w);

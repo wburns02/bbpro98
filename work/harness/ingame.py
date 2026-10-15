@@ -235,18 +235,21 @@ def main():
         sys.exit('REFUSED: the work copy resolves to the live install')
     backup = f'{shots}/_orig'
     os.makedirs(backup, exist_ok=True)
-    saved = {}
+    targets = []
     for rel, src in plan.get('install', {}).items():
         dst = os.path.realpath(os.path.join(WORK, rel))
         if not dst.startswith(os.path.realpath(WORK) + os.sep) or dst.startswith(LIVE + os.sep):
             sys.exit(f'REFUSED: {rel} is outside the work copy')
+        targets.append((rel, dst))
+    stop_game()     # before the backups: a game still writing an ASN would leave a torn copy to restore
+    saved = {}
+    for rel, dst in targets:
         bk = f'{backup}/{rel.replace("/", "__")}'
         if os.path.exists(dst):
             shutil.copy2(dst, bk)
             saved[dst] = (bk, sha(dst))
         else:
             saved[dst] = (None, None)
-    stop_game()
     before = None if plan.get('keep') else save_state(f'{shots}/_state')
     ok = True
     try:

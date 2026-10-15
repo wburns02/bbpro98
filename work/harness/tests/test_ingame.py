@@ -192,3 +192,35 @@ def test_norm_collapses_whitespace_and_lowercases(fake):
 
 def test_state_dirs_contract(fake):
     assert ingame.STATE_DIRS == ('Assn', 'Archive', 'Stats', 'StatSets', 'tapes', 'hilights')
+
+
+def test_main_stops_the_game_before_backing_up_installed_files(fake, tmp_path, monkeypatch):
+    """A running game may still be writing the ASN: the backup that the restore puts back must come after stop_game."""
+    snap = tmp_path / 'snap.ASN'
+    snap.write_bytes(b'snapshot')
+    plan = tmp_path / 'plan.json'
+    plan.write_text('{"install": {"Assn/X.ASN": "%s"}}' % snap)
+    shots = tmp_path / 'shots'
+
+    class Stopped(Exception):
+        pass
+
+    def stop():
+        assert not os.listdir(shots / '_orig'), 'backup taken while the game could still write'
+        raise Stopped
+
+    monkeypatch.setattr(ingame, 'stop_game', stop)
+    monkeypatch.setattr(sys, 'argv', ['ingame.py', str(plan), str(shots)])
+    with pytest.raises(Stopped):
+        ingame.main()
+
+
+def test_main_refuses_an_outside_path_without_stopping_the_game(fake, tmp_path, monkeypatch):
+    plan = tmp_path / 'plan.json'
+    plan.write_text('{"install": {"../escape.ASN": "x"}}')
+    called = []
+    monkeypatch.setattr(ingame, 'stop_game', lambda: called.append(1))
+    monkeypatch.setattr(sys, 'argv', ['ingame.py', str(plan), str(tmp_path / 'shots')])
+    with pytest.raises(SystemExit):
+        ingame.main()
+    assert not called
