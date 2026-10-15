@@ -875,3 +875,185 @@ def test_meta_story_count_covers_older_recaps_and_skips_other_files(world):
     watch.Watcher(str(gd), str(data), None, None, log=lambda s: None).scan()
     meta = json.loads((data / '30L1998' / 'meta.json').read_text())
     assert meta['stories'] == 1 and type(meta['played']) is int
+
+
+ROOKIE_PLAYERS = {100: league_player('Al Winner', 'RF', 1970), 200: league_player('Bo Loser', 'P', 1975)}
+
+
+@pytest.fixture
+def rookie_world(world, monkeypatch):
+    """world, with a PYR whose players are st['players'] (the two on the rosters), and a pass per season."""
+    gd, data, st = world
+    (gd / 'Assn' / '30L1998.PYR').write_bytes(b'pyr')
+    st['players'] = dict(ROOKIE_PLAYERS)
+    st['reads'] = []
+    st['lines'] = []
+
+    def players(path):
+        st['reads'].append(path)
+        return dict(st['players'])
+
+    monkeypatch.setattr(gamedata, 'players', players)
+
+    def scan(year):
+        named(monkeypatch, '1998 Test', season_year=year)
+        w = watch.Watcher(str(gd), str(data), None, None, log=st['lines'].append)
+        w.scan()
+        return w
+
+    st['scan'] = scan
+    return gd, data / '30L1998' / 'rookies', st
+
+
+def ids_of(players):
+    return {'ids': sorted([pid, p['name'], p['born']] for pid, p in players.items())}
+
+
+def test_the_first_pass_ever_writes_ids_and_no_class(rookie_world):
+    gd, rookies, st = rookie_world
+    st['scan'](1997)
+    assert os.listdir(rookies) == ['ids.json']
+    assert json.loads((rookies / 'ids.json').read_text()) == ids_of(ROOKIE_PLAYERS)
+    assert not [s for s in st['lines'] if 'rookie class' in s]
+
+
+def test_a_new_season_writes_the_class_of_the_new_players_and_a_rescan_writes_nothing(rookie_world):
+    gd, rookies, st = rookie_world
+    st['scan'](1997)
+    st['players'][300] = league_player('Rick Rookie', 'SS', 1978)               # a new pid
+    st['players'][200] = league_player('Bo Loser Jr', 'P', 1979)                # a reused pid, a new man
+    st['scan'](1998)
+    assert sorted(os.listdir(rookies)) == ['1998.json', 'ids.json']
+    rec = json.loads((rookies / '1998.json').read_text())
+    assert (rec['kind'], rec['season'], rec['source'], rec['reason']) == ('rookies', 1998, 'template', 'off')
+    assert rec['headline'] == 'The rookie class of 1998' and 'Rick Rookie' in rec['body']
+    assert rec['facts']['count'] == 2 and rec['facts']['association'] == '1998 Test'
+    assert [(h['pid'], h['age'], h['team']) for h in rec['facts']['hitters']] == [(300, 20, 'free agent')]
+    assert [(p['pid'], p['name'], p['team']) for p in rec['facts']['pitchers']] == [(200, 'Bo Loser Jr', 'Birch')]
+    assert rec['created']
+    assert '30L1998 rookie class 1998: 2 players (template)' in st['lines']
+    assert json.loads((rookies / 'ids.json').read_text()) == ids_of(st['players'])
+    before = {f: (rookies / f).read_text() for f in os.listdir(rookies)}
+    st['lines'].clear()
+    st['reads'].clear()
+    st['scan'](1998)
+    assert {f: (rookies / f).read_text() for f in os.listdir(rookies)} == before
+    assert not [s for s in st['lines'] if 'rookie class' in s]
+    assert st['reads'] == []                                    # no rollover, ids.json there: the PYR is not read
+
+
+def test_a_legacy_association_gets_a_baseline_at_its_first_rollover_and_no_class(rookie_world):
+    gd, rookies, st = rookie_world
+    out = rookies.parent
+    out.mkdir(parents=True)
+    (out / 'meta.json').write_text(json.dumps({'season_year': 1997}))
+    st['players'][300] = league_player('Rick Rookie', 'SS', 1978)
+    st['scan'](1998)
+    assert (out / 'past' / '1997' / 'meta.json').exists()
+    assert os.listdir(rookies) == ['ids.json']
+    assert json.loads((rookies / 'ids.json').read_text()) == ids_of(st['players'])
+    st['players'][400] = league_player('Next Year', '1B', 1980)
+    st['scan'](1999)
+    rec = json.loads((rookies / '1999.json').read_text())
+    assert [h['pid'] for h in rec['facts']['hitters']] == [400] and rec['facts']['count'] == 1
+
+
+def test_a_season_with_no_new_players_writes_no_class_but_moves_the_snapshot_on(rookie_world):
+    gd, rookies, st = rookie_world
+    st['scan'](1997)
+    (rookies / 'ids.json').write_text(json.dumps({'ids': [[100, 'Al Winner', 1970]]}))     # 200 was added since
+    st['scan'](1998)
+    assert sorted(os.listdir(rookies)) == ['1998.json', 'ids.json']
+    (rookies / '1998.json').unlink()
+    st['players'].pop(200)                                      # nobody new, one gone
+    st['scan'](1999)
+    assert os.listdir(rookies) == ['ids.json']
+    assert json.loads((rookies / 'ids.json').read_text()) == ids_of(st['players'])
+
+
+def test_an_existing_class_file_is_never_rewritten(rookie_world):
+    gd, rookies, st = rookie_world
+    st['scan'](1997)
+    (rookies / '1998.json').write_text('{"kept": true}')
+    st['players'][300] = league_player('Rick Rookie', 'SS', 1978)
+    st['scan'](1998)
+    assert json.loads((rookies / '1998.json').read_text()) == {'kept': True}
+    assert json.loads((rookies / 'ids.json').read_text()) == ids_of(st['players'])
+
+
+def test_a_malformed_snapshot_at_a_rollover_is_replaced_without_a_class(rookie_world):
+    gd, rookies, st = rookie_world
+    st['scan'](1997)
+    (rookies / 'ids.json').write_text(json.dumps({'ids': 'x'}))
+    st['scan'](1998)
+    assert os.listdir(rookies) == ['ids.json']
+    assert json.loads((rookies / 'ids.json').read_text()) == ids_of(st['players'])
+
+
+def test_no_pyr_writes_no_rookies_folder(world):
+    gd, data, st = world
+    w = watch.Watcher(str(gd), str(data), None, None, log=lambda s: None)
+    w.scan()
+    assert not (data / '30L1998' / 'rookies').exists()
+
+
+def test_an_empty_pyr_writes_nothing_and_the_class_waits_for_a_read_that_works(rookie_world):
+    gd, rookies, st = rookie_world
+    st['scan'](1997)
+    before = (rookies / 'ids.json').read_text()
+    st['players'][300] = league_player('Rick Rookie', 'SS', 1978)
+    saved = dict(st['players'])
+    st['players'].clear()
+    w = st['scan'](1998)                                        # the rollover pass reads a PYR with nobody in it
+    assert os.listdir(rookies) == ['ids.json'] and (rookies / 'ids.json').read_text() == before
+    st['players'].update(saved)
+    w.seen.clear()
+    w.scan()
+    assert json.loads((rookies / '1998.json').read_text())['facts']['count'] == 1
+
+
+def test_a_failure_at_the_rollover_is_retried_by_the_next_pass(rookie_world, monkeypatch):
+    gd, rookies, st = rookie_world
+    st['scan'](1997)
+    st['players'][300] = league_player('Rick Rookie', 'SS', 1978)
+    facts = watch.rookies.class_facts
+    broken = {'on': True}
+
+    def class_facts(*args):
+        if broken['on']:
+            raise OSError('torn')
+        return facts(*args)
+
+    monkeypatch.setattr(watch.rookies, 'class_facts', class_facts)
+    w = st['scan'](1998)
+    assert any('OSError: torn' in s for s in st['lines']) and not (rookies / '1998.json').exists()
+    assert json.loads((rookies / 'ids.json').read_text()) == ids_of(ROOKIE_PLAYERS)       # still last season's
+    broken['on'] = False
+    w.seen.clear()
+    w.scan()
+    assert json.loads((rookies / '1998.json').read_text())['facts']['count'] == 1
+    assert json.loads((rookies / 'ids.json').read_text()) == ids_of(st['players'])
+
+
+def test_the_class_goes_to_the_model_when_there_is_one(rookie_world, monkeypatch):
+    gd, rookies, st = rookie_world
+    st['scan'](1997)
+    st['players'][300] = league_player('Rick Rookie', 'SS', 1978)
+    calls = []
+
+    def write(facts, budget, complete):
+        calls.append(facts['count'])
+        return {'headline': 'Fresh faces', 'body': 'One new man.', 'source': 'glm'}
+
+    monkeypatch.setattr(watch.rookies, 'write', write)
+    named(monkeypatch, '1998 Test', season_year=1998)
+    w = watch.Watcher(str(gd), str(rookies.parent.parent), object(), lambda *a: None, log=st['lines'].append)
+    monkeypatch.setattr(w, 'columns', lambda *a: None)
+    monkeypatch.setattr(w, 'recaps', lambda *a: None)
+    monkeypatch.setattr(w, 'scouting', lambda *a: None)
+    monkeypatch.setattr(watch.season, 'write_preview', lambda f, b, c: {'headline': 'h', 'body': 'b', 'source': 'glm'})
+    w.scan()
+    rec = json.loads((rookies / '1998.json').read_text())
+    assert calls == [1]
+    assert (rec['headline'], rec['source'], rec['kind'], rec['season']) == ('Fresh faces', 'glm', 'rookies', 1998)
+    assert '30L1998 rookie class 1998: 1 players (glm)' in st['lines']

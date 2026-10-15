@@ -24,6 +24,8 @@ SEP = ' · '
 ASSN_RE = re.compile(r'[A-Za-z0-9_]{1,8}')
 KEY_RE = re.compile(r'[0-9a-f]{16}')
 PAST_RE = re.compile(r'[0-9]{4}(?:-[0-9]{1,2})?')
+YEAR_FILE_RE = re.compile(r'([0-9]{4})\.json')
+YEAR_RE = re.compile(r'[0-9]{4}')
 FEED_RE = re.compile(r'([0-9]{2})-([0-9]{2})\.json')
 PAGE_RE = re.compile(r'[0-9]{1,5}')
 TID_RE = re.compile(r'[0-9]{1,2}')
@@ -402,7 +404,7 @@ def _association(data_dir, assn, qs):
     name = _text(meta.get('name')) or assn
     folder, home = data_dir / assn, '/news/%s/' % assn
     moves = _moves_box(data_dir, assn) if page == 1 else ''
-    season = _season_links(folder, home) if page == 1 else ''
+    season = _season_links(folder, home, _rookie_years(data_dir, assn)) if page == 1 else ''
     past = _past_box(data_dir, assn) if page == 1 else ''
     replay = _replay_link(folder, home) if page == 1 else ''
     payroll = _payroll_box(data_dir, assn) if page == 1 else ''
@@ -712,11 +714,28 @@ def _season(folder, assn, which, home):
     return _preview_page(assn, rec, home) if which == 'preview' else _awards_page(assn, rec, home)
 
 
-def _season_links(folder, home):
-    """The Season box for the side column: awards above preview, each only when its file exists. '' for neither."""
+def _rookie_years(data_dir, assn):
+    """The seasons with a rookie class page, newest first: the <4 digits>.json files in <assn>/rookies (ids.json, the
+    watcher's snapshot, is not one)."""
+    if not ASSN_RE.fullmatch(assn):
+        return []
+    folder = data_dir / assn / 'rookies'
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return []
+    found = (YEAR_FILE_RE.fullmatch(n) for n in names)
+    return sorted((int(m.group(1)) for m in found if m and (folder / m.group(0)).is_file()), reverse=True)
+
+
+def _season_links(folder, home, rookie_years=()):
+    """The Season box for the side column: awards above preview, each only when its file exists, then a link per year
+    in rookie_years (the current front page passes them; a past season's does not). '' for none."""
     links = ['<li><a href="%s%s">%s</a></li>' % (esc(home), which, label)
              for which, label in (('awards', 'Season awards'), ('preview', 'Season preview'))
              if _season_file(folder, which) is not None]
+    links += ['<li><a href="%srookies/%04d">%04d rookie class</a></li>' % (esc(home), y, y)
+              for y in rookie_years]
     if not links:
         return ''
     return '<section class="season"><h2>Season</h2><ul>%s</ul></section>' % ''.join(links)
@@ -751,6 +770,30 @@ def _team(folder, assn, tid, home):
     if rec is None or rec.get('kind') != 'scout':
         return _not_found()
     return _team_page(assn, tid, rec, home)
+
+
+def _rookies_page(assn, year, rec, home=None):
+    """A season's rookie class in the story layout, then every hitter and pitcher of it."""
+    facts = _d(rec.get('facts'))
+    hitters = [[h.get('name'), h.get('pos'), h.get('age'), h.get('team'), h.get('contact'), h.get('power'),
+                h.get('speed'), h.get('fielding')] for h in _dicts(facts.get('hitters'))]
+    pitchers = [[p.get('name'), p.get('age'), p.get('team'), p.get('control'), p.get('strikeout'), p.get('stamina')]
+                for p in _dicts(facts.get('pitchers'))]
+    tables = [
+        _table('Hitters', ('Player', 'Pos', 'Age', 'Team', 'Contact', 'Power', 'Speed', 'Fielding'), hitters,
+               text=(0, 1, 3)) if hitters else '',
+        _table('Pitchers', ('Player', 'Age', 'Team', 'Control', 'Strikeout', 'Stamina'), pitchers,
+               text=(0, 2)) if pitchers else '',
+    ]
+    return _story_layout(assn, rec, '%s rookie class' % year, tables, home)
+
+
+def _rookies(data_dir, assn, year):
+    """A season's rookie class page; 404 for a year that is not four digits or a file missing or unreadable."""
+    rec = _read_obj(data_dir / assn / 'rookies' / (year + '.json')) if YEAR_RE.fullmatch(year) else None
+    if rec is None:
+        return _not_found()
+    return _rookies_page(assn, year, rec, '/news/%s/' % assn)
 
 
 def _move_log(data_dir, assn):
@@ -1041,6 +1084,8 @@ def route(data_dir, target):
         return reply
     if len(rest) >= 3 and rest[1] == 'past':
         return _past(data_dir, assn, rest[2:], qs)
+    if len(rest) == 3 and rest[1] == 'rookies':
+        return _rookies(data_dir, assn, rest[2])
     if len(rest) == 2 and rest[1] == 'moves':
         return _transactions(data_dir, assn, qs)
     if len(rest) == 3 and rest[1] == 'moves' and NOTE_RE.fullmatch(rest[2]):

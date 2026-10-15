@@ -1487,3 +1487,170 @@ def test_coverage_line_sits_after_the_column_and_before_the_stories(site):
     write(site.root / '30L1998' / 'recaps' / (KEY + '.json'), story(KEY))
     html = site.get('/news/30L1998/')[2].decode()
     assert html.index('class="feed"') < html.index('class="coverage"') < html.index('class="story"')
+
+
+def rookies_file(year=1998, **over):
+    """A rookies/<year>.json in the shape the watcher writes: a hitter and a pitcher in the facts."""
+    base = {
+        'headline': 'The rookie class of %d' % year, 'body': '2 new players joined the league.\nAnn Hart, 20, a CF.',
+        'source': 'template', 'reason': 'off', 'kind': 'rookies', 'season': year, 'created': '2026-10-09T14:03:11',
+        'facts': {
+            'association': '1998 Major Leagues', 'season': year, 'count': 3,
+            'hitters': [
+                {'pid': 301, 'name': 'Ann Hart', 'pos': 'CF', 'age': 20, 'team': 'Ash', 'contact': 70, 'power': 45,
+                 'speed': 80, 'fielding': 60},
+                {'pid': 302, 'name': 'Bo Lee', 'pos': 'C', 'age': None, 'team': 'free agent', 'contact': 50,
+                 'power': None, 'speed': 50, 'fielding': 50},
+            ],
+            'pitchers': [
+                {'pid': 401, 'name': 'Cy Ace', 'age': 19, 'team': 'Birch', 'control': 75, 'strikeout': 80,
+                 'stamina': 70},
+            ],
+        },
+    }
+    base.update(over)
+    return base
+
+
+@pytest.fixture
+def rookied(seeded):
+    """seeded, plus the rookie classes of 1997 and 1998 and the watcher's ids.json."""
+    write(seeded.root / '30L1998' / 'rookies' / '1997.json', rookies_file(1997))
+    write(seeded.root / '30L1998' / 'rookies' / '1998.json', rookies_file(1998))
+    write(seeded.root / '30L1998' / 'rookies' / 'ids.json', {'ids': [[301, 'Ann Hart', 1978]]})
+    return seeded
+
+
+def test_rookie_years_are_newest_first_and_only_year_files(site):
+    seed(site.root)
+    folder = site.root / '30L1998' / 'rookies'
+    assert server._rookie_years(site.root, '30L1998') == []
+    for name in ('1997.json', '2001.json', 'ids.json', '98.json', '19980.json', '1999.txt', '1999.json.tmp'):
+        write(folder / name, {})
+    (folder / '2005.json').mkdir()
+    assert server._rookie_years(site.root, '30L1998') == [2001, 1997]
+    assert server._rookie_years(site.root, '../x') == [] and server._rookie_years(site.root, 'NOPE') == []
+
+
+def test_season_box_links_each_rookie_class_after_the_preview(rookied):
+    write(rookied.root / '30L1998' / 'awards.json', awards_file())
+    write(rookied.root / '30L1998' / 'preview.json', preview_file())
+    html = rookied.get('/news/30L1998/')[2].decode()
+    assert ('<section class="season"><h2>Season</h2><ul>'
+            '<li><a href="/news/30L1998/awards">Season awards</a></li>'
+            '<li><a href="/news/30L1998/preview">Season preview</a></li>'
+            '<li><a href="/news/30L1998/rookies/1998">1998 rookie class</a></li>'
+            '<li><a href="/news/30L1998/rookies/1997">1997 rookie class</a></li></ul></section>') in html
+
+
+def test_season_box_shows_for_rookie_links_alone(rookied):
+    html = rookied.get('/news/30L1998/')[2].decode()
+    assert ('<section class="season"><h2>Season</h2><ul>'
+            '<li><a href="/news/30L1998/rookies/1998">1998 rookie class</a></li>'
+            '<li><a href="/news/30L1998/rookies/1997">1997 rookie class</a></li></ul></section>') in html
+
+
+def test_ids_json_alone_adds_nothing_and_the_page_is_unchanged(seeded):
+    base = seeded.get('/news/30L1998/')[2]
+    write(seeded.root / '30L1998' / 'rookies' / 'ids.json', {'ids': [[301, 'Ann Hart', 1978]]})
+    assert seeded.get('/news/30L1998/')[2] == base
+    assert b'class="season"' not in base
+
+
+def test_rookie_links_are_on_the_first_page_only(rookied):
+    for i in range(31):
+        write(rookied.root / '30L1998' / 'recaps' / ('%016x.json' % i), story('%016x' % i, slot=i))
+    assert 'rookies/1998' in rookied.get('/news/30L1998/')[2].decode()
+    assert 'rookies/' not in rookied.get('/news/30L1998/?page=2')[2].decode()
+
+
+def test_rookie_page_has_the_story_layout_and_both_tables(rookied):
+    status, headers, body = rookied.get('/news/30L1998/rookies/1998')
+    html = body.decode()
+    assert status == 200 and headers['content-type'] == HTML
+    assert_secure(headers, body)
+    assert '<title>The rookie class of 1998</title>' in html
+    assert ('<p class="nav"><a href="/news/30L1998/">&larr; 1998 Major Leagues</a> &middot; '
+            '<a href="/news/">All leagues</a></p>') in html
+    assert '<h1>The rookie class of 1998</h1>' in html
+    assert '<p class="dateline">1998 rookie class</p><p class="byline">Wire report</p>' in html
+    assert '<p>2 new players joined the league.</p><p>Ann Hart, 20, a CF.</p>' in html
+    assert html.index('<caption>Hitters</caption>') < html.index('<caption>Pitchers</caption>')
+    assert ('<th class="t">Player</th><th class="t">Pos</th><th>Age</th><th class="t">Team</th><th>Contact</th>'
+            '<th>Power</th><th>Speed</th><th>Fielding</th>') in html
+    assert ('<tr><td class="t">Ann Hart</td><td class="t">CF</td><td>20</td><td class="t">Ash</td><td>70</td>'
+            '<td>45</td><td>80</td><td>60</td></tr>') in html
+    assert ('<tr><td class="t">Bo Lee</td><td class="t">C</td><td></td><td class="t">free agent</td><td>50</td>'
+            '<td></td><td>50</td><td>50</td></tr>') in html
+    assert ('<th class="t">Player</th><th>Age</th><th class="t">Team</th><th>Control</th><th>Strikeout</th>'
+            '<th>Stamina</th>') in html
+    assert ('<tr><td class="t">Cy Ace</td><td>19</td><td class="t">Birch</td><td>75</td><td>80</td><td>70</td></tr>'
+            in html)
+
+
+def test_rookie_page_reads_the_year_it_is_asked_for(rookied):
+    write(rookied.root / '30L1998' / 'rookies' / '1997.json', rookies_file(1997, headline='Class of 97'))
+    assert '<h1>Class of 97</h1>' in rookied.get('/news/30L1998/rookies/1997')[2].decode()
+    assert '<h1>The rookie class of 1998</h1>' in rookied.get('/news/30L1998/rookies/1998')[2].decode()
+
+
+def test_rookie_page_leaves_out_an_empty_table(rookied):
+    rec = rookies_file(1999)
+    rec['facts']['pitchers'] = []
+    write(rookied.root / '30L1998' / 'rookies' / '1999.json', rec)
+    html = rookied.get('/news/30L1998/rookies/1999')[2].decode()
+    assert '<caption>Hitters</caption>' in html and 'Pitchers' not in html
+
+
+def test_rookie_page_escapes_every_value(site):
+    seed(site.root)
+    rec = rookies_file(1998, headline='<i>Hi</i>', body='<b>Bold</b> & more')
+    rec['facts']['association'] = '<u>League</u>'
+    rec['facts']['hitters'][0].update(name='<img src=x onerror=1>', pos='"C"', team='<s>Ash</s>')
+    rec['facts']['pitchers'][0].update(name='<script>1</script>', team="O'Brien & Co")
+    write(site.root / '30L1998' / 'rookies' / '1998.json', rec)
+    html = site.get('/news/30L1998/rookies/1998')[2].decode()
+    for raw in ('<b>', '<i>', '<u>', '<s>', '<img', '<script'):
+        assert raw not in html
+    assert '<title>&lt;i&gt;Hi&lt;/i&gt;</title>' in html
+    assert '&lt;b&gt;Bold&lt;/b&gt; &amp; more' in html and '&lt;u&gt;League&lt;/u&gt;' in html
+    assert '&lt;img src=x onerror=1&gt;' in html and '&quot;C&quot;' in html and '&lt;s&gt;Ash&lt;/s&gt;' in html
+    assert '&lt;script&gt;1&lt;/script&gt;' in html and 'O&#x27;Brien &amp; Co' in html
+
+
+@pytest.mark.parametrize('path', [
+    '/news/30L1998/rookies/1996', '/news/30L1998/rookies/ids', '/news/30L1998/rookies/98',
+    '/news/30L1998/rookies/19980', '/news/30L1998/rookies/1998x', '/news/30L1998/rookies/1998.json',
+    '/news/30L1998/rookies/', '/news/30L1998/rookies', '/news/30L1998/rookies/1998/',
+    '/news/30L1998/rookies/1998/x', '/news/30L1998/rookies/%E0%A5%A7998',     # a Devanagari 1 is not a digit here
+    '/news/30L1998/rookies/..%2F1998', '/news/MLBPA97/rookies/1998', '/news/30L1998/past/1997/rookies/1998',
+])
+def test_bad_or_missing_rookie_paths_are_404(archived, path):
+    write(archived.root / '30L1998' / 'rookies' / '1998.json', rookies_file(1998))
+    status, headers, body = archived.get(path)
+    assert status == 404 and b'Not found' in body
+    assert_secure(headers, body)
+
+
+@pytest.mark.parametrize('content', ['{"kind": ', [rookies_file(2001)], '"text"'])
+def test_unreadable_rookie_file_is_404(rookied, content):
+    write(rookied.root / '30L1998' / 'rookies' / '2001.json', content)
+    status, headers, body = rookied.get('/news/30L1998/rookies/2001')
+    assert status == 404
+    assert_secure(headers, body)
+
+
+def test_a_rookie_file_without_facts_renders_the_text_alone(rookied):
+    write(rookied.root / '30L1998' / 'rookies' / '2001.json', {'headline': 'Thin', 'body': 'One line.'})
+    status, _, body = rookied.get('/news/30L1998/rookies/2001')
+    html = body.decode()
+    assert status == 200 and '<h1>Thin</h1>' in html and '<p>One line.</p>' in html and '<table' not in html
+
+
+def test_past_front_pages_show_no_rookie_links(archived):
+    write(archived.root / '30L1998' / 'rookies' / '1998.json', rookies_file(1998))
+    write(archived.root / '30L1998' / 'past' / '1997' / 'rookies' / '1997.json', rookies_file(1997))
+    assert 'rookies/1998' in archived.get('/news/30L1998/')[2].decode()
+    past = archived.get('/news/30L1998/past/1997/')[2].decode()
+    assert 'rookie' not in past and 'class="season"' in past          # the 1997 season box has its awards and preview
+    assert 'rookie' not in archived.get('/news/30L1998/past/1998/')[2].decode()
