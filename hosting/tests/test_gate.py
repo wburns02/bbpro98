@@ -149,6 +149,17 @@ def test_known_browser_skips_the_global_limit_only():
     assert g.attempt('8.8.8.8', '4321', known=True) == 'blocked'   # its own per-visitor limit still holds
 
 
+def test_copied_device_cookie_gets_a_small_pool_not_unlimited_guesses():
+    c = Clock()
+    g = gate.Gate('4321', SECRET, now=c)
+    for i in range(gate.KNOWN_FAILS):                               # one guess per address, so no per-IP limit
+        assert g.attempt('10.9.0.%d' % i, '0000', known=True) == 'wrong'
+    assert g.attempt('10.9.1.1', '4321', known=True) == 'blocked'
+    assert g.attempt('10.9.1.1', '4321') == 'ok'                    # strangers' pool untouched by known guesses
+    c.t += gate.GLOBAL_WINDOW + 1
+    assert g.attempt('10.9.1.1', '4321', known=True) == 'ok'
+
+
 def test_device_token_is_not_a_session_and_vice_versa():
     c = Clock()
     g = gate.Gate('4321', SECRET, now=c)

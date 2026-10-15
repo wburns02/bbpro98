@@ -14,8 +14,9 @@ The PIN and the cookie-signing secret live in files outside the repo (the secret
 revoked sign-ins are kept beside the secret in <secret-file>.revoked until they would have expired.
 A PIN is short, so wrong guesses are rate limited per visitor (X-Real-IP, which nginx sets from Cloudflare's
 CF-Connecting-IP) and in total: past GLOBAL_FAILS wrong PINs in an hour, a login waits out the hour. A browser that
-signed in before carries a signed device cookie (bbdev, Path=/gate, a year) and is exempt from that total, so strangers
-guessing from many addresses cannot lock the owner out; its own per-visitor limit still applies.
+signed in before carries a signed device cookie (bbdev, Path=/gate, a year) and draws on a separate, smaller pool
+(KNOWN_FAILS an hour, shared by every known browser), so strangers guessing from many addresses cannot lock the owner
+out, and a copied device cookie buys at most KNOWN_FAILS guesses an hour; the per-visitor limit applies to both.
 """
 import argparse
 import hashlib
@@ -35,6 +36,7 @@ DEVICE_COOKIE = 'bbdev'
 DEVICE_AGE = 365 * 86400             # seconds a browser that signed in stays exempt from the global limit
 IP_FAILS, IP_WINDOW = 5, 900         # wrong PINs per visitor per window (seconds)
 GLOBAL_FAILS, GLOBAL_WINDOW = 30, 3600
+KNOWN_FAILS = 10                     # wrong PINs an hour from browsers with a device cookie, all of them together
 MAX_BODY = 1024
 
 PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
@@ -79,6 +81,7 @@ class Gate:
         self.now = now
         self.fails = {}              # ip -> [times]
         self.all_fails = []
+        self.known_fails = []
         self.lock = threading.Lock()
         self.revoked_path = revoked_path
         self.revoked = self._load_revoked()      # sig -> exp of signed-out sign-ins
@@ -148,12 +151,14 @@ class Gate:
 
     def _blocked(self, ip, known=False):
         self.all_fails = self._recent(self.all_fails, GLOBAL_WINDOW)
+        self.known_fails = self._recent(self.known_fails, GLOBAL_WINDOW)
         mine = self._recent(self.fails.get(ip, []), IP_WINDOW)
         if mine:
             self.fails[ip] = mine
         else:
             self.fails.pop(ip, None)
-        return len(mine) >= IP_FAILS or (not known and len(self.all_fails) >= GLOBAL_FAILS)
+        pool, cap = (self.known_fails, KNOWN_FAILS) if known else (self.all_fails, GLOBAL_FAILS)
+        return len(mine) >= IP_FAILS or len(pool) >= cap
 
     def blocked(self, ip, known=False):
         with self.lock:
@@ -162,8 +167,8 @@ class Gate:
     def attempt(self, ip, pin, known=False):
         """'ok', 'wrong' or 'blocked'. The limit check, the comparison and the count of a wrong PIN happen under one
         lock, so parallel guesses cannot all pass the check before any of them is counted. Wrong PINs are capped at
-        GLOBAL_FAILS an hour, which also bounds the per-visitor table; a known browser (known=True, from its device
-        cookie) is held to its per-visitor limit only."""
+        GLOBAL_FAILS an hour (KNOWN_FAILS for known browsers, known=True from a device cookie, counted apart), which
+        also bounds the per-visitor table."""
         with self.lock:
             if self._blocked(ip, known):
                 return 'blocked'
@@ -171,7 +176,7 @@ class Gate:
                 return 'ok'
             t = self.now()
             self.fails.setdefault(ip, []).append(t)
-            self.all_fails.append(t)
+            (self.known_fails if known else self.all_fails).append(t)
             return 'wrong'
 
 
