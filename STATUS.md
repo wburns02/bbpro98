@@ -5,8 +5,9 @@ marked "(unverified)". Builders: read this, then AGENTS.md.
 
 ## What is live
 
-- Source: origin/main is `d4d4cc3` (2026-10-15 01:14 CT, "merge w4-stallwatch"). `git describe` says
-  `v1.0.2-92-gd4d4cc3`: main is 92 commits past the v1.0.2 tag.
+- Source: origin/main is `a7a6177` (2026-10-15 09:34 CT, "Merge fix/aging-retire-curve"), re-checked 12:55 CT.
+  `git describe` says `v1.0.2-180-ga7a6177`: main is 180 commits past the v1.0.2 tag. Releases and the gate's 302
+  below were re-checked at the same time and are unchanged.
 - Releases (`gh release list`, read only): v1.0.2 (created 2026-10-13), v1.0.1 (2026-10-12) and v1.0.0 (2026-10-12)
   are ALL still drafts. Nothing has been published. Tags v1.0.0, v1.0.1, v1.0.2 exist. v1.0.2 has one asset,
   `bbfix-v1.0.2.zip` (886,262 bytes, 0 downloads), holding README.txt, SHA256SUMS.txt, bbfix.dll, bbfix.ini.sample,
@@ -41,6 +42,10 @@ are merged and idle. Other lanes edit and merge into main continuously; do not a
 fetch and rebase before you finish.
 
 ## Known broken or risky
+
+- Full pytest run (`news work hosting re/formats tests/holdout`, `-n 2`) has one standing error on main:
+  `re/formats/test_roundtrip.py::test_pyr_roundtrip` is a script, not a pytest test (fixture `pyr_path` not found).
+  1839 passed, 1 xfailed otherwise (2026-10-15 12:43 CT, branch before its rebase onto `a7a6177`).
 
 - Release checksums: `tools/build_release.sh` writes SHA256SUMS.txt into the folder it is scanning, so the file
   lists itself with a hash that can never match. `sha256sum -c SHA256SUMS.txt` on the unpacked v1.0.2 zip fails on

@@ -30,7 +30,11 @@ Builders never launch the game, Wine, Xvfb or the harness.
 
 ## 4. Test
 - Everything (the real suites): `capped -t 1500 python3 -m pytest news work hosting re/formats -q -p no:cacheprovider -n 2`
-  It collects 1613 tests. Measured 2026-10-15: `news` plus `hosting` is 1310 passed in 40 s with `-n 2`.
+  Measured 2026-10-15 12:43 CT (plus tests/holdout): 1839 passed, 1 xfailed, 1 error in 30 s. The error is not a
+  regression: `re/formats/test_roundtrip.py` is a script (`python3 re/formats/test_roundtrip.py <file.pyr>`) whose
+  `test_pyr_roundtrip(pyr_path)` pytest collects and cannot feed, so it errors on main since af2f7a6. Treat exactly
+  that one error as the baseline (or add `--deselect re/formats/test_roundtrip.py::test_pyr_roundtrip`); any other
+  failure is yours.
   Tests that need game files skip when the files are absent. `capped` caps RAM at 4G and kills a runaway.
   Shared machine: at most `-n 2`. Other lanes may hold a lock; wrap a full run in
   `flock /home/will/.local/state/burn-week/pytest.lock <cmd>` during burn week.
