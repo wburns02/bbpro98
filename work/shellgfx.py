@@ -42,6 +42,8 @@ import os
 import struct
 import sys
 
+from atomicfile import write_atomic
+
 # bb0.pal (RIFF PAL data chunk), 256 RGB triples.
 _PAL_HEX = (
     "ff8bffff8bffff8bffff8bffff8bffff8bffff8bffff8bffff8bffff8bfff7efe7e3dbcfd7cbb7cbbbabb7a793ab9b8b"
@@ -261,6 +263,8 @@ class FrameReader:
 
 
 def main():
+    if len(sys.argv) != 4:
+        raise SystemExit('usage: shellgfx.py decode in.bmx|in.fnx out/ | encode out/ out.bmx')
     cmd, src, dst = sys.argv[1], sys.argv[2], sys.argv[3]
     if cmd == 'decode':
         with open(src, 'rb') as fh:
@@ -281,12 +285,13 @@ def main():
         with open(f'{src}/manifest.json') as fh:
             man = json.load(fh)
         kind = man['meta']['kind']
-        buf = (encode_bmx if kind == 'bmx' else encode_fnx)(man, FrameReader(src))
-        with open(dst, 'wb') as fh:
-            fh.write(buf)
+        write_atomic(dst, (encode_bmx if kind == 'bmx' else encode_fnx)(man, FrameReader(src)))
     else:
         raise SystemExit(f'unknown command {cmd}')
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except (struct.error, ValueError, IndexError, KeyError, TypeError, UnicodeDecodeError) as e:
+        raise SystemExit('shellgfx: bad input (%s: %s)' % (type(e).__name__, e))

@@ -36,6 +36,8 @@ duplicate slice ends).  Details in FORMAT.md.
 import sys, os, json, struct, base64, zlib, math
 from collections import OrderedDict
 
+from atomicfile import write_atomic
+
 MAXSIDE = 4096
 REC = struct.Struct('<IIiiIIHI')
 TILE = 240     # target chunk size for the big (native-scale) class
@@ -324,7 +326,9 @@ def unpack_meta(s):
 
 # ---------------------------------------------------------------- decode
 def cmd_decode(inpath, outdir):
-    data = open(inpath, 'rb').read()
+    with open(inpath, 'rb') as fh:
+        data = fh.read()
+    os.makedirs(outdir, exist_ok=True)
     try:
         n, blocks = parse_container(data)
     except ValueError:
@@ -409,8 +413,7 @@ def cmd_encode(outdir, outpath):
     man = json.load(open(os.path.join(outdir, 'manifest.json')))
     meta = man['meta']
     if 'raw' in meta:
-        with open(outpath, 'wb') as fh:
-            fh.write(base64.b64decode(meta['raw']))
+        write_atomic(outpath, base64.b64decode(meta['raw']))
         return
     n, nchk, bk, em, fwh, fxy = unpack_meta(meta['z'])
 
@@ -480,10 +483,7 @@ def cmd_encode(outdir, outpath):
         head += struct.pack('<I', off)
         off += len(bodies[bi])
     head += struct.pack('<I', off)
-    with open(outpath, 'wb') as fh:
-        fh.write(bytes(head))
-        for b in bodies:
-            fh.write(b)
+    write_atomic(outpath, bytes(head) + b''.join(bodies))
 
 
 def main():
@@ -498,4 +498,7 @@ def main():
 
 
 if __name__ == '__main__':
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except (struct.error, zlib.error, ValueError, IndexError, KeyError, TypeError, UnicodeDecodeError) as e:
+        sys.exit('dbmcodec: bad input (%s: %s)' % (type(e).__name__, e))
