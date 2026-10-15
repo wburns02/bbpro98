@@ -345,12 +345,18 @@ def html_to_text(html, path):
 
 
 def _season(game, year, letter='L'):
-    """(STEM, ASN path) of the season built for year (a file <n><letter><year>.ASN in Assn/), or (None, None)."""
-    assn = os.path.join(game, 'Assn')
+    """(STEM, ASN path) of the season built for year (a file <n><letter><year>.ASN in Assn/), or (None, None). The
+    ASN counts only with its PYR and PYF (Assn/) and DAT (Stats/) beside it, all regular files and none a symlink:
+    build.py writes the ASN last, so a lone ASN is a build that stopped part way."""
+    assn, stats = os.path.join(game, 'Assn'), os.path.join(game, 'Stats')
     pat = re.compile(r'[0-9]{1,2}%s%d\.ASN' % (letter, year), re.I)
     for f in sorted(os.listdir(assn)):
         if pat.fullmatch(f) and not os.path.islink(os.path.join(assn, f)):
-            return os.path.splitext(f)[0].upper(), os.path.join(assn, f)
+            stem = os.path.splitext(f)[0].upper()
+            siblings = [gamedata.find(assn, stem + '.PYR'), gamedata.find(assn, stem + '.PYF'),
+                        gamedata.find(stats, stem + '.DAT') if os.path.isdir(stats) else None]
+            if all(p and not os.path.islink(p) and os.path.isfile(p) for p in siblings):
+                return stem, os.path.join(assn, f)
     return None, None
 
 
