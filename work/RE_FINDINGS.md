@@ -28,7 +28,8 @@ project has 14 (no RemotMgr.exe, Datain.exe). Raw: ~/bbpro98/work/M0_metrics.txt
 - Sierra documented 831 params in PBINI.TXT (90 KB, with entry types: base value, percent modifier, adjustment, dice
   Count/Faces/Base, weights, dividers). 41 params are undocumented. 405 documented defaults differ from the DLL defaults:
   trust the DLL (pb_table_BBSIM.tsv col dll_default), not the doc.
-- So a PB.INI file is an official, supported way to change sim behavior with no hooks. Not yet tried.
+- So a PB.INI file is an official, supported way to change sim behavior with no hooks. Read as a file and by key
+  name CONFIRMED (see "PB.INI experiment (2026-10-06)" below); downstream effect on sim outcomes still not confirmed.
 - Sim decision core = ~71 functions (work/sim_core_bbsim.tsv, sorted by param count). Largest: 68056fbc relief/pinch-hit
   logic (112 params, BBSim_Roster), 6803a479 and 6803c8f5 (pitch speed/selection, BBSim_Players2), 6801f976 fielder positioning,
   68065947 steal chance, 6800b2fd baserunner lead logic, 6802c303 catch chance, 68065fba hit-and-run, 680583cb pinch runner.
