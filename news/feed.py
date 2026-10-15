@@ -133,8 +133,8 @@ def prompt(facts):
     return SYSTEM, recap.facts_message(facts)
 
 
-def template(facts):
-    """The day's results, then the division leaders, as two plain paragraphs; every number in it passes numbers_ok."""
+def _scores(facts):
+    """One 'Winner 4, Loser 2.' per result, or a line saying no games were played."""
     scores = []
     for r in facts['results']:
         if r['home_runs'] > r['away_runs']:
@@ -144,6 +144,12 @@ def template(facts):
         scores.append('%s %d, %s %d.' % pair)
     if not scores:
         scores.append('No games were played on %s.' % facts['date'])
+    return scores
+
+
+def template(facts):
+    """The day's results, then the division leaders, as two plain paragraphs; every number in it passes numbers_ok."""
+    scores = _scores(facts)
     leaders = []
     for d in facts['division_leaders']:
         group = ' '.join(x for x in (d['league'], d['division']) if x) or 'league'
@@ -155,3 +161,70 @@ def template(facts):
 def write(facts, budget, complete, attempts=2):
     """The 'Around the league' column from the model, or the template when it cannot give one that checks out."""
     return recap.draft(facts, budget, complete, prompt, template, attempts)
+
+
+POST_KEYS = ('month', 'day', 'slot', 'away', 'home', 'away_runs', 'home_runs', 'played', 'innings')
+
+
+def post_day_facts(assoc, bracket, sched, month, day):
+    """What the postseason 'Around the league' column may say about one date: the postseason games played on it (the
+    day page's result rows) and, for each series that met that day, its state counting only games through the date."""
+    teams = assoc['teams']
+    games = [g for g in sched if all(k in g for k in POST_KEYS) and g['played'] and g['away'] in teams
+             and g['home'] in teams]
+    today = sorted((g for g in games if (g['month'], g['day']) == (month, day)), key=lambda g: g['slot'])
+    series = []
+    for rnd in bracket['rounds'] if bracket else []:
+        for s in rnd['series']:
+            pair = s['teams']
+            if len(pair) != 2 or pair[0] == pair[1] or pair[0] not in teams or pair[1] not in teams:
+                continue
+            if not any({g['away'], g['home']} == set(pair) for g in today):
+                continue
+            wins = [0, 0]
+            for g in games:
+                res = recap.outcome(g)
+                if res is not None and (g['month'], g['day']) <= (month, day) and {g['away'], g['home']} == set(pair):
+                    wins[pair.index(res[0])] += 1
+            leader = None
+            if wins[0] != wins[1]:
+                leader = teams[pair[0] if wins[0] > wins[1] else pair[1]]['name']
+            series.append({'round': recap.ROUND_NAMES.get(rnd['round'], 'Postseason'),
+                           'teams': [teams[t]['name'] for t in pair], 'wins': wins, 'best_of': s['best_of'],
+                           'over': max(wins) >= s['best_of'] // 2 + 1, 'leader': leader})
+    return {'association': assoc['name'], 'date': recap.date_text(month, day), 'kind': 'postseason',
+            'results': [{'away': teams[g['away']]['name'], 'home': teams[g['home']]['name'],
+                         'away_runs': g['away_runs'], 'home_runs': g['home_runs'], 'innings': g['innings']}
+                        for g in today],
+            'series': series}
+
+
+POST_SYSTEM = ("You are a newspaper baseball writer covering the association's postseason. Write the 'Around the "
+               "league' column for one date: 80 to 150 words on that day's games and where each series stands. "
+               + recap.RULES)
+
+
+def post_prompt(facts):
+    """(system, user) for the postseason 'Around the league' column."""
+    return POST_SYSTEM, recap.facts_message(facts)
+
+
+def post_template(facts):
+    """The day's scores, then one sentence per series; every number in it passes numbers_ok."""
+    lines = []
+    for s in facts['series']:
+        hi, lo = max(s['wins']), min(s['wins'])
+        if s['leader'] is None:
+            lines.append('The %s is tied %d-%d.' % (s['round'], hi, lo))
+        elif s['over']:
+            lines.append('%s wins the %s %d-%d.' % (s['leader'], s['round'], hi, lo))
+        else:
+            lines.append('%s leads the %s %d-%d.' % (s['leader'], s['round'], hi, lo))
+    return {'headline': facts['series'][0]['round'] if facts['series'] else 'Postseason',
+            'body': '\n'.join(' '.join(p) for p in (_scores(facts), lines) if p)}
+
+
+def post_write(facts, budget, complete, attempts=2):
+    """The postseason 'Around the league' column from the model, or the template when it cannot give one that checks
+    out."""
+    return recap.draft(facts, budget, complete, post_prompt, post_template, attempts)
