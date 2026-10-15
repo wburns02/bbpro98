@@ -47,3 +47,19 @@ Notes: handoff says Lahman files were downloaded on the Mac and a rating-model f
 ## Click into active/retired players from the Career data screen (captured 2026-10-06, DONE 2026-10-08: src-latest/mods/playercard.c)
 Will: be able to click a player in the Career data screen (active and retired) and open their detail.
 Related to the panel-widening work in BBShell.dll (stats grid hit-testing).
+
+## Ten from the sister sims (captured 2026-10-15, not started; report https://claude.ai/artifact/FHYoQk7NozZxDWfsmLqLjX)
+Read across ~/puresim/docs/IDEAS.md, ~/tlrb2/IDEAS.md, ~/itp/docs/formats and ~/ClaudeBall (Long Season), checked
+against what bbpro98 ships. Measured gap behind item 1: Lahman builds rate players against their own league-year and
+the engine plays every era in one PB.INI environment. Lane seasons (tmp/full_*/stats) vs Lahman Teams totals: 1884
+BA .288 vs .243, HR/AB .0408 vs .0063, BB/AB .172 vs .045; 1927 HR/AB .0316 vs .0118; 1998 HR/AB .0387 vs .0303.
+1. Era run environments: absolute-level rating shift in work/lahman/ratings.py, PB override hook as fallback.
+2. Per-player career arcs: a hidden trait hashed from (pid, birth) in aging.c shifts decline onset and size.
+3. Hall of Fame: ballot five years after retirement, scored on real Lahman plus simmed seasons.
+4. Record book and records chase, with the real Lahman record as the bar in historical leagues.
+5. AI GM with team modes (contender, rebuilder), needs-weighted value, a July deadline window.
+6. Real midseason moves in historical replays from Lahman Appearances stints, graded by replay.py.
+7. Draft room page: the class on 20-80 with fogged grades, picks against needs, grades revisited later.
+8. My Player: follow one career (game log, milestones, weekly column, offseason focus as training plan).
+9. Scouting fog: seeded per-team noise on the 20-80 view used by aigm, scout and the draft room.
+10. Dynasty referee: a ten-season lane-2 soak with bands on age, rosters, era rates, games and crashes.
