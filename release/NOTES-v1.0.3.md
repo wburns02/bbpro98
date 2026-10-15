@@ -81,6 +81,7 @@ its text; they do not replace it.
 - When bbtrace.log cannot be renamed to bbtrace.1.log (the old file locked or read-only), bbfix keeps appending to
   the current log and stops rotating instead of emptying it. The card's mouse wheel caps a burst at 10 notches per
   tick. The harness stops a running game before it backs up the files a plan replaces.
+- patch_ext.py refuses a BBShell.dll too short to hold its code cave instead of writing past the end.
 
 ## Known limits
 
