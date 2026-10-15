@@ -28,7 +28,7 @@
                        drop=31:10,32:15,...        age:tenths of a percent of peak lost per season
                        weight=100,90,120,80,20,90,50,90   percent per class: contact, power, speed, arm, hold,
                                                           endurance, control, pitches and fielding
-                       base=29:1,30:3,...          retirement age:percent, ages past the last entry use the last value
+                       base=29:1,30:4,...          retirement age:percent, ages past the last entry use the last value
                        q=70:35,62:60,52:100,44:160,0:220   ability floor:percent factor, highest floor first
 
    v2 (decline only; retirement is unchanged):
@@ -43,7 +43,14 @@
      "pid birth kind", birth the record's +0x1c date serial, kind contact|power|speed|control|stuff|defense. A
      focused player gains focus_gain=2 on each nonzero peak of that class (capped at 99) and loses none there this
      season; every other nonzero rating declines focus_cost=10 more tenths of a percent. Keyed by pid and birth, so
-     copies of one association share a focus. */
+     copies of one association share a focus.
+
+   v3 (2026-10-15, retirement default only): base was 29:1,30:3,...,35:22,...,42:90. Over two 30-team seasons
+   (run6) it held the roster mean age to +0.10 and +0.13 a season, still rising with the 33-and-over group. Players
+   leaving a roster averaged about 33.5 and those joining 24.4, so a flat mean needs about 145 departures a season
+   instead of 125. A cohort projection on run6's observed departure rates put the old curve at 28.9 and rising and the
+   new one at 28.1 to 28.6 over twelve seasons. run7, in game from the same 2028 snapshot: 28.70, 28.71, 28.65 (run6
+   28.70, 28.80, 28.93), 148 and 158 retirements a season, smallest roster 41, fewest pitchers 19. */
 #include <windows.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -300,7 +307,7 @@ BB_EXPORT int bbmod_init(const BBModAPI *a) {
     if (var_pct > 100) var_pct = 100;
     focus_gain = a->ini_int("aging", "focus_gain", 2);
     focus_cost = a->ini_int("aging", "focus_cost", 10);
-    if (!by_age_table("base", "29:1,30:3,31:5,32:8,33:12,34:16,35:22,36:30,37:39,38:49,39:60,40:70,41:80,42:90",
+    if (!by_age_table("base", "29:1,30:4,31:8,32:12,33:18,34:25,35:35,36:45,37:55,38:65,39:75,40:85,41:90,42:95",
                       base_pct)) return 3;
     a->ini_str("aging", "weight", "100,90,120,80,20,90,50,90", buf, sizeof buf);
     char *s = buf, *e;
