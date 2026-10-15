@@ -151,6 +151,11 @@ static void load_focus(void) {
     char line[128], kind[16];
     while (nfocus < MAXFOCUS && fgets(line, sizeof line, f)) {
         int pid; unsigned long birth;
+        if (!strchr(line, '\n') && !feof(f)) {   /* overlong line: drop all of it, never read its tail as a record */
+            int ch;
+            while ((ch = fgetc(f)) != EOF && ch != '\n') {}
+            continue;
+        }
         if (sscanf(line, "%d %lu %15s", &pid, &birth, kind) != 3 || pid < 100 || pid > 32767) continue;
         for (int k = 1; k <= F_DEFENSE; k++)
             if (!lstrcmpiA(kind, FOCUS_NAMES[k])) {

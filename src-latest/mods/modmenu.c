@@ -924,6 +924,7 @@ static void on_assns(Win *w, MMResp *r, const char *err) {
     }
     c = mm_get(r, "count");
     n = c ? atoi(c) : 0;
+    if (n > HDR_MAX) n = HDR_MAX;   /* a header cannot hold more keys than that; a huge count would spin the UI */
     SendMessageA(st->assn, CB_RESETCONTENT, 0, 0);
     st->nstem = 0;
     for (i = 0; i < n && st->nstem < MAXSTEM; i++) {
@@ -1127,6 +1128,7 @@ static void load_hots(NewsState *st) {
     char k[32], path[PATH_LEN], label[64];
     const char *v, *t = mm_get(&st->pg, "hots");
     int i, n = t ? atoi(t) : 0, x, y, w, h;
+    if (n > HDR_MAX) n = HDR_MAX;
     st->nhot = 0;
     for (i = 0; i < n && st->nhot < HOT_MAX; i++) {
         snprintf(k, sizeof k, "hot.%d", i);
@@ -1134,7 +1136,7 @@ static void load_hots(NewsState *st) {
         if (!v) continue;
         snprintf(path, sizeof path, "%s", tab_field(v, label, sizeof label));
         if (!path[0] || sscanf(label, "%d,%d,%d,%d", &x, &y, &w, &h) != 4 || x < 0 || y < 0 || w <= 0 || h <= 0 ||
-            x + w > st->bw || y + h > st->bh)
+            w > st->bw - x || h > st->bh - y)   /* x + w could wrap */
             continue;
         SetRect(&st->hot[st->nhot].r, x, y, x + w, y + h);
         snprintf(st->hot[st->nhot].path, PATH_LEN, "%s", path);
@@ -1236,6 +1238,7 @@ static void news_done(Win *w, MMResp *r, const char *err) {
     SendMessageA(st->list, LB_RESETCONTENT, 0, 0);
     t = mm_get(&st->pg, "count");
     n = t ? atoi(t) : 0;
+    if (n > HDR_MAX) n = HDR_MAX;
     for (i = 0; i < n; i++) {
         snprintf(k, sizeof k, "link.%d", i);
         v = mm_get(&st->pg, k);

@@ -49,7 +49,8 @@ m = re.search(r'\ba1 ([0-9a-f]{2}) ([0-9a-f]{2}) ([0-9a-f]{2}) ([0-9a-f]{2})', c
 if not m: sys.exit('f_rel is not mov eax,[abs]:\n' + code)
 va['g_val'] = int(''.join(reversed(m.groups())), 16)
 with open(f'{out}/bbfix.ini', 'w') as fh:
-    fh.write('[mods]\r\nload=hkgood.dll,hkbad.dll,hkrel.dll\r\n[hktest]\r\n')
+    # The last two must be refused before LoadLibrary: a mod path never leaves the game folder.
+    fh.write('[mods]\r\nload=hkgood.dll,hkbad.dll,hkrel.dll,..\\hkup.dll,Z:\\hkabs.dll\r\n[hktest]\r\n')
     for k, v in va.items(): fh.write(f'{k}={v}\r\n')
 
 env = dict(os.environ, WINEPREFIX='/mnt/nvme/bbpro98/hktest_prefix', WINEDEBUG='-all', WINEDLLOVERRIDES='mscoree,mshtml=;winedbg.exe=d',
@@ -74,5 +75,7 @@ for m in ('hktarget.dll', 'hkreloc.dll'):
     if not re.search(rf'hkgood.dll: applied 5 hooks to {m}', trace): fails.append(f'no "applied 5 hooks" for {m}')
     if not re.search(rf'hkbad.dll: NOT applied to {m} .*bytes differ', trace): fails.append(f'bad-expect refusal missing for {m}')
     if not re.search(rf'hkrel.dll: NOT applied to {m} .*overlaps a base relocation', trace): fails.append(f'reloc refusal missing for {m}')
+for bad in ('..\\hkup.dll', 'Z:\\hkabs.dll'):
+    if f'MOD    {bad}: refused' not in trace: fails.append(f'{bad} was not refused')
 print('\n'.join(fails) if fails else '', 'FAIL' if fails else 'PASS')
 sys.exit(1 if fails else 0)
