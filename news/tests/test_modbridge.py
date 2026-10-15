@@ -712,3 +712,11 @@ def test_build_refuses_over_leftover_or_planted_season_files(bridge, site, monke
     head, body = ask(ctx, spool, 'op=build\nyear=1927')
     assert head['status'] == 'error' and 'already in the game without' in body
     assert calls == []
+
+
+def test_route_path_survives_an_unparseable_href():
+    assert modbridge._route_path('http://[x', '/news/') == ''
+    assert modbridge._route_path('/news/14L1875?x=1#a', '/news/') == '/news/14L1875?x=1'
+    title, text, links = modbridge.html_to_text('<p><a href="http://[::1">bad</a> <a href="/news/ok">ok</a></p>',
+                                                '/news/')
+    assert links == [('ok', '/news/ok')] and 'bad' in text

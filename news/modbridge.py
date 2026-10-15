@@ -121,8 +121,13 @@ def _collapse(parts):
 
 
 def _route_path(href, base):
-    """The path and query an href leads to, resolved against the page's path: no scheme, host or fragment."""
-    return urllib.parse.urlsplit(urllib.parse.urljoin(base, href))._replace(scheme='', netloc='', fragment='').geturl()
+    """The path and query an href leads to, resolved against the page's path: no scheme, host or fragment. An href
+    urllib cannot parse (a broken IPv6 host such as http://[x) leads nowhere: ''."""
+    try:
+        return urllib.parse.urlsplit(urllib.parse.urljoin(base, href))._replace(scheme='', netloc='',
+                                                                                fragment='').geturl()
+    except ValueError:
+        return ''
 
 
 def _grid(rows):

@@ -181,7 +181,7 @@ def _arsenal_rows(values, errors):
 
 def _read_grade(value):
     """The grade a posted value reads as, or None; the budget line counts only real grades."""
-    return int(value) if value.isdigit() and int(value) in create.GRADES else None
+    return create._pick(value, create.GRADES)
 
 
 def _budget_text(values):

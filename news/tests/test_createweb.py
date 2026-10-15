@@ -411,3 +411,10 @@ def test_every_response_carries_the_csp_header(web):
         status, headers, _ = call(web, method, path, b'', {'Origin': 'https://evil.test'} if method == 'POST' else {})
         assert "frame-ancestors 'self'" in headers['Content-Security-Policy'], (method, path, status)
         assert headers['Referrer-Policy'] == 'same-origin'
+
+
+def test_read_grade_takes_only_plain_digits():
+    assert createweb._read_grade('60') == 60
+    for v in ('²', '٣', '1²', '', '-5', '61', '0600', 'abc'):
+        assert createweb._read_grade(v) is None, v           # '²' passed isdigit and raised in int() before
+    assert createweb._budget_text({'pos': 'C', 'now_contact': '²'})

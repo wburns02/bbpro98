@@ -348,3 +348,11 @@ def test_trace_age_a_stamp_just_ahead_of_now_is_fresh():
     assert lanestat.trace_age('12:00:01.250 HANDLES', now=now) == 0.0
     assert lanestat.trace_age('11:59:50.000 x', now=now) == 10.0
     assert lanestat.trace_age('12:10:00.000 x', now=now) == 86400.0 - 600.0
+
+
+def test_trace_age_an_impossible_stamp_has_no_age():
+    import datetime
+    now = datetime.datetime(2026, 10, 15, 12, 0, 0)
+    for line in ('25:00:00.000 x', '12:61:00.000 x', '12:00:60.000 x', '99:99:99.9'):
+        assert lanestat.trace_age(line, now=now) is None, line
+    assert lanestat.trace_age('23:59:59.000 x', now=now) == 43201.0
