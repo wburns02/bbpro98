@@ -473,35 +473,31 @@ def champion(asn_path):
     with the champion's wins first (the series order follows b['champion']). A torn or odd file can raise more than
     OSError and ValueError from the parsers (assn_row catches the same set), so the whole read is guarded."""
     try:
-        return _champion(asn_path)
+        b = gamedata.postseason(asn_path)
+        a = gamedata.association(asn_path)
+        year = a['season_year']
+
+        def name(tid):
+            t = a['teams'].get(tid)
+            return t['name'] if t else 'team %d' % tid
+
+        if b is None:
+            return {'season': year, 'champion': None}
+        out = {'season': year, 'complete': b['complete'], 'champion': None, 'runner_up': None, 'series': None}
+        tid = b['champion']
+        if tid is None:
+            return out
+        out['champion'] = name(tid)
+        rounds = b.get('rounds') or []
+        if len(rounds) > 2 and rounds[2]['series']:
+            s = rounds[2]['series'][0]
+            if tid in s['teams']:
+                i = s['teams'].index(tid)
+                out['runner_up'] = name(s['teams'][1 - i])
+                out['series'] = '%d-%d' % (s['wins'][i], s['wins'][1 - i])
+        return out
     except (OSError, ValueError, KeyError, IndexError, TypeError, AttributeError, struct.error) as e:
         return {'season': None, 'champion': None, 'error': str(e) or type(e).__name__}
-
-
-def _champion(asn_path):
-    b = gamedata.postseason(asn_path)
-    a = gamedata.association(asn_path)
-    year = a['season_year']
-
-    def name(tid):
-        t = a['teams'].get(tid)
-        return t['name'] if t else 'team %d' % tid
-
-    if b is None:
-        return {'season': year, 'champion': None}
-    out = {'season': year, 'complete': b['complete'], 'champion': None, 'runner_up': None, 'series': None}
-    tid = b['champion']
-    if tid is None:
-        return out
-    out['champion'] = name(tid)
-    rounds = b.get('rounds') or []
-    if len(rounds) > 2 and rounds[2]['series']:
-        s = rounds[2]['series'][0]
-        if tid in s['teams']:
-            i = s['teams'].index(tid)
-            out['runner_up'] = name(s['teams'][1 - i])
-            out['series'] = '%d-%d' % (s['wins'][i], s['wins'][1 - i])
-    return out
 
 
 def seasons(h, shots, stem, n, limit, year):
