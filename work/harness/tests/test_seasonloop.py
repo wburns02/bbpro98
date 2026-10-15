@@ -5,6 +5,7 @@ import os
 import struct
 import sys
 
+from PIL import Image
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -81,9 +82,13 @@ def test_each_notice_reference_is_recognised_and_a_plain_screen_is_not():
 class _H:
     def __init__(self, work):
         self.WORK = str(work)
+        self.keys, self.clicks = [], []
 
     def x(self, *a):
-        pass
+        self.keys.append(a)
+
+    def click(self, *a):
+        self.clicks.append(a)
 
 
 def _quiet_sim(monkeypatch, tmp_path, on_sim):
@@ -93,7 +98,10 @@ def _quiet_sim(monkeypatch, tmp_path, on_sim):
     (assn / 'TEST.ASN').write_bytes(b'a')
     (assn / 'OTHER.ASN').write_bytes(b'b')
     monkeypatch.setattr(seasonloop, 'played', lambda asn: (0, 100))
-    monkeypatch.setattr(seasonloop, 'sim', lambda h: on_sim(assn))
+    def _sim(h, shots):
+        on_sim(assn)
+        return True
+    monkeypatch.setattr(seasonloop, 'sim', _sim)
     monkeypatch.setattr(seasonloop, 'QUIET', 0)
     for name in ('settle', 'look'):
         monkeypatch.setattr(seasonloop, name, lambda *a, **k: None)
@@ -117,3 +125,104 @@ def test_season_without_another_write_is_not_called_wrong(tmp_path, monkeypatch,
     assert seasonloop.season(h, str(tmp_path), 'TEST', 3600) is False      # stuck: MAX_STOPS, never a game played
     out = capsys.readouterr().out
     assert 'wrong_association' not in out and '"stop": 1' in out
+
+
+class _Poster:
+    """A tiny fake screen for sim/postseason tests: every look() hands the png the next screen name from a list
+    (the last one repeats), and _diff/notice read it back. A fake clock keeps the sleep calls harmless."""
+    def __init__(self, screens):
+        self.screens = list(screens)
+        self.faces = {}             # png path: the screen it currently shows
+
+    def next(self):
+        return self.screens.pop(0) if self.screens else (self.faces and list(self.faces.values())[-1])
+
+
+def _stub_screen(monkeypatch, mock):
+    def look(h, png):
+        mock.faces[png] = mock.next()
+        Image.new('L', (4, 4)).save(png)
+    monkeypatch.setattr(seasonloop, 'look', look)
+    monkeypatch.setattr(seasonloop, '_same', lambda a, b: mock.faces.get(a) == mock.faces.get(b))
+    monkeypatch.setattr(seasonloop, '_other_mtimes', lambda asn: {})
+    monkeypatch.setattr(seasonloop.time, 'sleep', lambda s: None)
+    real_replace = os.replace
+
+    def replace(src, dst):          # seasonloop renames pngs onto each other; the fake screen must follow
+        if src in mock.faces:
+            mock.faces[dst] = mock.faces.pop(src)
+        real_replace(src, dst)
+    monkeypatch.setattr(seasonloop.os, 'replace', replace)
+
+    def diff(png, ref, box):
+        return 0.0 if mock.faces.get(png) == _REF_SCREEN.get(ref) else 100.0
+    monkeypatch.setattr(seasonloop, '_diff', diff)
+
+    def notice(png):
+        return 'complete' if mock.faces.get(png) == 'complete' else None
+    monkeypatch.setattr(seasonloop, 'notice', notice)
+    return mock
+
+
+_REF_SCREEN = {'f_sched.png': 'sched', 'f_champ.png': 'champ', 'f_update.png': 'busy', 'f_assn.png': 'assn'}
+ENDLESS = 10 ** 12                     # t_end far in the future: the screen sequence ends the loop instead
+
+
+def test_sim_refused_off_the_schedule_with_zero_clicks(tmp_path, monkeypatch, capsys):
+    mock = _stub_screen(monkeypatch, _Poster(['other']))
+    h = _H(tmp_path)
+    assert seasonloop.sim(h, str(tmp_path)) is False
+    assert h.clicks == [] and h.keys == []
+    assert (tmp_path / 'sim_refused.png').exists()
+    assert '{"sim": "refused"}' in capsys.readouterr().out
+
+
+def test_sim_from_assn_data_presses_ctrl_k_then_clicks(tmp_path, monkeypatch):
+    mock = _stub_screen(monkeypatch, _Poster(['assn', 'sched']))
+    h = _H(tmp_path)
+    assert seasonloop.sim(h, str(tmp_path)) is True
+    assert h.keys == [('key', 'ctrl+k')]
+    assert len(h.clicks) == 4
+
+
+def test_sim_from_the_schedule_clicks_four_times_without_ctrl_k(tmp_path, monkeypatch):
+    mock = _stub_screen(monkeypatch, _Poster(['sched']))
+    h = _H(tmp_path)
+    assert seasonloop.sim(h, str(tmp_path)) is True
+    assert ('key', 'ctrl+k') not in h.keys
+    assert len(h.clicks) == 4
+
+
+def test_postseason_busy_screen_never_sims_then_complete(tmp_path, monkeypatch, capsys):
+    # POST_HELD + 4 busy looks, then complete: a busy look is progress, so no sim ever fires
+    mock = _stub_screen(monkeypatch, _Poster(['busy'] * (seasonloop.POST_HELD + 4) + ['complete']))
+    h = _H(tmp_path)
+    assert seasonloop.postseason(h, str(tmp_path), ENDLESS) is True
+    assert h.clicks == [] and h.keys == []
+    assert '{"postseason": "complete"' in capsys.readouterr().out
+
+
+def test_postseason_champion_screen_sends_return_never_sims(tmp_path, monkeypatch, capsys):
+    # a champion look, then the champion still up after the Return, then complete
+    mock = _stub_screen(monkeypatch, _Poster(['champ', 'champ', 'champ', 'complete']))
+    h = _H(tmp_path)
+    assert seasonloop.postseason(h, str(tmp_path), ENDLESS) is True
+    assert h.keys == [('key', 'Return')] and h.clicks == []
+    out = capsys.readouterr().out
+    assert '{"postseason": "champion"}' in out and '"postseason": "sim"' not in out
+
+
+def test_postseason_wrong_association_stops_before_any_input(tmp_path, monkeypatch, capsys):
+    mock = _stub_screen(monkeypatch, _Poster(['sched'] * 3))
+    h = _H(tmp_path)
+    calls = []
+
+    def mtimes(asn):
+        calls.append(asn)
+        return {} if len(calls) == 1 else {'OTHER.ASN': 1}      # changes after the entry snapshot
+    monkeypatch.setattr(seasonloop, '_other_mtimes', mtimes)
+    assert seasonloop.postseason(h, str(tmp_path), ENDLESS, asn='X.ASN') is False
+    out = capsys.readouterr().out
+    assert '{"postseason": "wrong_association"}' in out
+    assert '"postseason": "sim"' not in out
+    assert h.keys == [] and h.clicks == []
