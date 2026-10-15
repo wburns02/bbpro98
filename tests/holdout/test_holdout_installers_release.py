@@ -338,15 +338,19 @@ def check_release_zip_has_exactly_the_shipped_files_with_true_checksums(fake_rep
                    'the folder it is scanning, so the file lists itself with a hash that can never match and '
                    '`sha256sum -c SHA256SUMS.txt` ends FAILED (also in the v1.0.2 draft zip). Remove this marker when fixed.')
 def test_shipped_sha256sums_verify_with_sha256sum_c(fake_repo, tmp_path):
-    """Guards: a user checking the download with the checksum file the zip ships."""
+    """Guards: a user checking the download with the checksum file the zip ships.
+
+    The bug is a race (the redirect creates SHA256SUMS.txt while find is scanning), so one build can come out
+    clean by luck. Build five times and require every one to verify, so the strict xfail does not flip at random."""
     repo, stub = fake_repo
-    res = build(repo, stub, tmp_path / 'dist')
-    assert res.returncode == 0, res.stderr
-    unpacked = tmp_path / 'unpacked'
-    with zipfile.ZipFile(res.stdout.strip().splitlines()[-1]) as z:
-        z.extractall(unpacked)
-    check = run(['sha256sum', '-c', 'SHA256SUMS.txt'], cwd=str(unpacked))
-    assert check.returncode == 0, check.stdout
+    for i in range(5):
+        res = build(repo, stub, tmp_path / f'dist{i}')
+        assert res.returncode == 0, res.stderr
+        unpacked = tmp_path / f'unpacked{i}'
+        with zipfile.ZipFile(res.stdout.strip().splitlines()[-1]) as z:
+            z.extractall(unpacked)
+        check = run(['sha256sum', '-c', 'SHA256SUMS.txt'], cwd=str(unpacked))
+        assert check.returncode == 0, check.stdout
 
 
 def test_release_packaging_ships_exactly_the_documented_files(fake_repo, tmp_path):
