@@ -94,9 +94,9 @@ def test_render_rows():
     assert 'Verdicts' in r and 'Postseason' in r
     assert '28.46' in r and '+0.24' in r
     assert '2027  1283' in r or ('  2027' in r and '1283' in r)
-    assert 'Cubs over Yankees 4-2' in r
+    assert '2028 Cubs over Yankees 4-2' in r
     assert 'error: stuck' in r
-    assert 'lah2026: done True, played 54 of 27' in r
+    assert 'lah2026: done True, played 54, rounds 27, stops 1' in r
     assert 'mid: timeout' in r
     assert 'ok: 2' in r and 'busy: 2' in r
     assert 'waiting: 1' in r and 'stale_update_box: 1' in r
@@ -142,3 +142,8 @@ def test_cli_json_and_missing(tmp_path, capsys):
     assert missing.returncode == 2
     assert 'runreport:' in missing.stderr
     assert str(tmp_path / 'no.log') in missing.stderr
+
+
+def test_render_no_champion_lines_says_none():
+    r = runreport.render(runreport.summary(runreport.parse('{"demographics": 0, "year": 2028, "t": "00:00:01"}')))
+    assert r.split('Champions\n', 1)[1].startswith('none\n')

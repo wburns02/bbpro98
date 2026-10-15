@@ -97,15 +97,15 @@ def render(s):
     out.append('Champions')
     rows = s.get('champions', [])
     if not rows:
-        out.append('no champion yet')
+        out.append('none')
     for r in rows:
         if r.get('error') is not None and r.get('champion') is None:
-            out.append('error: %s' % _cell(r.get('error')))
+            out.append('%s error: %s' % (_cell(r.get('season')), _cell(r.get('error'))))
         elif r.get('champion') is None:
-            out.append('no champion yet')
+            out.append('%s no champion yet' % _cell(r.get('season')))
         else:
-            out.append('%s over %s %s' % (
-                _cell(r.get('champion')), _cell(r.get('runner_up')),
+            out.append('%s %s over %s %s' % (
+                _cell(r.get('season')), _cell(r.get('champion')), _cell(r.get('runner_up')),
                 _cell(r.get('series'))))
     out.append('')
     out.append('Seasons')
@@ -118,9 +118,9 @@ def render(s):
         elif r.get('wrong_association'):
             out.append('%s: wrong association' % _cell(r.get('stem')))
         else:
-            out.append('%s: done %s, played %s of %s' % (
-                _cell(r.get('stem')), _cell(r.get('done')),
-                _cell(r.get('played')), _cell(r.get('rounds'))))
+            out.append('%s: done %s, played %s, rounds %s, stops %s' % (
+                _cell(r.get('stem')), _cell(r.get('done')), _cell(r.get('played')),
+                _cell(r.get('rounds')), _cell(r.get('stops'))))
     out.append('')
     out.append('Verdicts')
     if not s.get('verdicts'):
