@@ -854,3 +854,24 @@ def test_an_archived_box_score_is_not_captured_into_pending_again(world):
     (out / 'past' / '1997' / 'pending' / (key + '.json')).unlink()
     w.capture('30L1998')
     assert (out / 'pending' / (key + '.json')).exists()
+
+
+def test_meta_counts_played_games_and_recap_stories(world):
+    """meta.json tells the reader the coverage: played games in the association and stories in recaps/."""
+    gd, data, st = world
+    st['boxfile']('30L1998.H10', {'away': side(1, 3, 100), 'home': side(2, 1, 200)})
+    st['boxfile']('30L1998.H20', {'away': side(2, 0, 200), 'home': side(1, 5, 100)})
+    watch.Watcher(str(gd), str(data), None, None, log=lambda s: None).scan()
+    meta = json.loads((data / '30L1998' / 'meta.json').read_text())
+    assert type(meta['played']) is int and type(meta['stories']) is int
+    assert meta['played'] == 2 and meta['stories'] == 2
+
+
+def test_meta_story_count_covers_older_recaps_and_skips_other_files(world):
+    gd, data, st = world
+    (data / '30L1998' / 'recaps').mkdir(parents=True)
+    (data / '30L1998' / 'recaps' / 'old.json').write_text('{}')
+    (data / '30L1998' / 'recaps' / 'note.txt').write_text('')
+    watch.Watcher(str(gd), str(data), None, None, log=lambda s: None).scan()
+    meta = json.loads((data / '30L1998' / 'meta.json').read_text())
+    assert meta['stories'] == 1 and type(meta['played']) is int

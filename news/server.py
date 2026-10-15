@@ -67,7 +67,7 @@ a:hover { color: var(--accent); }
 .masthead { text-align: center; border-bottom: 3px double var(--rule); margin-bottom: 20px; padding-bottom: 10px; }
 .masthead h1 { font-size: clamp(2rem, 6vw, 3.25rem); line-height: 1.05; margin: 2px 0 4px; }
 .kicker { margin: 0; font: .8rem var(--sans); letter-spacing: .14em; text-transform: uppercase; color: var(--accent); }
-.through, .meta, .dateline, .byline, .nav { margin: 0; font: .95rem var(--sans); color: var(--muted); }
+.through, .meta, .dateline, .byline, .nav, .coverage { margin: 0; font: .95rem var(--sans); color: var(--muted); }
 h1, h2 { font-weight: 700; line-height: 1.2; text-wrap: balance; }
 h2 { font-size: 1.35rem; margin: 0 0 4px; }
 .grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 24px; }
@@ -352,6 +352,22 @@ def _index(data_dir):
     return _page_reply(200, 'League News', body)
 
 
+def _comma(value):
+    return '{:,}'.format(value)
+
+
+def _coverage_html(meta):
+    """A line for the lead column when the watcher has stories for only part of the played games: '' when the meta
+    does not say so (old meta.json, a full run, no games played)."""
+    played, stories = meta.get('played'), meta.get('stories')
+    ok = (type(played) is int and type(stories) is int and played > 0 and stories < played)
+    if not ok:
+        return ''
+    return ('<p class="coverage">Stories for %s of %s games played. The game keeps box scores for seven sim days; '
+            'a watcher that is not running during a long sim misses the games in between.</p>'
+            % (_comma(stories), _comma(played)))
+
+
 def _lead_html(folder, home, page):
     """The front page's main column for a season folder: on page 1 the newest 'Around the league' column, then the
     page's stories (linked under home) and the pager."""
@@ -393,7 +409,7 @@ def _association(data_dir, assn, qs):
     side = (moves + season + past + replay + payroll + scouting + _standings_html(meta.get('standings'))
             + _leaders_html(meta.get('leaders')))
     return _front_page('%s · League News' % name, _masthead(name, _through(meta)), _nav(),
-                       _lead_html(folder, home, page), side)
+                       (_coverage_html(meta) if page == 1 else '') + _lead_html(folder, home, page), side)
 
 
 def _past_label(d):
