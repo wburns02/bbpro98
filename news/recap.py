@@ -85,10 +85,16 @@ def _pitch(abbrev, line, names):
 def game_facts(assoc, box, game, names):
     """What a story about one played game may say. `box` is gamedata.boxscore() of that game; `names` maps player
     ids to 'First Last'."""
+    return _facts(assoc, box, game, names, records(assoc, game))
+
+
+def _facts(assoc, box, game, names, recs):
+    """game_facts with each side's record given: recs is {'away': (w, l), 'home': (w, l)}. A game with no month has
+    no date."""
     away, home = box['away'], box['home']
     if away['runs'] == home['runs']:
         raise ValueError('tied game: nothing to write about')
-    teams, recs = assoc['teams'], records(assoc, game)
+    teams = assoc['teams']
     sides = {}
     for side, bx in (('away', away), ('home', home)):
         team = teams[game[side]]
@@ -125,9 +131,9 @@ def game_facts(assoc, box, game, names):
             if b['hr'] >= 2:
                 notes.append('%s hit %d home runs' % (name_of(names, b['pid']), b['hr']))
 
-    return {'association': assoc['name'], 'date': date_text(game['month'], game['day']),
-            'innings': game['innings'], 'away': sides['away'], 'home': sides['home'], 'winner': winner,
-            'batters': batters[:6], 'decisions': dec, 'notes': notes}
+    date = None if game['month'] is None else date_text(game['month'], game['day'])
+    return {'association': assoc['name'], 'date': date, 'innings': game['innings'], 'away': sides['away'],
+            'home': sides['home'], 'winner': winner, 'batters': batters[:6], 'decisions': dec, 'notes': notes}
 
 
 def _walk(value, out):
@@ -219,13 +225,9 @@ def _plural(n, noun):
     return '%d %s' % (n, noun if n == 1 else noun + 's')
 
 
-def template(facts):
-    """A plain story built only from the facts; every number in it passes numbers_ok."""
-    win = facts['winner']
-    lose = 'home' if win == 'away' else 'away'
-    w, l = facts[win], facts[lose]
-    body = ['%s beat %s %d-%d at %s on %s.' % (w['name'], l['name'], w['runs'], l['runs'],
-                                                       facts['home']['stadium'], facts['date'])]
+def _details(facts):
+    """The sentences a story gives after its first: the innings, the top batters and the pitching decisions."""
+    body = []
     if facts['innings'] > 9:
         body.append('It took %d innings.' % facts['innings'])
     for b in facts['batters'][:3]:
@@ -244,6 +246,17 @@ def template(facts):
             dec['win']['name'], _plural(dec['win']['r'], 'run'), dec['win']['ip']))
     if dec['save']:
         body.append('%s earned the save over %s innings.' % (dec['save']['name'], dec['save']['ip']))
+    return body
+
+
+def template(facts):
+    """A plain story built only from the facts; every number in it passes numbers_ok."""
+    win = facts['winner']
+    lose = 'home' if win == 'away' else 'away'
+    w, l = facts[win], facts[lose]
+    body = ['%s beat %s %d-%d at %s on %s.' % (w['name'], l['name'], w['runs'], l['runs'],
+                                                       facts['home']['stadium'], facts['date'])]
+    body += _details(facts)
     body.append('%s is %s; %s is %s.' % (facts['away']['name'], facts['away']['record'],
                                          facts['home']['name'], facts['home']['record']))
     return {'headline': '%s %d, %s %d' % (w['name'], w['runs'], l['name'], l['runs']), 'body': ' '.join(body)}
@@ -275,3 +288,72 @@ def draft(facts, budget, complete, make_prompt, fallback, attempts=2):
 def write(facts, budget, complete, attempts=2):
     """A game story from the model, or the template when it cannot give one that checks out."""
     return draft(facts, budget, complete, prompt, template, attempts)
+
+
+ROUND_NAMES = {1: 'Division Series', 2: 'League Championship Series', 3: 'World Series'}
+
+
+def match_post(bracket, box, used):
+    """(round, series index, game index) of the first bracket game that is this box score: same away and home team,
+    same final score, not in `used`. Rounds, series and games are tried in order, so a repeated score maps to the
+    earliest game not yet written about. None when no game fits."""
+    a, h = box['away'], box['home']
+    want = (a['tid'], h['tid'], a['runs'], h['runs'])
+    for rnd in bracket['rounds']:
+        for si, s in enumerate(rnd['series']):
+            for gi, g in enumerate(s['games']):
+                got = (g['away'], g['home'], g['away_runs'], g['home_runs'])
+                if got == want and (rnd['round'], si, gi) not in used:
+                    return rnd['round'], si, gi
+    return None
+
+
+def post_facts(assoc, box, bracket, rnd, si, gi, names, sched=None):
+    """What a story about one postseason game may say: game_facts with each side's record being its wins and losses
+    in the series through this game, plus the round, the game number and whether the series ended. `sched` is the
+    game's postseason_schedule entry, for its date and innings; without it the story has no date and 9 innings."""
+    s = next(r for r in bracket['rounds'] if r['round'] == rnd)['series'][si]
+    wl = {}
+    for g in s['games'][:gi + 1]:
+        if g['away_runs'] != g['home_runs']:
+            win, lose = (g['away'], g['home']) if g['away_runs'] > g['home_runs'] else (g['home'], g['away'])
+            wl.setdefault(win, [0, 0])[0] += 1
+            wl.setdefault(lose, [0, 0])[1] += 1
+    cur = s['games'][gi]
+    recs = {side: tuple(wl.get(cur[side], (0, 0))) for side in ('away', 'home')}
+    game = {'away': cur['away'], 'home': cur['home'], 'month': sched['month'] if sched else None,
+            'day': sched['day'] if sched else None, 'innings': sched['innings'] if sched else 9}
+    over = any(w >= s['best_of'] // 2 + 1 for w, _ in wl.values())
+    return dict(_facts(assoc, box, game, names, recs), round=ROUND_NAMES[rnd], game_number=gi + 1,
+                best_of=s['best_of'], series_over=over)
+
+
+def _series_record(side):
+    return tuple(int(n) for n in side['record'].split('-'))
+
+
+def post_template(facts):
+    """A plain story for a postseason game, built only from the facts; every number in it passes numbers_ok."""
+    win = facts['winner']
+    lose = 'home' if win == 'away' else 'away'
+    w, l = facts[win], facts[lose]
+    first = '%s beat %s %d-%d in Game %d of the %s at %s' % (w['name'], l['name'], w['runs'], l['runs'],
+                                                              facts['game_number'], facts['round'],
+                                                              facts['home']['stadium'])
+    if facts['date'] is not None:
+        first += ' on %s' % facts['date']
+    body = [first + '.'] + _details(facts)
+    (ww, wl), (lw, ll) = _series_record(w), _series_record(l)
+    lead, (a, b) = (l, (lw, ll)) if lw > ww else (w, (ww, wl))
+    if facts['series_over']:
+        body.append('%s wins the series %d-%d.' % (lead['name'], a, b))
+    elif ww == lw:
+        body.append('The series is tied %d-%d.' % (ww, lw))
+    else:
+        body.append('%s leads the series %d-%d.' % (lead['name'], a, b))
+    return {'headline': '%s %d, %s %d' % (w['name'], w['runs'], l['name'], l['runs']), 'body': ' '.join(body)}
+
+
+def post_write(facts, budget, complete, attempts=2):
+    """A postseason game story from the model, or post_template when it cannot give one that checks out."""
+    return draft(facts, budget, complete, prompt, post_template, attempts)
