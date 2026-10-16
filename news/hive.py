@@ -16,6 +16,26 @@ KEY_FILE = os.environ.get('BBNEWS_KEY_FILE', os.path.expanduser('~/.config/hivem
 THINK = re.compile(r'<think>.*?</think>', re.S)
 
 
+def _load_hive_usage():
+    """~/bin/hive_usage.py (the workstation Hive spend ledger read by `hive-spend`), or None off the workstation."""
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("hive_usage", os.path.expanduser("~/bin/hive_usage.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+    except Exception:
+        return None
+
+
+_HIVE_USAGE = _load_hive_usage()
+
+
+def _log_hive(tool, model, usage):
+    if _HIVE_USAGE is not None:
+        _HIVE_USAGE.log_call(tool, model, usage)
+
+
 class HiveError(RuntimeError):
     pass
 
@@ -123,6 +143,7 @@ def complete(system, user, budget, max_tokens=16000, temperature=0.7, timeout=18
     finally:
         # A stream that ends without a usage block still costs: charge about four characters per token.
         budget.record(usage or {'completion_tokens': spent[0] // 4})
+        _log_hive('bbpro98-news', MODEL, usage)
     out = THINK.sub('', ''.join(text)).strip()
     if not out:
         raise HiveError('empty answer (usage %s)' % usage)
