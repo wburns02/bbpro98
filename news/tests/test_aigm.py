@@ -2,7 +2,10 @@
 need, catchers and pitchers never traded, proposals only for human teams and never on a chosen trade's players,
 MAX_PROPOSALS, the inputs left alone); read and apply_trade on synthetic ASN bytes (locate is pointed at the records,
 the cipher seed is at 0x310-0x311); locate's filter on a fake ctree.parse; validate (each problem); and one check on the
-real 1950 association, which skips when its files are not on the machine.
+real 1950 association, which skips when its files are not on the machine. Then the upgrade: strength and the offseason
+and deadline modes, mode_value at every age edge, the fog in planning (stem None as before), a mode's effect on a trade,
+pitcher swaps (the rotation spot, the displaced pitcher, validate) and the salary term. The deadline is in
+test_aigm_deadline.py.
 """
 import copy
 import os
@@ -15,6 +18,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import aigm        # noqa: E402
 import ctree       # noqa: E402
+import fog         # noqa: E402
 import gamedata    # noqa: E402 (work/ is on the path once gamedata is imported)
 import league      # noqa: E402
 
@@ -457,3 +461,363 @@ def test_a_real_1950_association_plans_a_trade_that_applies_and_validates():
     assert trade['a_gives'] in after[trade['b']] and trade['a_gives'] not in after[trade['a']]
     assert trade['b_gives'] in after[trade['a']] and trade['b_gives'] not in after[trade['b']]
     assert aigm.validate(snap['windows'], after, players) == []
+
+
+# strength and the team modes
+
+def teams_of(strengths):
+    """(windows, players): one team per tid with one active hitter worth strengths[tid] (contact, born unknown)."""
+    players = {100 + tid: hit('1B', s) for tid, s in strengths.items()}
+    return {tid: win([100 + tid]) for tid in strengths}, players
+
+
+def test_strength_is_the_sum_of_value_over_the_active_ids():
+    players = {101: hit('SS', 60), 102: hit('2B', 70), 103: hit('1B', 99, born=1950), 104: pit(50)}
+    windows = {1: win([101, 102, 999]), 2: win([103], [101]), 3: win([104])}  # 999 is no player; lineups do not count
+    assert aigm.strength(windows, players, None) == {1: 130.0, 2: 99.0, 3: 50.0}
+    assert aigm.strength(windows, players, 1977)[2] == pytest.approx(99 * 1.0)  # age 27
+    assert aigm.strength(windows, players, 1975)[2] == pytest.approx(99 * 1.10)  # age 25
+
+
+def test_offseason_modes_give_the_top_third_contend_and_the_bottom_third_rebuild():
+    windows, players = teams_of({1: 50, 2: 60, 3: 20, 4: 40, 5: 30, 6: 10})
+    assert aigm.offseason_modes(windows, players, None) == {2: 'contend', 1: 'contend', 4: 'neutral', 5: 'neutral',
+                                                            3: 'rebuild', 6: 'rebuild'}
+
+
+def test_offseason_modes_break_ties_by_the_lower_tid():
+    windows, players = teams_of({1: 60, 2: 60, 3: 60, 4: 30, 5: 30, 6: 30})
+    modes = aigm.offseason_modes(windows, players, None)
+    assert [t for t in modes if modes[t] == 'contend'] == [1, 2]
+    assert modes[3] == 'neutral' and modes[4] == 'neutral'
+    assert [t for t in modes if modes[t] == 'rebuild'] == [5, 6]
+
+
+@pytest.mark.parametrize('n, third', [(1, 0), (2, 0), (3, 1), (5, 1), (6, 2), (7, 2), (30, 10)])
+def test_offseason_modes_split_len_over_three_each_way(n, third):
+    windows, players = teams_of({tid: 10 * tid for tid in range(1, n + 1)})
+    modes = list(aigm.offseason_modes(windows, players, None).values())
+    assert (modes.count('contend'), modes.count('rebuild'), modes.count('neutral')) == (third, third, n - 2 * third)
+
+
+def standings(*rows, league='N', division='E'):
+    """{tid: team} from (tid, w, l) rows in one division."""
+    return {tid: {'w': w, 'l': l, 'league': league, 'division': division} for tid, w, l in rows}
+
+
+@pytest.mark.parametrize('wins, mode', [(60, 'contend'), (55, 'contend'), (54, 'neutral'), (49, 'neutral'),
+                                        (48, 'rebuild'), (30, 'rebuild')])
+def test_deadline_modes_split_at_five_and_twelve_games_back(wins, mode):
+    teams = standings((1, 60, 40), (2, wins, 100 - wins))   # games back: 60 - wins
+    assert aigm.deadline_modes(teams)[2] == mode
+
+
+def test_deadline_games_back_counts_half_games_and_uses_both_wins_and_losses():
+    teams = standings((1, 60, 40), (2, 56, 45), (3, 54, 45), (4, 47, 50), (5, 46, 50))
+    modes = aigm.deadline_modes(teams)
+    assert modes == {1: 'contend', 2: 'contend', 3: 'neutral', 4: 'neutral', 5: 'rebuild'}   # 0 4.5 5.5 11.5 12.0 back
+
+
+def test_a_division_leader_contends_even_with_a_losing_record():
+    teams = standings((1, 20, 40), (2, 10, 50))
+    assert aigm.deadline_modes(teams) == {1: 'contend', 2: 'neutral'}
+
+
+def test_deadline_modes_measure_against_the_leader_of_the_same_league_and_division():
+    teams = {**standings((1, 60, 40), (2, 40, 60)), **standings((3, 40, 60), (4, 38, 62), league='N', division='W'),
+             **standings((5, 80, 20), (6, 60, 40), league='A', division='E')}
+    modes = aigm.deadline_modes(teams)
+    assert modes == {1: 'contend', 2: 'rebuild', 3: 'contend', 4: 'contend', 5: 'contend', 6: 'rebuild'}
+
+
+def test_deadline_modes_of_a_league_that_has_not_played_are_all_contend():
+    assert set(aigm.deadline_modes(standings((1, 0, 0), (2, 0, 0))).values()) == {'contend'}
+
+
+# mode_value
+
+@pytest.mark.parametrize('age, contend, rebuild, neutral', [
+    (None, 1.0, 1.0, 1.0), (19, 1.0, 1.25, 1.10), (26, 1.0, 1.25, 1.10), (27, 1.0, 1.0, 1.0), (30, 1.0, 1.0, 1.0),
+    (31, 1.0, 0.6, 0.9), (33, 1.0, 0.6, 0.9), (34, 0.8, 0.6, 0.75), (40, 0.8, 0.6, 0.75)])
+def test_mode_value_factors_at_every_age_edge(age, contend, rebuild, neutral):
+    p = hit('SS', 100, born=1950)
+    year = None if age is None else 1950 + age
+    assert aigm.mode_value(p, year, 'contend') == pytest.approx(100 * contend)
+    assert aigm.mode_value(p, year, 'rebuild') == pytest.approx(100 * rebuild)
+    assert aigm.mode_value(p, year, 'neutral') == pytest.approx(100 * neutral)
+    assert aigm.mode_value(p, year, 'neutral') == pytest.approx(aigm.value(p, year))
+
+
+def test_mode_value_with_an_unknown_birth_is_the_index_in_every_mode():
+    p = hit('1B', 66, born=None)
+    assert [aigm.mode_value(p, 1977, m) for m in ('contend', 'rebuild', 'neutral')] == [66.0] * 3
+
+
+def test_mode_value_of_a_pitcher_uses_his_index():
+    p = pit(50, born=1950)
+    p.update(strikeout=70, stamina=60)
+    assert aigm.mode_value(p, 1950 + 22, 'rebuild') == pytest.approx(135 * 1.25)
+
+
+# the scouting fog in planning
+
+STEM = 'FOG77'
+
+
+def fogged(n=200):
+    return {pid: dict(hit('1B', 50), seasons=0) for pid in range(1000, 1000 + n)}
+
+
+def test_without_a_stem_every_team_sees_the_true_player():
+    players = fogged(20)
+    view = aigm._View(players, 1977, None, {1: 'neutral', 2: 'neutral'})
+    assert all(view.see(t, pid, own) == aigm.mode_value(players[pid], 1977, 'neutral')
+               for t in (1, 2) for pid in players for own in (False, True))
+
+
+def test_with_a_stem_a_team_sees_the_players_through_fog_view():
+    players = fogged(20)
+    view = aigm._View(players, 1977, STEM, {1: 'contend', 2: 'rebuild'})
+    for pid in players:
+        assert view.see(1, pid) == aigm.mode_value(fog.view(players[pid], STEM, 1, 1977, pid=pid), 1977, 'contend')
+        assert view.see(2, pid, True) == aigm.mode_value(fog.view(players[pid], STEM, 2, 1977, own=True, pid=pid),
+                                                         1977, 'rebuild')
+    assert any(view.see(1, pid) != aigm.mode_value(players[pid], 1977, 'contend') for pid in players)
+
+
+def test_a_teams_own_view_is_closer_to_the_truth_than_its_view_of_others():
+    players = fogged()
+    view = aigm._View(players, 1977, STEM, {1: 'neutral'})
+    truth = aigm.mode_value(players[1000], 1977, 'neutral')
+
+    def spread(own):
+        errors = [view.see(1, pid, own) - truth for pid in players]
+        return (sum(e * e for e in errors) / len(errors)) ** 0.5
+    assert 0 < spread(True) < spread(False)
+    assert spread(True) < 0.75 * spread(False)         # sd 4 against sd 8 before the cut off
+
+
+def test_different_viewers_see_the_same_player_differently():
+    players = fogged(50)
+    view = aigm._View(players, 1977, STEM, {1: 'neutral', 2: 'neutral'})
+    assert any(view.see(1, pid) != view.see(2, pid) for pid in players)
+    assert [view.see(1, pid) for pid in players] == [aigm._View(players, 1977, STEM, {1: 'neutral'}).see(1, pid)
+                                                     for pid in players]
+
+
+def test_plan_with_a_stem_scores_each_side_from_its_own_fogged_view():
+    players = {pid: dict(p, seasons=0) for pid, p in {101: hit('SS', 40), 102: hit('2B', 90), 201: hit('2B', 30),
+                                                      202: hit('SS', 95)}.items()}
+    stem = next(s for s in ('S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7', 'S8')
+                if aigm.plan(pair_windows(), players, None, stem=s)['trades'])
+    (trade,) = aigm.plan(pair_windows(), players, None, stem=stem)['trades']
+    seen = lambda pid, team, own: fog.view(players[pid], stem, team, None, own=own, pid=pid)['contact']   # noqa: E731
+    expected = (seen(202, 1, False) - seen(101, 1, True)) + (seen(102, 2, False) - seen(201, 2, True))
+    assert trade['gain'] == pytest.approx(expected, abs=0.01)
+    assert trade['gain'] != aigm.plan(pair_windows(), players, None)['trades'][0]['gain']
+
+
+def test_a_stem_of_none_plans_as_before():
+    windows, players = human_scenario()
+    assert aigm.plan(windows, players, 1977, human=frozenset({1}), stem=None) == \
+        aigm.plan(windows, players, 1977, human=frozenset({1}))
+
+
+# the mode in a trade
+
+def test_a_rebuilding_side_values_the_young_player_it_gets_more_than_a_contender_does():
+    # 6 teams, the four strong ones with catchers only (never traded): teams 5 and 6 are the two that rebuild and trade.
+    players = {tid * 100 + i: hit('C', 99) for tid in range(1, 5) for i in range(1, 4)}
+    windows = {tid: win([tid * 100 + 1, tid * 100 + 2, tid * 100 + 3]) for tid in range(1, 5)}
+    players.update({501: hit('SS', 40, born=1950), 502: hit('2B', 90, born=1940),       # 502 is 37 in 1977
+                    601: hit('2B', 30, born=1950), 602: hit('SS', 62, born=1960)})      # 602 is 17
+    windows[5], windows[6] = win([501, 502], [501]), win([601, 602], [601])
+    modes = aigm.offseason_modes(windows, players, 1977)
+    assert modes[5] == modes[6] == 'rebuild'
+    (trade,) = aigm.plan(windows, players, 1977)['trades']
+    assert (trade['a'], trade['b'], trade['a_gives'], trade['b_gives']) == (5, 6, 502, 602)
+    # team 5 gets the 17 year old: 62 * 1.25 against its SS starter 40; team 6 the 37 year old: 90 * 0.6 against its
+    # 2B starter 30
+    assert trade['gain'] == pytest.approx((62 * 1.25 - 40) + (90 * 0.6 - 30))
+    assert trade['gain'] != pytest.approx((62 * 1.10 - 40) + (90 * 0.75 - 30))     # neutral valuations
+
+
+def test_the_balance_is_on_the_true_values_whatever_the_modes():
+    players = {tid * 100 + i: hit('C', 99) for tid in range(1, 5) for i in range(1, 4)}
+    windows = {tid: win([tid * 100 + 1, tid * 100 + 2, tid * 100 + 3]) for tid in range(1, 5)}
+    players.update({501: hit('SS', 40, born=1950), 502: hit('2B', 90, born=1940),
+                    601: hit('2B', 30, born=1950), 602: hit('SS', 80, born=1960)})      # 80 * 1.10 = 88 against 67.5
+    windows[5], windows[6] = win([501, 502], [501]), win([601, 602], [601])
+    assert aigm.plan(windows, players, 1977)['trades'] == []
+
+
+# pitcher swaps
+
+def arms_league(low_a=60, spare_a=80, low_b=55, spare_b=75):
+    """(players, windows): two squads (5 pitchers, 20 identical hitters, so no hitter trade) whose pitchers 0..3 are the
+    rotation (controls low_*, +1, +2, +3) and pitcher 4 a spare in the bullpen (control spare_*)."""
+    p1, w1 = squad(1)
+    p2, w2 = squad(2)
+    players, windows = {**p1, **p2}, {1: w1, 2: w2}
+    for tid, low, spare in ((1, low_a, spare_a), (2, low_b, spare_b)):
+        base = 1000 * tid
+        for i in range(4):
+            players[base + i] = pit(low + i)
+        players[base + 4] = pit(spare)
+        w = windows[tid]
+        w[aigm.ROTATION[0]:aigm.ROTATION[0] + 4] = [base + i for i in range(4)]
+        w[aigm.BULLPEN[0]] = base + 4
+    return players, windows
+
+
+PITCH_TRADE = {'a': 1, 'b': 2, 'a_gives': 1004, 'b_gives': 2004, 'a_pos': 'P', 'b_pos': 'P', 'b_drops': 2000,
+               'a_drops': 1000, 'gain': 40.0}
+
+
+def test_a_spare_pitcher_trades_for_a_spare_pitcher_who_beats_the_lowest_rotation_pitcher():
+    players, windows = arms_league()
+    assert aigm.plan(windows, players, None) == {'trades': [PITCH_TRADE], 'proposals': []}
+    # team 1 gets the 75 for its 60 (15), team 2 the 80 for its 55 (25)
+
+
+@pytest.mark.parametrize('kwargs', [dict(spare_a=58), dict(spare_b=55), dict(spare_a=80, spare_b=60),
+                                    dict(spare_a=90, spare_b=75)])
+def test_a_pitcher_must_beat_the_lowest_rotation_pitcher_and_stay_within_the_balance(kwargs):
+    players, windows = arms_league(**kwargs)
+    assert aigm.plan(windows, players, None)['trades'] == []    # 58 < 60 | 55 <= 55 | 80 v 60 | 90 v 75: not within 10%
+
+
+def test_a_rotation_pitcher_is_never_traded():
+    players, windows = arms_league()
+    players[1003] = pit(95)                                     # team 1's best pitcher is in its rotation
+    assert [t['a_gives'] for t in aigm.plan(windows, players, None)['trades']] == [1004]
+
+
+def test_a_team_with_no_rotation_makes_no_pitcher_trade():
+    players, windows = arms_league()
+    windows[2][aigm.ROTATION[0]:aigm.ROTATION[1]] = [0] * 6
+    assert aigm.plan(windows, players, None)['trades'] == []
+
+
+def test_the_lowest_valued_rotation_pitcher_is_the_one_displaced_with_ties_to_the_lower_id():
+    players, windows = arms_league()
+    players[1002] = pit(60)                                     # ties 1000 for the lowest
+    (trade,) = aigm.plan(windows, players, None)['trades']
+    assert trade['a_drops'] == 1000
+
+
+@pytest.mark.parametrize('hitter_values, kind', [((90, 85), 'hitter'), ((60, 55), 'pitcher')])
+def test_a_pitcher_trade_and_a_hitter_trade_compete_for_the_one_trade_per_team(hitter_values, kind):
+    players, windows = arms_league()                    # the pitcher trade is worth 40
+    players.update({1190: hit('2B', hitter_values[0]), 2190: hit('SS', hitter_values[1])})
+    windows[1][24], windows[2][24] = 1190, 2190         # a bench hitter each (the last active slot)
+    trades = aigm.plan(windows, players, None)['trades']
+    assert len(trades) == 1 and pairs(trades) == [(1, 2)]
+    assert (trades[0]['a_pos'] == 'P') == (kind == 'pitcher')
+
+
+def test_a_pitcher_swap_writes_the_rotation_the_bullpen_and_validates(asn):
+    players, windows = arms_league()
+    data, _ = asn(windows)
+    after = aigm.read(aigm.apply_trade(data, PITCH_TRADE))['windows']
+    r0, b0 = aigm.ROTATION[0], aigm.BULLPEN[0]
+    w1 = after[1]
+    assert w1[:5] == [1000, 1001, 1002, 1003, 2004]             # 2004 has 1004's active slot; 1000 keeps his
+    assert w1[r0:r0 + 4] == [2004, 1001, 1002, 1003]            # 2004 takes 1000's rotation spot
+    assert w1[b0] == 1000                                       # the bullpen slot 1004 left goes to the displaced one
+    assert after[2][:5] == [2000, 2001, 2002, 2003, 1004]
+    assert after[2][r0:r0 + 4] == [1004, 2001, 2002, 2003] and after[2][b0] == 2000
+    assert aigm.validate(windows, after, players) == []
+    for tid in (1, 2):                                          # the pitcher counts are unchanged
+        assert sum(1 for v in after[tid][:25] if v in players and players[v]['pos'] == 'P') == 5
+        listed = [v for v in after[tid][r0:r0 + 6] + after[tid][b0:b0 + 6] if v]
+        assert len(listed) == len(set(listed))                  # nobody is in the rotation and the pen, or twice
+
+
+def test_a_pitcher_swap_keeps_a_displaced_pitcher_who_has_a_bullpen_slot_of_his_own(asn):
+    players, windows = arms_league()
+    windows[1][aigm.BULLPEN[0] + 1] = 1000                      # 1000 is in the pen as well as the rotation
+    data, _ = asn(windows)
+    after = aigm.read(aigm.apply_trade(data, PITCH_TRADE))['windows']
+    pen = after[1][aigm.BULLPEN[0]:aigm.BULLPEN[1]]
+    assert pen == [1000, 0, 0, 0, 0, 0] and 2004 not in pen     # 1004's slot is emptied, the rest shift left
+
+
+@pytest.mark.parametrize('trade', [
+    dict(PITCH_TRADE, a_drops=None),                    # no rotation pitcher named
+    dict(PITCH_TRADE, a_drops=1004),                    # not in team 1's rotation
+    dict(PITCH_TRADE, b_drops=2100),                    # not in team 2's rotation
+    dict(PITCH_TRADE, a_gives=1001),                    # 1001 is in team 1's rotation
+    dict(PITCH_TRADE, b_gives=2001),                    # 2001 is in team 2's rotation
+    dict(PITCH_TRADE, a_gives=1999),                    # not on team 1 at all
+])
+def test_a_pitcher_swap_that_does_not_fit_is_refused(asn, trade):
+    players, windows = arms_league()
+    data, _ = asn(windows)
+    with pytest.raises(aigm.SwapError):
+        aigm.apply_trade(data, trade)
+
+
+# salaries
+
+def three_teams():
+    """Team 1 is strong (two catchers, never traded), team 2 middle and team 3 weak: so team 1 contends, 2 is neutral
+    and 3 rebuilds. Teams 2 and 3 are pair_windows(): one trade, 102 for 202, worth a gain of 25."""
+    players = {**pair_players(), 301: hit('C', 99), 302: hit('C', 99)}
+    pair = pair_windows()
+    windows = {1: win([301, 302]), 2: pair[1], 3: pair[2]}
+    return players, windows
+
+
+SALARIES = {102: 2.0, 202: 6.0, 101: 4.0, 201: 4.0, 301: 4.0, 302: 4.0}      # the median is 4.0
+
+
+def test_the_three_team_fixture_has_a_contender_a_neutral_team_and_a_rebuilder():
+    players, windows = three_teams()
+    assert aigm.offseason_modes(windows, players, None) == {1: 'contend', 2: 'neutral', 3: 'rebuild'}
+    (trade,) = aigm.plan(windows, players, None)['trades']
+    assert (trade['a'], trade['b'], trade['a_gives'], trade['b_gives'], trade['gain']) == (2, 3, 102, 202, 25.0)
+
+
+def test_a_rebuild_side_gains_for_the_salary_it_sheds():
+    players, windows = three_teams()
+    (trade,) = aigm.plan(windows, players, None, salaries=SALARIES)['trades']
+    assert trade['gain'] == 25.0 + 2.0 * (6.0 - 2.0) / 4.0      # team 3 gives 202 (6.0) for 102 (2.0)
+
+
+def test_a_rebuild_side_loses_for_the_salary_it_takes_on():
+    players, windows = three_teams()
+    (trade,) = aigm.plan(windows, players, None, salaries={**SALARIES, 102: 6.0, 202: 2.0})['trades']
+    assert trade['gain'] == 25.0 + 2.0 * (2.0 - 6.0) / 4.0
+
+
+def test_only_a_rebuild_side_weighs_salary():
+    players, windows = three_teams()
+    swapped = {**SALARIES, 102: 6.0, 202: 2.0}            # team 2 (neutral) sheds 6.0 and takes on 2.0
+    (trade,) = aigm.plan(windows, players, None, salaries=swapped)['trades']
+    assert trade['gain'] == 25.0 + 2.0 * (2.0 - 6.0) / 4.0      # only team 3's term
+    two = aigm.plan(pair_windows(), pair_players(), None, salaries=SALARIES)['trades']
+    assert two[0]['gain'] == 25.0                               # two teams are both neutral
+
+
+def test_missing_salaries_are_ignored():
+    players, windows = three_teams()
+    for salaries in (None, {}, {202: 6.0}, {102: 2.0}, {101: 1.0}):
+        (trade,) = aigm.plan(windows, players, None, salaries=salaries)['trades']
+        assert trade['gain'] == 25.0, salaries
+
+
+def test_salary_relief_can_turn_a_downgrade_into_a_trade_for_a_rebuild_side():
+    """Team 3 is the strongest (it contends), team 2 the weakest (it rebuilds). Team 2 would get a 65 SS for its 66 SS
+    starter, a loss of 1, but sheds 9.0 of salary for 1.0 (median 4.0): 2 * 8 / 4 = 4."""
+    players = {**pair_players(), 301: hit('C', 99), 302: hit('C', 99), 303: hit('C', 99), 304: hit('C', 99)}
+    players[101] = hit('SS', 66)
+    pair = pair_windows()
+    windows = {1: win([301, 302]), 2: pair[1], 3: win([201, 202, 303, 304], [201])}
+    assert aigm.offseason_modes(windows, players, None) == {1: 'neutral', 2: 'rebuild', 3: 'contend'}
+    salaries = {101: 4.0, 102: 9.0, 201: 4.0, 202: 1.0, 301: 4.0, 302: 4.0}
+    assert aigm.plan(windows, players, None)['trades'] == []
+    assert aigm.plan(windows, players, None, salaries={**salaries, 102: 1.0, 202: 9.0})['trades'] == []
+    (trade,) = aigm.plan(windows, players, None, salaries=salaries)['trades']
+    assert (trade['a'], trade['b'], trade['a_gives'], trade['b_gives']) == (2, 3, 102, 202)
+    assert trade['gain'] == (65 - 66 + 4.0) + (70 - 50)          # team 3 contends: no salary term for it

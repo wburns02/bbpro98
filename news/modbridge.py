@@ -3,7 +3,8 @@ the game's Mods/spool directory. The game runs in a sandbox with no network, so 
 repo's own Python: league news pages (server.route), the player development pages under /news/development/ and the
 Mods/focus.txt they set (focus.py), which aging.dll reads at each offseason, the offseason trade pages under /news/gm/
 (aigm.py: the computer teams' preseason trades, written into the ASN, and each human team's proposals to accept or
-reject; roster.py: a Lahman build's real midseason moves, applied to the ASN as the season is played), the player
+reject; the July trade deadline under /news/gm/<STEM>/deadline, where contenders buy rebuilding teams' veterans for
+prospects; roster.py: a Lahman build's real midseason moves, applied to the ASN as the season is played), the player
 cards under /news/card/ (the Team Statistics screen's click, playercard.dll), Create a Player (create.validate and
 createweb.commit), and a season built from the Lahman database (work/lahman/build.py, run as a subprocess). Standard
 library only.
@@ -1405,6 +1406,19 @@ def _named(lg, trade):
     return out
 
 
+def _salaries(ctx, lg):
+    """{pid: dollars} from <data>/<STEM>/contracts.json (watch.py writes it), None when the file is missing,
+    unreadable or holds no salary. Entries that are not a pid with a numeric salary are left out."""
+    doc = watch.read_json(os.path.join(ctx.data, lg.stem, 'contracts.json'))
+    rows = doc.get('contracts') if doc else None
+    out = {}
+    for key, row in (rows.items() if isinstance(rows, dict) else ()):
+        pay = row.get('salary') if isinstance(row, dict) else None
+        if key.isdigit() and type(pay) in (int, float):
+            out[int(key)] = pay
+    return out or None
+
+
 def _gm_reply(ctx, lg, status=200, note=''):
     """(status, path, title, text, links) for the offseason trades of lg: the season's trades and proposals when its
     ledger exists, else the run link while the preseason lasts. The note, when there is one, comes first."""
@@ -1434,6 +1448,8 @@ def _gm_reply(ctx, lg, status=200, note=''):
             links += [('Run computer trades', base + 'run')]
     if _moves_doc(ctx, lg) is not None:
         links += [('Midseason moves', base + 'moves')]
+    if aigm.deadline_window({'games': lg.games}) or _deadline_ledger(ctx, lg.stem, lg.year) is not None:
+        links += [('Trade deadline', base + 'deadline')]
     links += [('Player development', '/news/development/%s/' % lg.stem), ('League news', '/news/%s/' % lg.stem)]
     text = ([note, ''] if note else []) + _heading(title) + body
     return status, base, title, '\n'.join(text), links
@@ -1462,7 +1478,8 @@ def _gm_run(ctx, stem):
             return _gm_reply(ctx, lg, 409, OPEN_TEXT % lg.label)
         old = _read_bytes(lg.asn)
         snap = aigm.read(old)
-        found = aigm.plan(snap['windows'], lg.players, lg.year, snap['human'])
+        found = aigm.plan(snap['windows'], lg.players, lg.year, snap['human'], stem=lg.stem,
+                          salaries=_salaries(ctx, lg))
         new = old
         for trade in found['trades']:
             new = aigm.apply_trade(new, trade)
@@ -1629,6 +1646,212 @@ def _gm_moves_apply(ctx, stem):
         return _moves_reply(ctx, lg, 200, '%d moves made, %d skipped.' % (made, len(todo) - made))
 
 
+# The trade deadline under /news/gm/<STEM>/deadline (aigm.deadline_plan): while the league is 55 to 65 percent
+# through its schedule, contenders buy rebuilding teams' veterans for prospects, written into the ASN through
+# roster.move. The season's ledger is <data>/<STEM>/deadline.json. The same rules as the offseason pages: the game
+# must not hold the files, the ASN is copied before it is written, and a result with a roster.problems entry the file
+# did not have is refused.
+DEADLINE_FILE = 'deadline.json'
+BAD_DEADLINE_TEXT = ('The deadline record (%s/deadline.json in the news data folder) cannot be read, so deadline '
+                     'trades may already have run this season. Move that file aside to run them again.')
+NO_WINDOW_TEXT = 'The trade deadline is not open.'
+_DL_INTS = ('c', 'r', 'vet', 'prospect')
+_DL_NAMES = ('c_name', 'r_name', 'vet_name', 'prospect_name')
+
+
+def _deadline_entry_ok(e, proposal=False):
+    """True when a deadline ledger trade (or proposal) has the fields the pages and roster.move read, with the right
+    types."""
+    if not isinstance(e, dict):
+        return False
+    if not all(type(e.get(k)) is int for k in _DL_INTS) or not all(isinstance(e.get(k), str) for k in _DL_NAMES):
+        return False
+    return not proposal or e.get('status') in _GM_STATUS
+
+
+def _deadline_ledger(ctx, stem, year):
+    """The deadline ledger of stem's season year, or None: a missing or unreadable file, one of another kind or season,
+    or one whose entries are not well formed."""
+    led = watch.read_json(os.path.join(ctx.data, stem, DEADLINE_FILE))
+    if led is None or led.get('kind') != 'deadline' or led.get('season_year') != year:
+        return None
+    if not isinstance(led.get('trades'), list) or not isinstance(led.get('proposals'), list):
+        return None
+    if not all(_deadline_entry_ok(t) for t in led['trades']) or \
+            not all(_deadline_entry_ok(p, True) for p in led['proposals']):
+        return None
+    return led
+
+
+def _deadline_blocks_run(ctx, stem, year):
+    """True when a deadline.json is there that _deadline_ledger cannot use and that is not plainly another season's
+    (_ledger_blocks_run's rule): trades may already have run from it."""
+    path = os.path.join(ctx.data, stem, DEADLINE_FILE)
+    if not os.path.lexists(path):
+        return False
+    led = watch.read_json(path)
+    return not (led is not None and led.get('kind') == 'deadline' and type(led.get('season_year')) is int
+                and led['season_year'] != year)
+
+
+def _write_deadline(ctx, stem, led):
+    watch.write_json(os.path.join(ctx.data, stem, DEADLINE_FILE), led)
+
+
+def _deadline_named(lg, trade):
+    """A deadline trade or proposal with the names its lines show: the two teams' and the two players'."""
+    out = dict(trade)
+    out.update(c_name=_team(lg, trade['c']), r_name=_team(lg, trade['r']),
+               vet_name=lg.players[trade['vet']]['name'], prospect_name=lg.players[trade['prospect']]['name'])
+    return out
+
+
+def _deadline_reply(ctx, lg, status=200, note=''):
+    """(status, path, title, text, links) for the trade deadline of lg: the season's trades and proposals when its
+    ledger exists, else the run link while the deadline window is open. The note, when there is one, comes first."""
+    base = '/news/gm/%s/' % lg.stem
+    title = 'Trade deadline: %s' % lg.label
+    led = _deadline_ledger(ctx, lg.stem, lg.year)
+    body, links = [], []
+    if led is not None:
+        body += ['Trades made (%d):' % len(led['trades'])]
+        body += ['%s trade %s to %s for %s' % (t['c_name'], t['prospect_name'], t['r_name'], t['vet_name'])
+                 for t in led['trades']]
+        body += ['', 'Proposals for your teams:']
+        for n, p in enumerate(led['proposals'], 1):
+            body.append('%d. %s get %s, %s get %s (%s)' % (n, p['c_name'], p['vet_name'], p['r_name'],
+                                                          p['prospect_name'], p['status']))
+            if p['status'] == 'open':
+                links += [('Accept %d' % n, base + 'deadline/accept/%d' % n),
+                          ('Reject %d' % n, base + 'deadline/reject/%d' % n)]
+        if not led['proposals']:
+            body.append('None.')
+    else:
+        body += ['No deadline trades yet this season.']
+        if aigm.deadline_window({'games': lg.games}):
+            body += ["Contending teams buy rebuilding teams' veterans for prospects.",
+                     'Human-run teams only get proposals.']
+            links += [('Run deadline trades', base + 'deadline/run')]
+        else:
+            body += ['The deadline is open when the league has played %d to %d percent of its games.'
+                     % (round(aigm.DEADLINE_LO * 100), round(aigm.DEADLINE_HI * 100))]
+    links += [('Offseason trades', base), ('League news', '/news/%s/' % lg.stem)]
+    text = ([note, ''] if note else []) + _heading(title) + body
+    return status, base + 'deadline', title, '\n'.join(text), links
+
+
+def _gm_deadline(ctx, stem):
+    with _GM_LOCK:
+        lg = _gm_league(ctx, stem)
+        return None if lg is None else _deadline_reply(ctx, lg)
+
+
+def _new_problems(windows, after, players):
+    """The roster.problems of the windows after a change that the windows before did not have."""
+    before = set(roster.problems(windows, players))
+    return [p for p in roster.problems(after, players) if p not in before]
+
+
+def _gm_deadline_run(ctx, stem):
+    """Plans the deadline trades (aigm.deadline_plan), applies each that still fits (apply_deadline), writes the ASN
+    (when any were made) and the ledger, once a season and only while the deadline window is open."""
+    with _GM_LOCK:
+        lg = _gm_league(ctx, stem)
+        if lg is None:
+            return None
+        if _deadline_ledger(ctx, lg.stem, lg.year) is not None:
+            return _deadline_reply(ctx, lg, 409, 'Deadline trades already ran this season.')
+        if _deadline_blocks_run(ctx, lg.stem, lg.year):
+            return _deadline_reply(ctx, lg, 409, BAD_DEADLINE_TEXT % lg.stem)
+        if not aigm.deadline_window({'games': lg.games}):
+            return _deadline_reply(ctx, lg, 409, NO_WINDOW_TEXT)
+        if _held(ctx, lg):
+            return _deadline_reply(ctx, lg, 409, OPEN_TEXT % lg.label)
+        old = _read_bytes(lg.asn)
+        snap = aigm.read(old)
+        found = aigm.deadline_plan(snap['windows'], lg.players, lg.year, lg.teams, snap['human'], stem=lg.stem)
+        windows, made = snap['windows'], []
+        for trade in found['trades']:
+            try:
+                windows = aigm.apply_deadline(windows, trade, lg.players, lg.year)
+            except aigm.SwapError:
+                continue
+            made.append(trade)
+        problems = _new_problems(snap['windows'], windows, lg.players)
+        if problems:
+            return _deadline_reply(ctx, lg, 500, 'Trade check failed: %s' % problems[0])
+        if made:
+            try:
+                new = roster.apply(old, windows)
+            except ValueError as e:
+                return _deadline_reply(ctx, lg, 500, 'Trade check failed: %s' % e)
+            _put_asn(ctx, lg, new)
+        _write_deadline(ctx, lg.stem, {
+            'kind': 'deadline', 'season_year': lg.year, 'created': watch.now_iso(),
+            'trades': [_deadline_named(lg, t) for t in made],
+            'proposals': [dict(_deadline_named(lg, p), status='open') for p in found['proposals']]})
+        return _deadline_reply(ctx, lg, 200, '%d deadline trades made.' % len(made))
+
+
+def _gm_deadline_proposal(ctx, stem, n):
+    """(lg, ledger, proposal) for deadline proposal n of stem's season, or None when there is no such one. Callers hold
+    _GM_LOCK."""
+    lg = _gm_league(ctx, stem)
+    led = None if lg is None else _deadline_ledger(ctx, lg.stem, lg.year)
+    if led is None or not 1 <= n <= len(led['proposals']):
+        return None
+    return lg, led, led['proposals'][n - 1]
+
+
+def _gm_deadline_accept(ctx, stem, n):
+    """Writes deadline proposal n into the ASN when its players are still where it left them (else it is stale). The
+    game must not hold the files."""
+    n = int(n)
+    with _GM_LOCK:
+        found = _gm_deadline_proposal(ctx, stem, n)
+        if found is None:
+            return None
+        lg, led, prop = found
+        if prop['status'] != 'open':
+            return _deadline_reply(ctx, lg, 409, 'Proposal %d is %s.' % (n, prop['status']))
+        if _held(ctx, lg):
+            return _deadline_reply(ctx, lg, 409, OPEN_TEXT % lg.label)
+        old = _read_bytes(lg.asn)
+        before = aigm.read(old)['windows']
+        try:
+            after = aigm.apply_deadline(before, prop, lg.players, lg.year)
+        except aigm.SwapError:
+            prop['status'] = 'stale'
+            _write_deadline(ctx, lg.stem, led)
+            return _deadline_reply(ctx, lg, 200, 'Proposal %d is out of date.' % n)
+        problems = _new_problems(before, after, lg.players)
+        if problems:
+            return _deadline_reply(ctx, lg, 500, 'Trade check failed: %s' % problems[0])
+        try:
+            new = roster.apply(old, after)
+        except ValueError as e:
+            return _deadline_reply(ctx, lg, 500, 'Trade check failed: %s' % e)
+        _put_asn(ctx, lg, new)
+        prop['status'] = 'accepted'
+        _write_deadline(ctx, lg.stem, led)
+        return _deadline_reply(ctx, lg, 200, 'Trade made.')
+
+
+def _gm_deadline_reject(ctx, stem, n):
+    """Marks deadline proposal n rejected. No game file is written."""
+    n = int(n)
+    with _GM_LOCK:
+        found = _gm_deadline_proposal(ctx, stem, n)
+        if found is None:
+            return None
+        lg, led, prop = found
+        if prop['status'] != 'open':
+            return _deadline_reply(ctx, lg, 409, 'Proposal %d is %s.' % (n, prop['status']))
+        prop['status'] = 'rejected'
+        _write_deadline(ctx, lg.stem, led)
+        return _deadline_reply(ctx, lg, 200, 'Proposal rejected.')
+
+
 GM_PAGES = (
     (re.compile(r'/news/gm/([A-Za-z0-9]{1,8})/'), _gm_view),
     (re.compile(r'/news/gm/([A-Za-z0-9]{1,8})/run'), _gm_run),
@@ -1636,6 +1859,10 @@ GM_PAGES = (
     (re.compile(r'/news/gm/([A-Za-z0-9]{1,8})/reject/([0-9]{1,3})'), _gm_reject),
     (re.compile(r'/news/gm/([A-Za-z0-9]{1,8})/moves'), _gm_moves),
     (re.compile(r'/news/gm/([A-Za-z0-9]{1,8})/moves/apply'), _gm_moves_apply),
+    (re.compile(r'/news/gm/([A-Za-z0-9]{1,8})/deadline'), _gm_deadline),
+    (re.compile(r'/news/gm/([A-Za-z0-9]{1,8})/deadline/run'), _gm_deadline_run),
+    (re.compile(r'/news/gm/([A-Za-z0-9]{1,8})/deadline/accept/([0-9]{1,3})'), _gm_deadline_accept),
+    (re.compile(r'/news/gm/([A-Za-z0-9]{1,8})/deadline/reject/([0-9]{1,3})'), _gm_deadline_reject),
 )
 
 
