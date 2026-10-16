@@ -85,8 +85,11 @@ its text; they do not replace it.
 - news/gamedata.py reports league demographics (age make-up of rosters and free agents) from the ASN, PYR and PYF;
   the harness prints them at every rollover and logs the champion of each season.
 - Era run environments: build.py `--era CONFIG` shifts the ratings of an old season toward its era's run
-  environment (work/lahman/era.json: per-year rating offsets fitted against the real league rates), so a dead-ball
-  season plays like one. work/harness/erarates.py compares a simulated season's BA, HR/AB and BB/AB with the real one.
+  environment (work/lahman/era.json: per-year rating offsets fitted against the real league rates). The shipped fit
+  covers 1871 to 1968 and leaves later years alone. In half-season checks of 1884 and 1927 batting average lands within
+  4 percent of real, but home runs are still about 1.9 to 2.2 times the real rate (the power offset is at its floor),
+  so an old season plays closer to its era but not yet like it. work/harness/erarates.py compares a simulated
+  season's BA, HR/AB and BB/AB with the real one.
 - `build.py --moves` writes the season's real midseason moves (from Lahman stints) as a .MOV file next to the ASN.
 - work/harness/referee.py judges a multi-season soak against fixed bands: age drift, roster and pitcher minimums,
   league rates against the first season or a real one, seasons completed, and crash evidence. It prints PASS or FAIL
