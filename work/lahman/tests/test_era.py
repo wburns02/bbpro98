@@ -27,11 +27,15 @@ def test_missing_path_is_all_zero(tmp_path):
     assert RT.load_era(None, 1927) == ZERO
 
 
-def test_shipped_default_is_all_zero():
+def test_shipped_default_is_fitted_for_early_years_and_zero_from_1969():
     path = os.path.join(os.path.dirname(os.path.abspath(B.__file__)), 'era.json')
     assert B.ERA == path
-    assert RT.load_era(path, 1927) == ZERO
+    assert RT.load_era(path, 1969) == ZERO
     assert RT.load_era(path, 1996) == ZERO
+    assert RT.load_era(path, 1998) == ZERO
+    early = RT.load_era(path, 1927)
+    assert early['alpha'] == {'bat': 1.0, 'pit': 1.0}
+    assert early['offset']['PH'] == -30.0 and early['offset']['CH'] > 0
 
 
 def test_base_values_and_missing_keys_mean_zero(tmp_path):
@@ -355,10 +359,11 @@ def cli(tmp_path, monkeypatch, capsys):
     return run
 
 
-def test_cli_default_era_is_the_zero_config(cli):
+def test_cli_default_era_is_the_shipped_fit(cli):
     a, kw, out = cli()
-    assert out.splitlines()[-1] == 'era: year=1927 alpha bat=0.0 pit=0.0 offsets={}'
-    assert kw['era'] == ZERO
+    line = out.splitlines()[-1]
+    assert line.startswith('era: year=1927 alpha bat=1.0 pit=1.0 offsets=')
+    assert kw['era'] == RT.load_era(B.ERA, 1927)
 
 
 def test_cli_era_file_prints_one_line_before_building(cli, tmp_path):

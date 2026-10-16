@@ -1,5 +1,74 @@
-{"ref_year": 1996,
- "alpha": {"bat": 0.0, "pit": 0.0},
- "offset": {"CH": 0, "PH": 0, "SP": 0, "GF": 0, "EN": 0, "CO": 0, "K": 0, "ST": 0},
- "by_year": [],
- "note": "alpha blends each z-score toward the ref_year league norms; offset adds rating points per fitted target"}
+{
+ "ref_year": 1996,
+ "alpha": {
+  "bat": 0.0,
+  "pit": 0.0
+ },
+ "offset": {
+  "CH": 0,
+  "PH": 0,
+  "SP": 0,
+  "GF": 0,
+  "EN": 0,
+  "CO": 0,
+  "K": 0,
+  "ST": 0
+ },
+ "by_year": [
+  {
+   "from": 1871,
+   "to": 1892,
+   "offset": {
+    "PH": -30,
+    "CO": 20,
+    "K": -20,
+    "CH": 12
+   },
+   "alpha": {
+    "bat": 1.0,
+    "pit": 1.0
+   }
+  },
+  {
+   "from": 1893,
+   "to": 1919,
+   "offset": {
+    "PH": -30,
+    "CO": 8,
+    "K": -12,
+    "CH": 10
+   },
+   "alpha": {
+    "bat": 1.0,
+    "pit": 1.0
+   }
+  },
+  {
+   "from": 1920,
+   "to": 1945,
+   "offset": {
+    "PH": -30,
+    "K": -15,
+    "CH": 8
+   },
+   "alpha": {
+    "bat": 1.0,
+    "pit": 1.0
+   }
+  },
+  {
+   "from": 1946,
+   "to": 1968,
+   "offset": {
+    "PH": -10,
+    "K": -5,
+    "CH": 3
+   },
+   "alpha": {
+    "bat": 1.0,
+    "pit": 1.0
+   }
+  }
+ ],
+ "note": "alpha blends each z-score toward the ref_year league norms; offset adds rating points per fitted target. Fitted 2026-10-16 (erafit b2, 1884 and 1927 half seasons): 1871-1968 get alpha 1 and the offsets below, later years are unchanged. Residual vs real: HR/AB still 1.9x to 2.2x in 1884 and 1927 (PH is at its -30 floor), BA within 4 percent, BB/AB 1.08x to 1.36x."
+}
