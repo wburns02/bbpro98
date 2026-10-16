@@ -280,8 +280,8 @@ def _overview(img, pal, tf, body):
         if y + 15 > 420:
             break
         w = _say(img, pal, tf, label, 166, y, WHITE, (166, y, 668, y + 13))
-        _fill(img, 166, y + tf.height, w, 1, WHITE)
-        if path is not None:
+        if path is not None:        # a link is underlined and clickable; a None path is a plain status line
+            _fill(img, 166, y + tf.height, w, 1, WHITE)
             _spot(hot, 166, y, w, 13, path)
         y += 15
     return hot
