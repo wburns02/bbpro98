@@ -22,6 +22,7 @@ STATS = BAT_STATS + PIT_STATS
 COUNTING = {'bat': ('hr', 'h', 'rbi', 'sb'), 'pit': ('w', 'so', 'sv')}      # the stats a chase line can name
 LABELS = {'hr': 'home runs', 'h': 'hits', 'rbi': 'RBI', 'sb': 'stolen bases', 'w': 'wins', 'so': 'strikeouts',
           'sv': 'saves'}
+BAR_FROM = 1920         # the real bar is the live-ball era: the dead-ball 59 wins and 441 strikeouts are out of reach
 CHASE_FROM = (2, 5)     # a team must have played this fraction of the schedule before its players are chased
 CHASE_NEAR = (9, 10)    # a pace at this fraction of the bar, or better, is a chase line
 CHASE_MAX = 3
@@ -190,13 +191,15 @@ def _num(value):
 
 def lahman_bar(conn, before, season_games=None):
     """The best real single season of each stat in STATS among the Lahman seasons of years below before (all years
-    when before is None), as {stat: {'value', 'name', 'year', 'source': 'lahman'}}; a stat nobody has is left out. A
-    season sums a player's stints in the year and is judged by the same qualifiers(season_games) as a simulated one.
-    Only the Batting, Pitching and People tables and the columns playerID, yearID, AB, H, HR, RBI, R, SB, BB, W, SO,
-    SV, IPouts, ER, nameFirst and nameLast are read. A tie goes to the earlier year, then the name. sqlite3.Error
-    propagates (a database without those tables)."""
+    when before is None) and from BAR_FROM on, as {stat: {'value', 'name', 'year', 'source': 'lahman'}}; a stat nobody
+    has is left out. An association starting at or before BAR_FROM has no live-ball years to measure against, so it
+    takes all the years before it. A season sums a player's stints in the year and is judged by the same
+    qualifiers(season_games) as a simulated one. Only the Batting, Pitching and People tables and the columns
+    playerID, yearID, AB, H, HR, RBI, R, SB, BB, W, SO, SV, IPouts, ER, nameFirst and nameLast are read. A tie goes to
+    the earlier year, then the name. sqlite3.Error propagates (a database without those tables)."""
     min_ab, min_outs = qualifiers(season_games)
     limit = 9999 if before is None else before
+    floor = BAR_FROM if limit > BAR_FROM else 0
     best = {}       # stat -> [value, [(year, playerID)]]
 
     def offer(stat, value, year, pid):
@@ -209,14 +212,14 @@ def lahman_bar(conn, before, season_games=None):
             cur[1].append((year, pid))
 
     bat = 'SELECT playerID, yearID, SUM(AB), SUM(H), SUM(HR), SUM(RBI), SUM(R), SUM(SB), SUM(BB) FROM Batting' \
-          ' WHERE yearID < ? GROUP BY playerID, yearID'
-    for pid, year, ab, h, hr, rbi, r, sb, bb in conn.execute(bat, (limit,)):
+          ' WHERE yearID < ? AND yearID >= ? GROUP BY playerID, yearID'
+    for pid, year, ab, h, hr, rbi, r, sb, bb in conn.execute(bat, (limit, floor)):
         line = dict(zip(('ab', 'h', 'hr', 'rbi', 'r', 'sb', 'bb'), map(_num, (ab, h, hr, rbi, r, sb, bb))))
         for stat in BAT_STATS:
             offer(stat, stat_value(stat, line, min_ab, min_outs), _num(year), pid)
     pit = 'SELECT playerID, yearID, SUM(W), SUM(SO), SUM(SV), SUM(IPouts), SUM(ER) FROM Pitching' \
-          ' WHERE yearID < ? GROUP BY playerID, yearID'
-    for pid, year, w, so, sv, outs, er in conn.execute(pit, (limit,)):
+          ' WHERE yearID < ? AND yearID >= ? GROUP BY playerID, yearID'
+    for pid, year, w, so, sv, outs, er in conn.execute(pit, (limit, floor)):
         line = dict(zip(('w', 'so', 'sv', 'outs', 'er'), map(_num, (w, so, sv, outs, er))))
         for stat in PIT_STATS:
             offer(stat, stat_value(stat, line, min_ab, min_outs), _num(year), pid)

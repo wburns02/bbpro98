@@ -146,7 +146,7 @@ def bar_db():
         ('ruthba01', 'Babe', 'Ruth'), ('ableja01', 'Adam', 'Able'), ('duffyhu01', 'Hugh', 'Duffy'),
         ('trade01', 'Tom', 'Trader'), ('bondsba01', 'Barry', 'Bonds'), ('radbocha01', 'Old', 'Hoss'),
         ('leonadu01', 'Dutch', 'Leonard'), ('shorty01', 'Short', 'Stop'), ('closer01', 'Cal', 'Closer'),
-        ('newcl01', 'New', 'Closer')])
+        ('newcl01', 'New', 'Closer'), ('livebl01', 'Lou', 'Liveball'), ('livep01', 'Pat', 'Livearm')])
     con.executemany('INSERT INTO Batting VALUES (?,?,?,?,?,?,?,?,?)', [
         ('ruthba01', 1927, 540, 192, 60, 165, 158, 7, 137),
         ('ableja01', 1927, 500, 150, 60, 100, 90, 2, 50),          # ties Ruth on 60 in the same year: name decides
@@ -156,12 +156,14 @@ def bar_db():
         ('trade01', 1990, 300, 90, 20, 60, 40, 10, 30),            # two stints sum to 45 home runs and 550 at bats
         ('trade01', 1990, 250, 80, 25, 50, 40, 5, 30),
         ('bondsba01', 2001, 476, 156, 73, 137, 129, 13, 177),      # in the association's years: not real history
+        ('livebl01', 1925, 520, 210, 10, 120, 130, 44, 60),        # the live-ball sb and hits leader, .4038
         (None, 1900, None, None, None, None, None, None, None),
     ])
     con.executemany('INSERT INTO Pitching VALUES (?,?,?,?,?,?,?)', [
         ('radbocha01', 1884, 59, 441, 0, 1800, 300),
         ('leonadu01', 1914, 19, 176, 0, 674, 20),                  # 0.80
-        ('shorty01', 1880, 1, 10, 0, 315, 5),                      # an ERA of 0.43 on too few outs
+        ('shorty01', 1950, 1, 10, 0, 315, 5),                      # an ERA of 0.43 on too few outs
+        ('livep01', 1931, 31, 200, 0, 800, 70),                    # 2.36
         ('closer01', 1990, 3, 50, 57, 200, 20),
         ('newcl01', 2001, 3, 50, 62, 200, 20),                     # not before 2001
     ])
@@ -169,18 +171,26 @@ def bar_db():
     return con
 
 
-def test_lahman_bar_is_the_best_season_before_the_start_year_with_the_qualifiers():
+def test_lahman_bar_is_the_best_live_ball_season_before_the_start_year_with_the_qualifiers():
     got = records.lahman_bar(bar_db(), 2001)
     assert got['hr'] == {'value': 60, 'name': 'Adam Able', 'year': 1927, 'source': 'lahman'}
-    assert got['h'] == {'value': 237, 'name': 'Hugh Duffy', 'year': 1894, 'source': 'lahman'}
-    assert got['rbi']['value'] == 165 and got['r']['value'] == 160 and got['bb']['value'] == 137
-    assert got['sb'] == {'value': 48, 'name': 'Hugh Duffy', 'year': 1894, 'source': 'lahman'}
-    assert got['avg']['name'] == 'Hugh Duffy' and got['avg']['value'] == 237 / 539
-    assert got['w'] == {'value': 59, 'name': 'Old Hoss', 'year': 1884, 'source': 'lahman'}
-    assert got['so']['value'] == 441
+    assert got['h'] == {'value': 210, 'name': 'Lou Liveball', 'year': 1925, 'source': 'lahman'}
+    assert got['rbi']['value'] == 165 and got['r']['value'] == 158 and got['bb']['value'] == 137
+    assert got['sb'] == {'value': 44, 'name': 'Lou Liveball', 'year': 1925, 'source': 'lahman'}
+    assert got['avg']['name'] == 'Lou Liveball' and got['avg']['value'] == 210 / 520
+    assert got['w'] == {'value': 31, 'name': 'Pat Livearm', 'year': 1931, 'source': 'lahman'}
+    assert got['so'] == {'value': 200, 'name': 'Pat Livearm', 'year': 1931, 'source': 'lahman'}
     assert got['sv'] == {'value': 57, 'name': 'Cal Closer', 'year': 1990, 'source': 'lahman'}
-    assert got['era'] == {'value': 27 * 20 / 674, 'name': 'Dutch Leonard', 'year': 1914, 'source': 'lahman'}
+    assert got['era'] == {'value': 27 * 70 / 800, 'name': 'Pat Livearm', 'year': 1931, 'source': 'lahman'}
     assert set(got) == set(records.STATS)
+
+
+def test_lahman_bar_skips_the_dead_ball_years_unless_the_association_starts_in_them():
+    assert records.BAR_FROM == 1920
+    assert 'w' not in records.lahman_bar(bar_db(), 1921)                # no pitcher season from 1920 to 1920
+    assert records.lahman_bar(bar_db(), 1920)['w'] == {'value': 59, 'name': 'Old Hoss', 'year': 1884,
+                                                       'source': 'lahman'}
+    assert records.lahman_bar(bar_db(), 1900)['so']['value'] == 441
 
 
 def test_lahman_bar_sums_stints_and_includes_later_years_only_when_asked():
@@ -203,7 +213,7 @@ def test_lahman_bar_scales_the_qualifiers_to_the_schedule():
 def test_lahman_bar_without_a_name_row_uses_the_player_id_and_a_missing_table_raises():
     con = bar_db()
     con.execute('DELETE FROM People')
-    assert records.lahman_bar(con, 2001)['w']['name'] == 'radbocha01'
+    assert records.lahman_bar(con, 2001)['w']['name'] == 'livep01'
     with pytest.raises(sqlite3.Error):
         records.lahman_bar(sqlite3.connect(':memory:'), 2001)
 
@@ -216,8 +226,11 @@ def test_bar_takes_the_better_of_lahman_and_the_best_simulated_season():
     got = records.bar(lahman, season)
     assert got['hr'] == {'value': 61, 'name': 'Al Winner', 'year': 2030, 'source': 'sim'}
     assert got['sv']['source'] == 'lahman'                      # equal to the real record is not past it
-    assert got['era'] == {'value': 27 * 20 / 674, 'name': 'Dutch Leonard', 'year': 1914, 'source': 'lahman'}
+    assert got['era']['source'] == 'sim' and got['era']['value'] == 27 * 40 / 700       # 1.54 beats the real 2.36
     assert got['w']['source'] == 'lahman' and got['avg']['source'] == 'lahman'
+    worse = {2030: year(pits={200: pit(outs=600, er=90)})}
+    assert records.bar(lahman, records.season_tables(worse, NAMES))['era'] == {
+        'value': 27 * 70 / 800, 'name': 'Pat Livearm', 'year': 1931, 'source': 'lahman'}
     low = {2030: year(pits={200: pit(outs=800, er=10)})}
     assert records.bar(lahman, records.season_tables(low, NAMES))['era'] == {
         'value': 27 * 10 / 800, 'name': 'Ed Hurler', 'year': 2030, 'source': 'sim'}
