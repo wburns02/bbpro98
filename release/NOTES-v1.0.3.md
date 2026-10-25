@@ -56,7 +56,9 @@ its text; they do not replace it.
   ballots. A career score of 75 percent of the bar inducts him with a written induction story, under 5 percent drops
   him. Each association has a Hall of Fame page with the inductees and the current ballot.
 - Record book: each association's best single seasons and careers, measured against the best real Lahman season
-  before the association began (or a simulated season that beat it). From two fifths of the way through a season,
+  from 1920 on and before the association began (or a simulated season that beat it). The dead-ball years are left
+  out so the wins, strikeouts and steals bars can be reached; an association starting in 1920 or earlier uses every
+  year before it. From two fifths of the way through a season,
   the daily column names up to three players on pace for a record.
 - Draft room: each season's rookie class as the league's scouts graded it, which teams it fills a need for, and a
   letter grade per team's haul. Three seasons later the page revisits those grades against what the players became.
