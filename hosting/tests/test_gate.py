@@ -1,6 +1,8 @@
 """hosting/gate.py: the PIN check, the signed cookie, the rate limits and the HTTP surface, on a real local server."""
+import html
 import http.client
 import os
+import re
 import sys
 import threading
 import urllib.parse
@@ -273,3 +275,50 @@ def test_http_sign_in_with_a_non_latin1_next_still_signs_in(server):
     # send_header encodes latin-1: a euro sign in Location raised after the PIN was accepted, so no cookie was set.
     code, h, _ = req(server, 'POST', '/gate/login', {'pin': '4321', 'next': '/€'}, {'X-Real-IP': '8.8.8.8'})
     assert code == 303 and h['Location'] == '/' and 'bbgate=' in h['Set-Cookie']
+
+
+# --- next=$request_uri: nginx sends the raw request line, which is not a query-string-encoded value ----------------
+
+@pytest.mark.parametrize('query,want', [
+    ('next=/news', '/news'),
+    ('next=/news?team=NYY&year=1998', '/news?team=NYY&year=1998'),         # was cut at the first &
+    ('next=/news?q=a%26b&x=%2F', '/news?q=a%26b&x=%2F'),                   # escapes stay as the visitor sent them
+    ('next=/create?name=Babe+Ruth', '/create?name=Babe+Ruth'),             # + is not turned into a space
+    ('next=/news?next=/other', '/news?next=/other'),                       # the first next= wins, the rest is its value
+    ('x=1&next=/a?b=1&c=2', '/a?b=1&c=2'),
+    ('next=%2Fnews%3Fa%3D1%26b%3D2', '/news?a=1&b=2'),                     # a sender that did encode
+    ('next=%2Fnews&other=1', '/news'),
+    ('', '/'), ('other=1', '/'), ('xnext=/evil', '/'), ('next=', ''),
+])
+def test_next_from_query(query, want):
+    assert gate.next_from_query(query) == want
+
+
+@pytest.mark.parametrize('query', [
+    'next=//evil.example/x?a=1&b=2', 'next=%2F%2Fevil.example', 'next=https://evil.example/', 'next=/\\evil.example',
+    'next=%5Cevil', 'next=/caf%C3%A9&next=//evil.example',
+])
+def test_next_from_query_never_gets_an_off_site_address_past_safe_next(query):
+    got = gate.safe_next(gate.next_from_query(query))
+    assert got == '/' or (got.startswith('/') and not got.startswith('//') and '\\' not in got)
+
+
+def test_http_sign_in_returns_to_the_full_address_nginx_sent(server):
+    # Positive control: put parse_qs back in do_GET and the form (and so the redirect) loses "&year=1998".
+    code, _, page = req(server, 'GET', '/gate/login?next=/news?team=NYY&year=1998&q=a%26b')
+    assert code == 200
+    m = re.search(r'name="next" value="([^"]*)"', page)
+    carried = html.unescape(m.group(1))
+    assert carried == '/news?team=NYY&year=1998&q=a%26b'
+    code, h, _ = req(server, 'POST', '/gate/login', {'pin': '4321', 'next': carried}, {'X-Real-IP': '9.9.9.1'})
+    assert code == 303 and h['Location'] == '/news?team=NYY&year=1998&q=a%26b'
+
+
+def test_http_login_form_still_escapes_a_raw_next(server):
+    code, _, page = req(server, 'GET', '/gate/login?next=/news/"><script>alert(1)</script>&x="onload="1')
+    assert code == 200 and '<script>' not in page and '"onload="' not in page
+
+
+def test_nginx_keeps_next_as_the_last_parameter():
+    conf = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'nginx.conf')).read()
+    assert re.search(r'return\s+302\s+/gate/login\?next=\$request_uri;', conf)

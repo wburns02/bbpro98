@@ -26,6 +26,7 @@ import html
 import http.server
 import json
 import os
+import re
 import secrets
 import threading
 import time
@@ -73,6 +74,24 @@ def safe_next(v):
     if not v or not v.startswith('/') or v.startswith('//') or '\\' in v or any(not 32 <= ord(c) < 127 for c in v):
         return '/'               # ASCII only: a Location header cannot carry anything past latin-1
     return v
+
+
+def next_from_query(query):
+    """The `next` value of a /gate/login query string, for safe_next() to judge.
+
+    nginx sends visitors here with `?next=$request_uri`. nginx cannot percent-encode, so the value is the raw
+    request line: its own `?`, `&`, `#`-free query and %-escapes arrive untouched. Parsing that as a normal query
+    string cut the return address at the first `&` (/news?team=NYY&year=1998 came back as /news?team=NYY) and
+    decoded its escapes once too often (%26 became a separator). So `next` is always the LAST parameter and
+    everything after `next=` belongs to it, as is. A value that starts with an escape instead of `/` was encoded
+    by its sender (a hand-made link) and is decoded the ordinary way."""
+    m = re.search(r'(?:^|&)next=(.*)$', query or '', re.S)
+    if not m:
+        return '/'
+    raw = m.group(1)
+    if raw.startswith('/'):
+        return raw
+    return urllib.parse.unquote_plus(raw.split('&', 1)[0], errors='replace')
 
 
 class Gate:
@@ -239,7 +258,7 @@ def handler(gate):
             if u.path == '/gate/auth':
                 self._send(204 if gate.valid(cookie_of(self.headers.get('Cookie'))) else 401)
             elif u.path == '/gate/login':
-                self._form(200, urllib.parse.parse_qs(u.query).get('next', ['/'])[0])
+                self._form(200, next_from_query(u.query))
             elif u.path == '/gate/logout':
                 gate.revoke(cookie_of(self.headers.get('Cookie')))
                 self._send(303, headers=[('Location', '/gate/login'), ('Set-Cookie', '%s=; Path=/; Max-Age=0; '
