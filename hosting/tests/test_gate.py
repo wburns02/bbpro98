@@ -243,3 +243,33 @@ def test_new_pin_voids_device_cookies():
     dev = gate.Gate('4321', SECRET, now=c).device_token()
     assert gate.Gate('4321', SECRET, now=c).device(dev)
     assert gate.Gate('8765', SECRET, now=c).device(dev) is None
+
+
+def test_non_ascii_cookie_is_invalid_not_an_error():
+    # hmac.compare_digest raises TypeError on a non-ASCII str; headers arrive as latin-1, so any visitor could send one.
+    g = gate.Gate('4321', SECRET, now=Clock())
+    exp = g.token().partition('.')[0]
+    for tok in ('1.\xe9', exp + '.\xe9', '\xb2\xb3.abc', exp + '.' + '\xff' * 64):
+        assert not g.valid(tok)
+        assert g.device(tok) is None
+        assert not g.revoke(tok)
+
+
+def test_http_non_ascii_cookies_get_an_answer(server):
+    # Before the fix the handler died: nginx turned that into a 500 on every path and a 502 on the login POST.
+    assert req(server, 'GET', '/gate/auth', headers={'Cookie': 'bbgate=1.\xe9'})[0] == 401
+    assert req(server, 'GET', '/gate/logout', headers={'Cookie': 'bbgate=1.\xe9'})[0] == 303
+    code, _, page = req(server, 'POST', '/gate/login', {'pin': '0000'},
+                        {'X-Real-IP': '7.7.7.7', 'Cookie': 'bbdev=1.\xe9'})
+    assert code == 401 and 'Wrong PIN' in page
+
+
+@pytest.mark.parametrize('v', ['/caf\xe9', '/€', '/news/Ā', '/a\x7fb'])
+def test_safe_next_refuses_what_a_location_header_cannot_carry(v):
+    assert gate.safe_next(v) == '/'
+
+
+def test_http_sign_in_with_a_non_latin1_next_still_signs_in(server):
+    # send_header encodes latin-1: a euro sign in Location raised after the PIN was accepted, so no cookie was set.
+    code, h, _ = req(server, 'POST', '/gate/login', {'pin': '4321', 'next': '/€'}, {'X-Real-IP': '8.8.8.8'})
+    assert code == 303 and h['Location'] == '/' and 'bbgate=' in h['Set-Cookie']

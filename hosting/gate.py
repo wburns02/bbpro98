@@ -70,8 +70,8 @@ button {{ font: inherit; padding: 8px; border: 0; border-radius: 4px; background
 
 def safe_next(v):
     """A same-site path to return to after sign-in; anything else (another host, a scheme) becomes '/'."""
-    if not v or not v.startswith('/') or v.startswith('//') or '\\' in v or any(ord(c) < 32 for c in v):
-        return '/'
+    if not v or not v.startswith('/') or v.startswith('//') or '\\' in v or any(not 32 <= ord(c) < 127 for c in v):
+        return '/'               # ASCII only: a Location header cannot carry anything past latin-1
     return v
 
 
@@ -92,7 +92,8 @@ class Gate:
 
     def _check(self, kind, tok):
         exp, _, sig = (tok or '').partition('.')
-        if not exp.isdigit() or len(exp) > 12 or not sig:
+        # ASCII only: compare_digest raises on a non-ASCII str, and a visitor chooses the cookie's bytes.
+        if not exp.isascii() or not exp.isdigit() or len(exp) > 12 or not sig or not sig.isascii():
             return None
         return sig if hmac.compare_digest(sig, self._sign(kind, exp)) and int(exp) > self.now() else None
 
